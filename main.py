@@ -331,7 +331,11 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     
     context.user_data[user_id] = {"order_id": order_id, "product": product} # استخدام user_data لتخزين البيانات الخاصة بالمستخدم
-    await query.message.reply_text(f"تمام، كم سعر شراء *'{product}'*؟", parse_mode="Markdown")
+    
+    # ارسال رسالة السؤال عن سعر الشراء وحفظ الـ ID الخاص بها
+    msg = await query.message.reply_text(f"تمام، كم سعر شراء *'{product}'*؟", parse_mode="Markdown")
+    context.user_data[user_id]['ask_buy_message_id'] = msg.message_id
+    
     return ASK_BUY
 
 async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -377,8 +381,9 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = price
     save_data()
 
-    # ****** قم بإرسال الرد أولاً (السؤال عن سعر البيع) ******
-    await update.message.reply_text(f"شكراً. وهسه، بيش راح تبيع *'{product}'*؟", parse_mode="Markdown")
+    # ****** قم بإرسال الرد أولاً (السؤال عن سعر البيع) وحفظ الـ ID الخاص بها ******
+    msg = await update.message.reply_text(f"شكراً. وهسه، بيش راح تبيع *'{product}'*؟", parse_mode="Markdown")
+    context.user_data[user_id]['ask_sell_message_id'] = msg.message_id
     
     # ****** ثم احذف رسالة المستخدم بعد أن تم إرسال الرد بنجاح ******
     if 'last_user_message_to_delete' in context.user_data[user_id]:
@@ -435,6 +440,24 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     pricing.setdefault(order_id, {}).setdefault(product, {})["sell"] = price
     save_data()
+
+    # ****** حذف رسائل الأسئلة وسعر الشراء بعد أن تم إرسال الرد بنجاح ******
+    # حذف رسالة سؤال الشراء
+    if 'ask_buy_message_id' in context.user_data[user_id]:
+        try:
+            await context.bot.delete_message(chat_id=update.message.chat_id, message_id=context.user_data[user_id]['ask_buy_message_id'])
+            del context.user_data[user_id]['ask_buy_message_id']
+        except Exception as e:
+            logger.warning(f"Could not delete 'ask buy' message: {e}")
+    
+    # حذف رسالة سؤال البيع
+    if 'ask_sell_message_id' in context.user_data[user_id]:
+        try:
+            await context.bot.delete_message(chat_id=update.message.chat_id, message_id=context.user_data[user_id]['ask_sell_message_id'])
+            del context.user_data[user_id]['ask_sell_message_id']
+        except Exception as e:
+            logger.warning(f"Could not delete 'ask sell' message: {e}")
+
 
     if order_id not in orders: # تحقق مرة أخرى في حال تم حذف الطلب بشكل غير متوقع
         # Delete user message on error
