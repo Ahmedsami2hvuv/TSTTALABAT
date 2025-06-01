@@ -481,11 +481,10 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     total_buy = 0.0
     total_sell = 0.0
     
-    # --- بناء فاتورة الإدارة ---
-    invoice_text_for_owner = [
-        f"رقم الفاتورة: {invoice}",
-        f"عنوان الزبون: {order['title']}",
-    ]
+    # --- بناء فاتورة الإدارة (للمالك فقط) ---
+    owner_invoice_details = []
+    owner_invoice_details.append(f"رقم الفاتورة: {invoice}")
+    owner_invoice_details.append(f"عنوان الزبون: {order['title']}")
 
     for p in order["products"]:
         if p in pricing.get(order_id, {}) and "buy" in pricing[order_id].get(p, {}) and "sell" in pricing[order_id].get(p, {}):
@@ -494,9 +493,9 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
             profit = sell - buy
             total_buy += buy
             total_sell += sell
-            invoice_text_for_owner.append(f"{p} - شراء: {format_float(buy)}, بيع: {format_float(sell)}, ربح: {format_float(profit)}")
+            owner_invoice_details.append(f"{p} - شراء: {format_float(buy)}, بيع: {format_float(sell)}, ربح: {format_float(profit)}")
         else:
-            invoice_text_for_owner.append(f"{p} - (لم يتم تسعيره بعد)")
+            owner_invoice_details.append(f"{p} - (لم يتم تسعيره بعد)")
 
     net_profit = total_sell - total_buy
     daily_profit += net_profit
@@ -505,13 +504,13 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     extra = calculate_extra(places)
     total_with_extra = total_sell + extra
 
-    invoice_text_for_owner.append(f"\nالمجموع شراء: {format_float(total_buy)}")
-    invoice_text_for_owner.append(f"المجموع بيع: {format_float(total_sell)}")
-    invoice_text_for_owner.append(f"الربح الكلي: {format_float(net_profit)}")
-    invoice_text_for_owner.append(f"عدد المحلات: {places} (+{format_float(extra)})")
-    invoice_text_for_owner.append(f"السعر الكلي: {format_float(total_with_extra)}")
+    owner_invoice_details.append(f"\nالمجموع شراء: {format_float(total_buy)}")
+    owner_invoice_details.append(f"المجموع بيع: {format_float(total_sell)}")
+    owner_invoice_details.append(f"الربح الكلي: {format_float(net_profit)}")
+    owner_invoice_details.append(f"عدد المحلات: {places} (+{format_float(extra)})")
+    owner_invoice_details.append(f"السعر الكلي: {format_float(total_with_extra)}")
     
-    final_owner_invoice_text = "\n".join(invoice_text_for_owner)
+    final_owner_invoice_text = "\n".join(owner_invoice_details)
     
     # ENCODED ADMIN INVOICE FOR WHATSAPP
     encoded_owner_invoice = final_owner_invoice_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
@@ -534,31 +533,31 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         await message_object.reply_text("عذراً، لم أتمكن من إرسال فاتورة الإدارة إلى خاصك. يرجى التأكد من أنني أستطيع مراسلتك في الخاص (قد تحتاج إلى بدء محادثة معي أولاً).")
 
 
-    # --- بناء فاتورة الزبون (للكروب) ---
-    running_total = 0.0
-    customer_lines = []
+    # --- بناء فاتورة الزبون (للكروب فقط) ---
+    customer_invoice_lines = []
+    customer_invoice_lines.append(f"أبو الأكبر للتوصيل")
+    customer_invoice_lines.append(f"رقم الفاتورة: {invoice}")
+    customer_invoice_lines.append(f"عنوان الزبون: {order['title']}")
+    customer_invoice_lines.append(f"\nالمواد:")
+    
+    running_total_for_customer = 0.0 # مجموع البيع للزبون
     for p in order["products"]:
         if p in pricing.get(order_id, {}) and "sell" in pricing[order_id].get(p, {}):
             sell = pricing[order_id][p]["sell"]
-            running_total += sell
-            customer_lines.append(f"{p} - {format_float(sell)} = {format_float(running_total)}")
+            running_total_for_customer += sell
+            customer_invoice_lines.append(f"{p} - {format_float(sell)} = {format_float(running_total_for_customer)}")
         else:
-            customer_lines.append(f"{p} - (لم يتم تسعيره)")
+            customer_invoice_lines.append(f"{p} - (لم يتم تسعيره)")
     
-    customer_lines.append(f"كلفة تجهيز من - {places} محلات {format_float(extra)} = {format_float(total_with_extra)}")
+    customer_invoice_lines.append(f"كلفة تجهيز من - {places} محلات {format_float(extra)} = {format_float(total_with_extra)}")
+    customer_invoice_lines.append(f"\nالمجموع الكلي: {format_float(total_with_extra)} (مع احتساب عدد المحلات)")
     
-    customer_text = (
-        f"أبو الأكبر للتوصيل\n"
-        f"رقم الفاتورة: {invoice}\n"
-        f"عنوان الزبون: {order['title']}\n\n"
-        f"المواد:\n" + "\n".join(customer_lines) +
-        f"\nالمجموع الكلي: {format_float(total_with_extra)} (مع احتساب عدد المحلات)"
-    )
+    customer_final_text = "\n".join(customer_invoice_lines)
     
     # نسخة الزبون (ستظل في المحادثة العامة في الكروب)
-    await message_object.reply_text("نسخة الزبون (لإرسالها للعميل):\n" + customer_text, parse_mode="Markdown")
+    await message_object.reply_text("نسخة الزبون (لإرسالها للعميل):\n" + customer_final_text, parse_mode="Markdown")
 
-    encoded_customer_invoice = customer_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
+    encoded_customer_invoice = customer_final_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
 
     # زر الواتساب الخاص بالزبون (سيبقى في المحادثة العامة في الكروب)
     whatsapp_customer_button_markup = InlineKeyboardMarkup([
