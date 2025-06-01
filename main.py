@@ -64,7 +64,7 @@ def load_data():
                 temp_data = json.load(f)
                 pricing.clear()
                 pricing.update(temp_data)
-                pricing = {str(k): v for pk, pv in pricing.items()} # Ensure string keys
+                pricing = {str(k): v for k, v in pricing.items()} # Ensure string keys
                 for oid in pricing:
                     if isinstance(pricing[oid], dict):
                         pricing[oid] = {str(pk): pv for pk, pv in pricing[oid].items()}
@@ -485,7 +485,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
             break
             
     if all_priced:
-        context.user_data["completed_order_id"] = order_id
+        context.user_data[user_id]["completed_order_id"] = order_id # استخدام user_id للوصول إلى order_id
         
         buttons = []
         emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
@@ -501,6 +501,10 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
             reply_markup=reply_markup
         )
         logger.info(f"All products priced for order {order_id}. Transitioning to ASK_PLACES. Sent new message ID: {msg_places.message_id}")
+
+        # حفظ ID رسالة "كم محل" لحذفها لاحقًا عند اكتمال عملية المحلات
+        context.user_data[user_id]['ask_places_message_id'] = msg_places.message_id
+
 
         # ****** ثم محاولة حذف رسالة الأزرار القديمة (قائمة المنتجات) ******
         msg_info = last_button_message.get(order_id)
@@ -544,30 +548,26 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     message_object = None 
     user_id = str(update.effective_user.id) # استخدم effective_user للحصول على ID المستخدم
 
-    # تخزين ID رسالة المجهز هنا فقط إذا كانت رسالة نصية، وليس من كولباك
+    # تخزين ID رسالة المستخدم النصية إن وجدت
     if update.message:
         context.user_data.setdefault(user_id, {})
-        context.user_data[user_id]['last_user_message_to_delete_places'] = update.message.message_id # New key for places input
+        context.user_data[user_id]['last_user_message_to_delete_places'] = update.message.message_id 
 
     if update.callback_query:
-        # هذا الجزء يتعامل مع النقر على الأزرار، لا يوجد نص من المستخدم ليتم حذفه
         query = update.callback_query
         logger.info(f"Places callback query received: {query.data}")
         await query.answer()
         if query.data.startswith("places_"):
             places = int(query.data.split("_")[1])
             message_object = query.message 
-            try:
-                # هذا يحذف رسالة البوت نفسها التي تحتوي على الأزرار الخاصة بعدد المحلات
-                # بعد أن يختار المستخدم من الأزرار، لا نحتاجها بعد الآن.
-                await context.bot.edit_message_reply_markup(
-                    chat_id=query.message.chat_id,
-                    message_id=query.message.message_id,
-                    reply_markup=None # لإزالة الأزرار وجعل الرسالة "مسطحة"
-                )
-            except Exception as e:
-                logger.warning(f"Could not remove places buttons: {e}")
-                pass
+            # حذف رسالة البوت التي تحتوي على أزرار "كم محل"
+            if 'ask_places_message_id' in context.user_data[user_id]:
+                try:
+                    await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=context.user_data[user_id]['ask_places_message_id'])
+                    del context.user_data[user_id]['ask_places_message_id']
+                    logger.info(f"Deleted 'ask places' message {message_object.message_id} after callback.")
+                except Exception as e:
+                    logger.warning(f"Could not delete 'ask places' message {message_object.message_id} via callback: {e}")
         else:
             logger.error(f"Unexpected callback_query in receive_place_count: {query.data}")
             await query.edit_message_text("عذراً، حدث خطأ غير متوقع. الرجاء المحاولة مرة أخرى أو بدء طلبية جديدة.")
@@ -579,16 +579,16 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
             places = int(message_object.text.strip())
             if places < 0:
                 await message_object.reply_text("عدد المحلات يجب أن يكون رقماً موجباً. الرجاء إدخال عدد المحلات بشكل صحيح.")
-                return ASK_PLACES # لا نحذف الرسالة هنا
+                return ASK_PLACES
         except ValueError:
             await message_object.reply_text("الرجاء إدخال عدد صحيح لعدد المحلات.")
-            return ASK_PLACES # لا نحذف الرسالة هنا
+            return ASK_PLACES 
     
     if places is None:
         logger.warning("No places count received.")
         return ConversationHandler.END
 
-    order_id = context.user_data.get("completed_order_id")
+    order_id = context.user_data[user_id].get("completed_order_id") # الوصول من user_data[user_id]
     if not order_id or order_id not in orders:
         await message_object.reply_text("عذراً، لا توجد طلبية مكتملة لمعالجتها أو تم حذفها. الرجاء بدء طلبية جديدة.")
         return ConversationHandler.END
@@ -696,6 +696,10 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception as e:
             logger.warning(f"Could not delete user message in receive_place_count: {e}")
 
+    # مسح بيانات المستخدم من context.user_data بعد الانتهاء من الطلب
+    if user_id in context.user_data:
+        del context.user_data[user_id]
+        
     return ConversationHandler.END
 
 
@@ -716,12 +720,21 @@ async def edit_last_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await show_buttons(query.message.chat_id, context, user_id, order_id)
     
+    # بعد أن يقوم المستخدم بتعديل الطلب، يجب أن نبقيه في حالة تسمح له بالتعامل مع المنتجات
+    # لذلك، سنعود إلى ASK_BUY ليتمكن من النقر على المنتجات لتسعيرها أو إعادة تسعيرها.
     return ASK_BUY
 
 async def start_new_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.message.reply_text("تمام، دز الطلبية الجديدة كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", parse_mode="Markdown")
+    
+    # مسح بيانات المستخدم من context.user_data إذا بدأ طلبًا جديدًا لضمان عدم وجود بيانات طلب قديمة
+    user_id = str(query.from_user.id)
+    if user_id in context.user_data:
+        del context.user_data[user_id]
+        logger.info(f"Cleared user_data for user {user_id} after starting a new order.")
+
     return ConversationHandler.END
 
 
