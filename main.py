@@ -1,13 +1,13 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
-from telegram.ext import (
-    ApplicationBuilder, ContextTypes, CommandHandler,
-    MessageHandler, CallbackQueryHandler, ConversationHandler, filters
-)
 import uuid
 import os
 from collections import Counter
 import json
 import logging
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from telegram.ext import (
+    ApplicationBuilder, ContextTypes, CommandHandler,
+    MessageHandler, CallbackQueryHandler, ConversationHandler, filters
+)
 
 # تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
 logging.basicConfig(
@@ -497,7 +497,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         await update.message.reply_text("كل المنتجات تم تسعيرها. كم محل كلفتك الطلبية؟ (اختر من الأزرار أو اكتب الرقم)", reply_markup=reply_markup)
         logger.info(f"All products priced for order {order_id}. Transitioning to ASK_PLACES.")
-        return ASK_PLACES
+        return ASK_PLACES # <--- هذا هو التعديل الرئيسي هنا: ارجع ASK_PLACES
     else:
         # هنا راح نرسل رسالة التأكيد ضمن رسالة الأزرار
         confirmation_msg = f"تم حفظ السعر لـ *'{product}'*."
