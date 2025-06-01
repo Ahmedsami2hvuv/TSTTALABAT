@@ -1,13 +1,13 @@
-import uuid
-import os
-from collections import Counter
-import json
-import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.ext import (
     ApplicationBuilder, ContextTypes, CommandHandler,
     MessageHandler, CallbackQueryHandler, ConversationHandler, filters
 )
+import uuid
+import os
+from collections import Counter
+import json
+import logging
 
 # تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
 logging.basicConfig(
@@ -168,7 +168,7 @@ def format_float(value):
     return formatted
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("أهلاً بك! لإعداد طلبية، دز الطلبية كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", parse_mode="Markdown")
+    await update.message.reply_text("أهلاً بك يا أبا الأكبر! لإعداد طلبية، دز الطلبية كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", parse_mode="Markdown")
 
 async def receive_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await process_order(update, context, update.message)
@@ -473,7 +473,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
             logger.warning(f"Could not delete user's sell message ({context.user_data[user_id].get('user_sell_message_id', 'N/A')}): {e}")
 
 
-    if order_id not in orders: # تحقق مرة أخرى في حال تم حذف الطلب بشكل غير متوقع
+    if order_id not in orders: 
         await update.message.reply_text("عذراً، الطلب لم يعد موجوداً بعد حفظ السعر. الرجاء بدء طلبية جديدة.")
         return ConversationHandler.END
 
@@ -495,9 +495,27 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         keyboard = [buttons[i:i + 5] for i in range(0, len(buttons), 5)]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        await update.message.reply_text("كل المنتجات تم تسعيرها. كم محل كلفتك الطلبية؟ (اختر من الأزرار أو اكتب الرقم)", reply_markup=reply_markup)
-        logger.info(f"All products priced for order {order_id}. Transitioning to ASK_PLACES.")
-        return ASK_PLACES # <--- هذا هو التعديل الرئيسي هنا: ارجع ASK_PLACES
+        # ****** التعديل الجديد هنا: إرسال الرسالة الجديدة أولاً ******
+        msg_places = await update.message.reply_text(
+            "كل المنتجات تم تسعيرها. كم محل كلفتك الطلبية؟ (اختر من الأزرار أو اكتب الرقم)", 
+            reply_markup=reply_markup
+        )
+        logger.info(f"All products priced for order {order_id}. Transitioning to ASK_PLACES. Sent new message ID: {msg_places.message_id}")
+
+        # ****** ثم محاولة حذف رسالة الأزرار القديمة (قائمة المنتجات) ******
+        msg_info = last_button_message.get(order_id)
+        if msg_info and msg_info.get("chat_id") == update.effective_chat.id:
+            try:
+                await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg_info["message_id"])
+                logger.info(f"Deleted old button message {msg_info['message_id']} after sending new places message.")
+            except Exception as e:
+                logger.warning(f"Could not delete old button message {msg_info.get('message_id', 'N/A')} for order {order_id} after sending new places message: {e}. It might have been deleted already or is inaccessible.")
+            finally:
+                if order_id in last_button_message:
+                    del last_button_message[order_id] # أزلها من الذاكرة والملف بعد محاولة الحذف
+                    save_data() # حفظ التغيير لضمان عدم الرجوع للرسالة المحذوفة بعد إعادة تشغيل البوت
+
+        return ASK_PLACES 
     else:
         # هنا راح نرسل رسالة التأكيد ضمن رسالة الأزرار
         confirmation_msg = f"تم حفظ السعر لـ *'{product}'*."
@@ -540,11 +558,12 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
             places = int(query.data.split("_")[1])
             message_object = query.message 
             try:
-                # هذا يحذف رسالة البوت نفسها التي تحتوي على الأزرار
+                # هذا يحذف رسالة البوت نفسها التي تحتوي على الأزرار الخاصة بعدد المحلات
+                # بعد أن يختار المستخدم من الأزرار، لا نحتاجها بعد الآن.
                 await context.bot.edit_message_reply_markup(
                     chat_id=query.message.chat_id,
                     message_id=query.message.message_id,
-                    reply_markup=None
+                    reply_markup=None # لإزالة الأزرار وجعل الرسالة "مسطحة"
                 )
             except Exception as e:
                 logger.warning(f"Could not remove places buttons: {e}")
