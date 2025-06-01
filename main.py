@@ -477,6 +477,11 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if p not in pricing.get(order_id, {}) or "buy" not in pricing[order_id].get(p, {}) or "sell" not in pricing[order_id].get(p, {}):
             all_priced = False
             break
+    
+    # ****** هذا هو التعديل الرئيسي هنا ******
+    # دائماً أرسل رسالة التأكيد بعد حفظ السعر بنجاح
+    await update.message.reply_text(f"تم حفظ السعر لـ *'{product}'*.", parse_mode="Markdown")
+    logger.info(f"Price saved for '{product}' in order {order_id}.")
             
     if all_priced:
         context.user_data["completed_order_id"] = order_id
@@ -493,8 +498,8 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.info(f"All products priced for order {order_id}. Transitioning to ASK_PLACES.")
         return ASK_PLACES
     else:
-        await update.message.reply_text(f"تم حفظ السعر لـ *'{product}'*.", parse_mode="Markdown")
-        logger.info(f"Price saved for '{product}' in order {order_id}. Showing updated buttons.")
+        # إذا لم يتم تسعير كل المنتجات، أظهر الأزرار المحدثة للمنتجات المتبقية
+        logger.info(f"Not all products priced. Showing updated buttons for order {order_id}.")
         await show_buttons(update.effective_chat.id, context, user_id, order_id)
         
         logger.info(f"Transitioning back to ASK_BUY for order {order_id}.")
@@ -851,4 +856,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
