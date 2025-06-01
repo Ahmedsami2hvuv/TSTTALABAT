@@ -255,7 +255,7 @@ async def process_order(update, context, message, edited=False):
     await message.reply_text(f"استلمت الطلب بعنوان: *{title}* (عدد المنتجات: {len(products)})", parse_mode="Markdown")
     await show_buttons(message.chat_id, context, user_id, order_id)
 
-async def show_buttons(chat_id, context, user_id, order_id, is_final_buttons=False):
+async def show_buttons(chat_id, context, user_id, order_id, confirmation_message=None):
     if order_id not in orders:
         logger.warning(f"Attempted to show buttons for non-existent order_id: {order_id}")
         await context.bot.send_message(chat_id=chat_id, text="عذراً، الطلب الذي تحاول الوصول إليه غير موجود أو تم حذفه. الرجاء بدء طلبية جديدة.")
@@ -298,10 +298,16 @@ async def show_buttons(chat_id, context, user_id, order_id, is_final_buttons=Fal
                 del last_button_message[order_id]
                 save_data() # حفظ التغيير لضمان عدم الرجوع للرسالة المحذوفة بعد إعادة تشغيل البوت
 
+    # إنشاء نص الرسالة الجديد، مع إضافة رسالة التأكيد إذا كانت موجودة
+    message_text = ""
+    if confirmation_message:
+        message_text += f"{confirmation_message}\n\n"
+    message_text += f"اضغط على منتج لتحديد سعره من *{order['title']}*:"
+
     # إرسال الرسالة الجديدة
     msg = await context.bot.send_message(
         chat_id=chat_id,
-        text=f"اضغط على منتج لتحديد سعره من *{order['title']}*:",
+        text=message_text,
         reply_markup=markup,
         parse_mode="Markdown"
     )
@@ -477,11 +483,6 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if p not in pricing.get(order_id, {}) or "buy" not in pricing[order_id].get(p, {}) or "sell" not in pricing[order_id].get(p, {}):
             all_priced = False
             break
-    
-    # ****** هذا هو التعديل الرئيسي هنا ******
-    # دائماً أرسل رسالة التأكيد بعد حفظ السعر بنجاح
-    await update.message.reply_text(f"تم حفظ السعر لـ *'{product}'*.", parse_mode="Markdown")
-    logger.info(f"Price saved for '{product}' in order {order_id}.")
             
     if all_priced:
         context.user_data["completed_order_id"] = order_id
@@ -498,9 +499,10 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.info(f"All products priced for order {order_id}. Transitioning to ASK_PLACES.")
         return ASK_PLACES
     else:
-        # إذا لم يتم تسعير كل المنتجات، أظهر الأزرار المحدثة للمنتجات المتبقية
-        logger.info(f"Not all products priced. Showing updated buttons for order {order_id}.")
-        await show_buttons(update.effective_chat.id, context, user_id, order_id)
+        # هنا راح نرسل رسالة التأكيد ضمن رسالة الأزرار
+        confirmation_msg = f"تم حفظ السعر لـ *'{product}'*."
+        logger.info(f"Price saved for '{product}' in order {order_id}. Showing updated buttons with confirmation.")
+        await show_buttons(update.effective_chat.id, context, user_id, order_id, confirmation_message=confirmation_msg)
         
         logger.info(f"Transitioning back to ASK_BUY for order {order_id}.")
         return ASK_BUY
