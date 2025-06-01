@@ -66,7 +66,7 @@ def load_data():
                 temp_data = json.load(f)
                 pricing.clear()
                 pricing.update(temp_data)
-                pricing = {str(k): v for pk, pv in temp_data.items()} # Fix here, ensure keys are strings
+                pricing = {str(k): v for k, v in pricing.items()} # Ensure string keys
                 for oid in pricing:
                     if isinstance(pricing[oid], dict):
                         pricing[oid] = {str(pk): pv for pk, pv in pricing[oid].items()}
@@ -434,7 +434,6 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     global daily_profit
     
     places = None
-    message_to_send_from_chat_id = None # هذا سيشير إلى الـ chat_id الذي جاءت منه الرسالة
     message_object = None # هذا سيشير إلى كائن الرسالة نفسها
 
     if update.callback_query:
@@ -443,7 +442,6 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.answer()
         if query.data.startswith("places_"):
             places = int(query.data.split("_")[1])
-            message_to_send_from_chat_id = query.message.chat_id
             message_object = query.message # حفظ كائن الرسالة للرد عليها
             try:
                 await context.bot.edit_message_reply_markup(
@@ -460,7 +458,6 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
             return ConversationHandler.END
     elif update.message:
         message_object = update.message # حفظ كائن الرسالة للرد عليها
-        message_to_send_from_chat_id = message_object.chat_id
         try:
             places = int(message_object.text.strip())
             if places < 0:
@@ -484,6 +481,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     total_buy = 0.0
     total_sell = 0.0
     
+    # --- بناء فاتورة الإدارة ---
     invoice_text_for_owner = [
         f"رقم الفاتورة: {invoice}",
         f"عنوان الزبون: {order['title']}",
@@ -536,6 +534,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         await message_object.reply_text("عذراً، لم أتمكن من إرسال فاتورة الإدارة إلى خاصك. يرجى التأكد من أنني أستطيع مراسلتك في الخاص (قد تحتاج إلى بدء محادثة معي أولاً).")
 
 
+    # --- بناء فاتورة الزبون (للكروب) ---
     running_total = 0.0
     customer_lines = []
     for p in order["products"]:
@@ -556,12 +555,12 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"\nالمجموع الكلي: {format_float(total_with_extra)} (مع احتساب عدد المحلات)"
     )
     
-    # نسخة الزبون (ستظل في المحادثة العامة)
+    # نسخة الزبون (ستظل في المحادثة العامة في الكروب)
     await message_object.reply_text("نسخة الزبون (لإرسالها للعميل):\n" + customer_text, parse_mode="Markdown")
 
     encoded_customer_invoice = customer_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
 
-    # زر الواتساب الخاص بالزبون (سيبقى في المحادثة العامة)
+    # زر الواتساب الخاص بالزبون (سيبقى في المحادثة العامة في الكروب)
     whatsapp_customer_button_markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("إرسال فاتورة الزبون للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_customer_invoice}")]
     ])
