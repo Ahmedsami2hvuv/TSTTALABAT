@@ -344,7 +344,8 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             del context.user_data[user_id]
         return ConversationHandler.END
     
-    context.user_data[user_id] = {"order_id": order_id, "product": product} # استخدام user_data لتخزين البيانات الخاصة بالمستخدم
+    context.user_data.setdefault(user_id, {}) # تأكد من تهيئة user_data لهذا المستخدم
+    context.user_data[user_id].update({"order_id": order_id, "product": product}) # استخدام user_data لتخزين البيانات الخاصة بالمستخدم
     
     # حذف رسائل البوت السابقة التي تحتوي على سؤال الشراء أو البيع للمنتج السابق (إن وجدت)
     # هذا يضمن أن لا تتراكم رسائل الأسئلة
@@ -520,12 +521,50 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         confirmation_msg = f"تم حفظ السعر لـ *'{product}'*."
         logger.info(f"Price saved for '{product}' in order {order_id}. Showing updated buttons with confirmation.")
-        # ****** بعد الحذف، نرسل الأزرار المحدثة ******
+        
+        # ****** الآن، بعد أن تم حفظ السعر للمنتج، نقوم بحذف رسائل البوت والمستخدم للأسعار الخاصة بهذا المنتج فقط ******
+        # 1. حذف رسالة سؤال الشراء من البوت
+        if 'ask_buy_message_id' in context.user_data[user_id]:
+            try:
+                await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=context.user_data[user_id]['ask_buy_message_id'])
+                del context.user_data[user_id]['ask_buy_message_id']
+                logger.info(f"Deleted 'ask buy' message {context.user_data[user_id].get('ask_buy_message_id', 'N/A')}.")
+            except Exception as e:
+                logger.warning(f"Could not delete 'ask buy' message ({context.user_data[user_id].get('ask_buy_message_id', 'N/A')}): {e}")
+        
+        # 2. حذف رسالة إدخال سعر الشراء من المستخدم
+        if 'user_buy_message_id' in context.user_data[user_id]:
+            try:
+                await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=context.user_data[user_id]['user_buy_message_id'])
+                del context.user_data[user_id]['user_buy_message_id']
+                logger.info(f"Deleted user's buy message {context.user_data[user_id].get('user_buy_message_id', 'N/A')}.")
+            except Exception as e:
+                logger.warning(f"Could not delete user's buy message ({context.user_data[user_id].get('user_buy_message_id', 'N/A')}): {e}")
+
+        # 3. حذف رسالة سؤال البيع من البوت
+        if 'ask_sell_message_id' in context.user_data[user_id]:
+            try:
+                await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=context.user_data[user_id]['ask_sell_message_id'])
+                del context.user_data[user_id]['ask_sell_message_id']
+                logger.info(f"Deleted 'ask sell' message {context.user_data[user_id].get('ask_sell_message_id', 'N/A')}.")
+            except Exception as e:
+                logger.warning(f"Could not delete 'ask sell' message ({context.user_data[user_id].get('ask_sell_message_id', 'N/A')}): {e}")
+
+        # 4. حذف رسالة إدخال سعر البيع من المستخدم
+        if 'user_sell_message_id' in context.user_data[user_id]:
+            try:
+                await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=context.user_data[user_id]['user_sell_message_id'])
+                del context.user_data[user_id]['user_sell_message_id']
+                logger.info(f"Deleted user's sell message {context.user_data[user_id].get('user_sell_message_id', 'N/A')}.")
+            except Exception as e:
+                logger.warning(f"Could not delete user's sell message ({context.user_data[user_id].get('user_sell_message_id', 'N/A')}): {e}")
+
+        # عرض الأزرار المحدثة
         await show_buttons(update.effective_chat.id, context, user_id, order_id, confirmation_message=confirmation_msg)
         
         # لا نعود إلى ASK_BUY هنا، لأننا انتهينا من تسعير المنتج الحالي، ونريد أن تظهر الأزرار ليختار المستخدم منتجاً آخر
         # وسننتظر من المستخدم أن يضغط على زر آخر أو يدخل أمر جديد
-        return ConversationHandler.END # ننهي المحادثة الحالية ونترك المستخدم يختار منتجاً آخر بالنقر على الأزرار
+        return ConversationHandler.END
 
 
 def calculate_extra(places):
@@ -549,7 +588,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     # تخزين ID رسالة المستخدم النصية إن وجدت
     if update.message:
         context.user_data.setdefault(user_id, {})
-        context.user_data[user_id]['last_user_message_to_delete_places'] = update.message.message_id 
+        context.user_data[user_id]['user_places_message_id'] = update.message.message_id # تغيير الاسم ليكون أوضح
 
     if update.callback_query:
         query = update.callback_query
@@ -737,11 +776,11 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
             logger.warning(f"Could not delete 'ask places' message: {e}")
 
     # 6. حذف رسالة المستخدم النصية بعد المعالجة بنجاح (فقط إذا كانت رسالة نصية لأماكن)
-    if update.message and 'last_user_message_to_delete_places' in context.user_data[user_id]:
+    if update.message and 'user_places_message_id' in context.user_data[user_id]: # تم تغيير الاسم هنا
         try:
-            await context.bot.delete_message(chat_id=update.message.chat_id, message_id=context.user_data[user_id]['last_user_message_to_delete_places'])
-            del context.user_data[user_id]['last_user_message_to_delete_places']
-            logger.info(f"Deleted user's places message {context.user_data[user_id].get('last_user_message_to_delete_places', 'N/A')}.")
+            await context.bot.delete_message(chat_id=update.message.chat_id, message_id=context.user_data[user_id]['user_places_message_id'])
+            del context.user_data[user_id]['user_places_message_id']
+            logger.info(f"Deleted user's places message {context.user_data[user_id].get('user_places_message_id', 'N/A')}.")
         except Exception as e:
             logger.warning(f"Could not delete user message in receive_place_count: {e}")
 
