@@ -343,7 +343,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # حفظ رسالة المستخدم الحالية لحذفها لاحقاً
     context.user_data.setdefault(user_id, {})
-    context.user_data[user_id]['user_buy_message_id'] = update.message.message_id # <--- Changed name to be specific
+    context.user_data[user_id]['user_buy_message_id'] = update.message.message_id 
 
     data = context.user_data.get(user_id) # استخدام context.user_data
     if not data or "order_id" not in data or "product" not in data:
@@ -373,11 +373,9 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         price = float(update.message.text.strip())
         if price < 0:
             await update.message.reply_text("سعر الشراء يجب أن يكون رقماً إيجابياً. بيش اشتريت بالضبط؟")
-            # We don't delete the user's message here if the input is invalid, they might want to correct it.
             return ASK_BUY 
     except ValueError:
         await update.message.reply_text("الرجاء إدخال رقم صحيح لسعر الشراء. بيش اشتريت؟")
-        # We don't delete the user's message here if the input is invalid, they might want to correct it.
         return ASK_BUY 
     
     pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = price
@@ -387,7 +385,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text(f"شكراً. وهسه، بيش راح تبيع *'{product}'*؟", parse_mode="Markdown")
     context.user_data[user_id]['ask_sell_message_id'] = msg.message_id
     
-    # We will delete the user's buy message and the bot's ask-buy message in receive_sell_price.
+    # سنقوم بحذف رسالة المستخدم والرسالة السابقة من البوت في receive_sell_price
 
     return ASK_SELL
 
@@ -396,7 +394,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     # حفظ رسالة المستخدم الحالية (سعر البيع) لحذفها لاحقاً
     context.user_data.setdefault(user_id, {})
-    context.user_data[user_id]['user_sell_message_id'] = update.message.message_id # <--- Changed name to be specific
+    context.user_data[user_id]['user_sell_message_id'] = update.message.message_id 
 
     data = context.user_data.get(user_id) # استخدام context.user_data
     if not data or "order_id" not in data or "product" not in data:
@@ -427,11 +425,9 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         price = float(update.message.text.strip())
         if price < 0:
             await update.message.reply_text("سعر البيع يجب أن يكون رقماً إيجابياً. بيش راح تبيع بالضبط؟")
-            # Don't delete message here, user needs to re-enter
             return ASK_SELL 
     except ValueError:
         await update.message.reply_text("الرجاء إدخال رقم صحيح لسعر البيع. بيش حتبيع؟")
-        # Don't delete message here, user needs to re-enter
         return ASK_SELL 
     
     pricing.setdefault(order_id, {}).setdefault(product, {})["sell"] = price
@@ -494,12 +490,14 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await update.message.reply_text("كل المنتجات تم تسعيرها. كم محل كلفتك الطلبية؟ (اختر من الأزرار أو اكتب الرقم)", reply_markup=reply_markup)
-        
+        logger.info(f"All products priced for order {order_id}. Transitioning to ASK_PLACES.")
         return ASK_PLACES
     else:
         await update.message.reply_text(f"تم حفظ السعر لـ *'{product}'*.", parse_mode="Markdown")
+        logger.info(f"Price saved for '{product}' in order {order_id}. Showing updated buttons.")
         await show_buttons(update.effective_chat.id, context, user_id, order_id)
         
+        logger.info(f"Transitioning back to ASK_BUY for order {order_id}.")
         return ASK_BUY
 
 
