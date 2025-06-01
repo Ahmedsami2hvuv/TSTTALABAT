@@ -363,11 +363,12 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = price
     save_data()
 
-    # ****** احذف الرسالة هنا، بعد أن تم إرسال الرد التالي بنجاح ******
+    # ****** الآن، نرسل الرد أولاً، ثم نحذف الرسالة ******
     await update.message.reply_text(f"شكراً. وهسه، بيش راح تبيع *'{product}'*؟", parse_mode="Markdown")
     
     if 'last_user_message_id' in context.user_data[user_id]:
         try:
+            # هنا يتم حذف رسالة المستخدم بعد أن أرسل البوت رده بنجاح
             await context.bot.delete_message(chat_id=update.message.chat_id, message_id=context.user_data[user_id]['last_user_message_id'])
             del context.user_data[user_id]['last_user_message_id'] # مسحها بعد الحذف
         except Exception as e:
@@ -440,11 +441,12 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 logger.warning(f"Could not delete user message: {e}")
         return ASK_PLACES
     else:
-        # ****** إرسال الرد الجديد (الأزرار) قبل الحذف ******
+        # ****** إرسال الرد الجديد (رسالة التأكيد وأزرار المنتجات) قبل الحذف ******
         await update.message.reply_text(f"تم حفظ السعر لـ *'{product}'*.", parse_mode="Markdown") # رسالة تأكيد إضافية
-        await show_buttons(update.effective_chat.id, context, user_id, order_id) # هذا يرسل رسالة أزرار جديدة
+        # show_buttons ترسل رسالة الأزرار الجديدة للبوت وتحذف رسالة الأزرار القديمة للبوت
+        await show_buttons(update.effective_chat.id, context, user_id, order_id) 
 
-        # ****** الآن، احذف رسالة المستخدم بعد أن تم إرسال الرد الجديد بنجاح ******
+        # ****** الآن، احذف رسالة المستخدم بعد أن تم إرسال الردود الجديدة بنجاح ******
         if 'last_user_message_id' in context.user_data[user_id]:
             try:
                 await context.bot.delete_message(chat_id=update.message.chat_id, message_id=context.user_data[user_id]['last_user_message_id'])
@@ -472,7 +474,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     message_object = None 
     user_id = str(update.effective_user.id) # استخدم effective_user للحصول على ID المستخدم
 
-    # تخزين ID رسالة المجهز هنا فقط إذا كانت رسالة نصية، وليس من كولباك
+    # تخزين ID رسالة المجهز هنا فقط إذا كانت رسالة نصية، وليس من كولباك (زر)
     if update.message:
         context.user_data.setdefault(user_id, {})
         context.user_data[user_id]['last_user_message_id'] = update.message.message_id 
@@ -751,7 +753,7 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"**أكثر منتج تم طلبه:** {top_product_str}\n\n"
         f"**مجموع الشراء الكلي (للطلبات المعالجة):** {format_float(total_buy_all_orders)}\n"
         f"**مجموع البيع الكلي (للطلبات المعالجة):** {format_float(total_sell_all_orders)}\n"
-        f"**صافي الربح الكلي (للطلبات المعالجة):** {format_sell_all_orders - total_buy_all_orders)}\n" # تم تصحيح هنا
+        f"**صافي الربح الكلي (للطلبات المعالجة):** {format_float(total_sell_all_orders - total_buy_all_orders)}\n"
         f"**الربح التراكمي في البوت (منذ آخر تصفير):** {format_float(daily_profit)} دينار\n\n"
         f"**--- تفاصيل الطلبات ---**\n" + "\n".join(details)
     )
