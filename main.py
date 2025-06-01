@@ -338,15 +338,32 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
+    # تهيئة current_product و إضافة last_user_message_id
+    context.user_data.setdefault(user_id, {})
+    context.user_data[user_id]['last_user_message_id'] = update.message.message_id
+
     data = current_product.get(user_id)
     if not data:
         await update.message.reply_text("عذراً، حدث خطأ. الرجاء المحاولة مرة أخرى أو بدء طلبية جديدة.")
+        # حاول حذف رسالة المستخدم حتى في حالة الخطأ
+        if 'last_user_message_id' in context.user_data[user_id]:
+            try:
+                await context.bot.delete_message(chat_id=update.message.chat_id, message_id=context.user_data[user_id]['last_user_message_id'])
+                del context.user_data[user_id]['last_user_message_id']
+            except Exception as e:
+                logger.warning(f"Could not delete user message: {e}")
         return ConversationHandler.END
     
     order_id, product = data["order_id"], data["product"]
     
     if order_id not in orders or product not in orders[order_id].get("products", []):
         await update.message.reply_text("عذراً، الطلب أو المنتج لم يعد موجوداً. الرجاء بدء طلبية جديدة.")
+        if 'last_user_message_id' in context.user_data[user_id]:
+            try:
+                await context.bot.delete_message(chat_id=update.message.chat_id, message_id=context.user_data[user_id]['last_user_message_id'])
+                del context.user_data[user_id]['last_user_message_id']
+            except Exception as e:
+                logger.warning(f"Could not delete user message: {e}")
         return ConversationHandler.END
 
     try:
@@ -361,20 +378,44 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = price
     save_data()
 
+    # حذف رسالة المستخدم بعد المعالجة بنجاح
+    if 'last_user_message_id' in context.user_data[user_id]:
+        try:
+            await context.bot.delete_message(chat_id=update.message.chat_id, message_id=context.user_data[user_id]['last_user_message_id'])
+            del context.user_data[user_id]['last_user_message_id'] # مسحها بعد الحذف
+        except Exception as e:
+            logger.warning(f"Could not delete user message: {e}")
+
     await update.message.reply_text(f"شكراً. وهسه، بيش راح تبيع *'{product}'*؟", parse_mode="Markdown")
     return ASK_SELL
 
 async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
+    # تهيئة current_product و إضافة last_user_message_id
+    context.user_data.setdefault(user_id, {})
+    context.user_data[user_id]['last_user_message_id'] = update.message.message_id
+
     data = current_product.get(user_id)
     if not data:
         await update.message.reply_text("عذراً، حدث خطأ. الرجاء المحاولة مرة أخرى أو بدء طلبية جديدة.")
+        if 'last_user_message_id' in context.user_data[user_id]:
+            try:
+                await context.bot.delete_message(chat_id=update.message.chat_id, message_id=context.user_data[user_id]['last_user_message_id'])
+                del context.user_data[user_id]['last_user_message_id']
+            except Exception as e:
+                logger.warning(f"Could not delete user message: {e}")
         return ConversationHandler.END
     
     order_id, product = data["order_id"], data["product"]
     
     if order_id not in orders or product not in orders[order_id].get("products", []):
         await update.message.reply_text("عذراً، الطلب أو المنتج لم يعد موجوداً. الرجاء بدء طلبية جديدة.")
+        if 'last_user_message_id' in context.user_data[user_id]:
+            try:
+                await context.bot.delete_message(chat_id=update.message.chat_id, message_id=context.user_data[user_id]['last_user_message_id'])
+                del context.user_data[user_id]['last_user_message_id']
+            except Exception as e:
+                logger.warning(f"Could not delete user message: {e}")
         return ConversationHandler.END
 
     try:
@@ -388,6 +429,14 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     pricing.setdefault(order_id, {}).setdefault(product, {})["sell"] = price
     save_data()
+
+    # حذف رسالة المستخدم بعد المعالجة بنجاح
+    if 'last_user_message_id' in context.user_data[user_id]:
+        try:
+            await context.bot.delete_message(chat_id=update.message.chat_id, message_id=context.user_data[user_id]['last_user_message_id'])
+            del context.user_data[user_id]['last_user_message_id']
+        except Exception as e:
+            logger.warning(f"Could not delete user message: {e}")
 
     await update.message.reply_text(f"تم حفظ السعر لـ *'{product}'*.", parse_mode="Markdown")
     
@@ -434,7 +483,8 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     global daily_profit
     
     places = None
-    message_object = None # هذا سيشير إلى كائن الرسالة نفسها
+    message_object = None 
+    user_id = str(update.effective_user.id) # استخدم effective_user للحصول على ID المستخدم
 
     if update.callback_query:
         query = update.callback_query
@@ -442,7 +492,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.answer()
         if query.data.startswith("places_"):
             places = int(query.data.split("_")[1])
-            message_object = query.message # حفظ كائن الرسالة للرد عليها
+            message_object = query.message 
             try:
                 await context.bot.edit_message_reply_markup(
                     chat_id=query.message.chat_id,
@@ -457,7 +507,11 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
             await query.edit_message_text("عذراً، حدث خطأ غير متوقع. الرجاء المحاولة مرة أخرى أو بدء طلبية جديدة.")
             return ConversationHandler.END
     elif update.message:
-        message_object = update.message # حفظ كائن الرسالة للرد عليها
+        message_object = update.message 
+        # تخزين معرف رسالة المستخدم للحذف لاحقًا (فقط للرسائل النصية)
+        context.user_data.setdefault(user_id, {})
+        context.user_data[user_id]['last_user_message_id'] = update.message.message_id
+        
         try:
             places = int(message_object.text.strip())
             if places < 0:
@@ -474,6 +528,13 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     order_id = context.user_data.get("completed_order_id")
     if not order_id or order_id not in orders:
         await message_object.reply_text("عذراً، لا توجد طلبية مكتملة لمعالجتها أو تم حذفها. الرجاء بدء طلبية جديدة.")
+        # حاول حذف رسالة المستخدم حتى في حالة الخطأ (فقط إذا كانت نصية)
+        if update.message and 'last_user_message_id' in context.user_data[user_id]:
+            try:
+                await context.bot.delete_message(chat_id=update.message.chat_id, message_id=context.user_data[user_id]['last_user_message_id'])
+                del context.user_data[user_id]['last_user_message_id']
+            except Exception as e:
+                logger.warning(f"Could not delete user message: {e}")
         return ConversationHandler.END
 
     order = orders[order_id]
@@ -570,6 +631,14 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         [InlineKeyboardButton("إنشاء طلب جديد", callback_data="start_new_order")]
     ])
     await message_object.reply_text("شنو تريد تسوي هسه؟", reply_markup=final_actions_keyboard)
+
+    # حذف رسالة المستخدم بعد المعالجة بنجاح (فقط إذا كانت رسالة نصية)
+    if update.message and 'last_user_message_id' in context.user_data[user_id]:
+        try:
+            await context.bot.delete_message(chat_id=update.message.chat_id, message_id=context.user_data[user_id]['last_user_message_id'])
+            del context.user_data[user_id]['last_user_message_id']
+        except Exception as e:
+            logger.warning(f"Could not delete user message: {e}")
 
     return ConversationHandler.END
 
@@ -752,3 +821,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
