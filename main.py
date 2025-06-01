@@ -338,7 +338,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
     # تهيئة current_product و إضافة last_user_message_id
     context.user_data.setdefault(user_id, {})
-    context.user_data[user_id]['last_user_message_id'] = update.message.message_id
+    context.user_data[user_id]['last_user_message_id'] = update.message.message_id # تخزين ID رسالة المجهز هنا
 
     data = current_product.get(user_id)
     if not data:
@@ -355,15 +355,17 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         price = float(update.message.text.strip())
         if price < 0:
             await update.message.reply_text("سعر الشراء يجب أن يكون رقماً إيجابياً. بيش اشتريت بالضبط؟")
-            return ASK_BUY
+            return ASK_BUY # لا نحذف الرسالة هنا
     except ValueError:
         await update.message.reply_text("الرجاء إدخال رقم صحيح لسعر الشراء. بيش اشتريت؟")
-        return ASK_BUY
+        return ASK_BUY # لا نحذف الرسالة هنا
     
     pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = price
     save_data()
 
-    # ****** الآن، احذف الرسالة بعد أن تم تخزين السعر بنجاح ******
+    await update.message.reply_text(f"شكراً. وهسه، بيش راح تبيع *'{product}'*؟", parse_mode="Markdown")
+    
+    # ****** احذف الرسالة هنا، بعد أن تم إرسال الرد التالي بنجاح ******
     if 'last_user_message_id' in context.user_data[user_id]:
         try:
             await context.bot.delete_message(chat_id=update.message.chat_id, message_id=context.user_data[user_id]['last_user_message_id'])
@@ -371,14 +373,13 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.warning(f"Could not delete user message: {e}")
 
-    await update.message.reply_text(f"شكراً. وهسه، بيش راح تبيع *'{product}'*؟", parse_mode="Markdown")
     return ASK_SELL
 
 async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
     # تهيئة current_product و إضافة last_user_message_id
     context.user_data.setdefault(user_id, {})
-    context.user_data[user_id]['last_user_message_id'] = update.message.message_id
+    context.user_data[user_id]['last_user_message_id'] = update.message.message_id # تخزين ID رسالة المجهز هنا
 
     data = current_product.get(user_id)
     if not data:
@@ -395,15 +396,17 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         price = float(update.message.text.strip())
         if price < 0:
             await update.message.reply_text("سعر البيع يجب أن يكون رقماً إيجابياً. بيش راح تبيع بالضبط؟")
-            return ASK_SELL
+            return ASK_SELL # لا نحذف الرسالة هنا
     except ValueError:
         await update.message.reply_text("الرجاء إدخال رقم صحيح لسعر البيع. بيش حتبيع؟")
-        return ASK_SELL
+        return ASK_SELL # لا نحذف الرسالة هنا
     
     pricing.setdefault(order_id, {}).setdefault(product, {})["sell"] = price
     save_data()
 
-    # ****** الآن، احذف الرسالة بعد أن تم تخزين السعر بنجاح ******
+    await update.message.reply_text(f"تم حفظ السعر لـ *'{product}'*.", parse_mode="Markdown")
+    
+    # ****** احذف الرسالة هنا، بعد أن تم إرسال الرد التالي بنجاح ******
     if 'last_user_message_id' in context.user_data[user_id]:
         try:
             await context.bot.delete_message(chat_id=update.message.chat_id, message_id=context.user_data[user_id]['last_user_message_id'])
@@ -411,8 +414,6 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         except Exception as e:
             logger.warning(f"Could not delete user message: {e}")
 
-    await update.message.reply_text(f"تم حفظ السعر لـ *'{product}'*.", parse_mode="Markdown")
-    
     if order_id not in orders:
         await update.message.reply_text("عذراً، الطلب لم يعد موجوداً بعد حفظ السعر. الرجاء بدء طلبية جديدة.")
         return ConversationHandler.END
@@ -485,16 +486,16 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         message_object = update.message 
         # تخزين معرف رسالة المستخدم للحذف لاحقًا (فقط للرسائل النصية)
         context.user_data.setdefault(user_id, {})
-        context.user_data[user_id]['last_user_message_id'] = update.message.message_id 
+        context.user_data[user_id]['last_user_message_id'] = update.message.message_id # تخزين ID رسالة المجهز هنا
 
         try:
             places = int(message_object.text.strip())
             if places < 0:
                 await message_object.reply_text("عدد المحلات يجب أن يكون رقماً موجباً. الرجاء إدخال عدد المحلات بشكل صحيح.")
-                return ASK_PLACES
+                return ASK_PLACES # لا نحذف الرسالة هنا
         except ValueError:
             await message_object.reply_text("الرجاء إدخال عدد صحيح لعدد المحلات.")
-            return ASK_PLACES
+            return ASK_PLACES # لا نحذف الرسالة هنا
     
     if places is None:
         logger.warning("No places count received.")
@@ -600,7 +601,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     ])
     await message_object.reply_text("شنو تريد تسوي هسه؟", reply_markup=final_actions_keyboard)
 
-    # ****** الآن، احذف رسالة المستخدم بعد أن تم تخزين العدد بنجاح ******
+    # ****** احذف الرسالة هنا، بعد أن تم إرسال الردود النهائية بنجاح ******
     # حذف رسالة المستخدم بعد المعالجة بنجاح (فقط إذا كانت رسالة نصية)
     if update.message and 'last_user_message_id' in context.user_data[user_id]:
         try:
