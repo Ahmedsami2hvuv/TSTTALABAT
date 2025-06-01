@@ -66,7 +66,7 @@ def load_data():
                 temp_data = json.load(f)
                 pricing.clear()
                 pricing.update(temp_data)
-                pricing = {str(k): v for k, v in pricing.items()}
+                pricing = {str(k): v for pk, pv in temp_data.items()} # Fix here, ensure keys are strings
                 for oid in pricing:
                     if isinstance(pricing[oid], dict):
                         pricing[oid] = {str(pk): pv for pk, pv in pricing[oid].items()}
@@ -434,7 +434,8 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     global daily_profit
     
     places = None
-    message_to_send_from = None
+    message_to_send_from_chat_id = None # هذا سيشير إلى الـ chat_id الذي جاءت منه الرسالة
+    message_object = None # هذا سيشير إلى كائن الرسالة نفسها
 
     if update.callback_query:
         query = update.callback_query
@@ -442,7 +443,8 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.answer()
         if query.data.startswith("places_"):
             places = int(query.data.split("_")[1])
-            message_to_send_from = query.message
+            message_to_send_from_chat_id = query.message.chat_id
+            message_object = query.message # حفظ كائن الرسالة للرد عليها
             try:
                 await context.bot.edit_message_reply_markup(
                     chat_id=query.message.chat_id,
@@ -457,14 +459,15 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
             await query.edit_message_text("عذراً، حدث خطأ غير متوقع. الرجاء المحاولة مرة أخرى أو بدء طلبية جديدة.")
             return ConversationHandler.END
     elif update.message:
-        message_to_send_from = update.message
+        message_object = update.message # حفظ كائن الرسالة للرد عليها
+        message_to_send_from_chat_id = message_object.chat_id
         try:
-            places = int(message_to_send_from.text.strip())
+            places = int(message_object.text.strip())
             if places < 0:
-                await message_to_send_from.reply_text("عدد المحلات يجب أن يكون رقماً موجباً. الرجاء إدخال عدد المحلات بشكل صحيح.")
+                await message_object.reply_text("عدد المحلات يجب أن يكون رقماً موجباً. الرجاء إدخال عدد المحلات بشكل صحيح.")
                 return ASK_PLACES
         except ValueError:
-            await message_to_send_from.reply_text("الرجاء إدخال عدد صحيح لعدد المحلات.")
+            await message_object.reply_text("الرجاء إدخال عدد صحيح لعدد المحلات.")
             return ASK_PLACES
     
     if places is None:
@@ -473,7 +476,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     order_id = context.user_data.get("completed_order_id")
     if not order_id or order_id not in orders:
-        await message_to_send_from.reply_text("عذراً، لا توجد طلبية مكتملة لمعالجتها أو تم حذفها. الرجاء بدء طلبية جديدة.")
+        await message_object.reply_text("عذراً، لا توجد طلبية مكتملة لمعالجتها أو تم حذفها. الرجاء بدء طلبية جديدة.")
         return ConversationHandler.END
 
     order = orders[order_id]
@@ -529,8 +532,8 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.info(f"Admin invoice and WhatsApp button sent to OWNER_ID: {OWNER_ID}")
     except Exception as e:
         logger.error(f"Could not send admin invoice to OWNER_ID {OWNER_ID}: {e}")
-        # إذا لم يتمكن من إرسالها للمالك، يخبر المستخدم في المحادثة
-        await message_to_send_from.reply_text("عذراً، لم أتمكن من إرسال فاتورة الإدارة إلى خاصك. يرجى التأكد من أنني أستطيع مراسلتك في الخاص (قد تحتاج إلى بدء محادثة معي أولاً).")
+        # إذا لم يتمكن من إرسالها للمالك، يخبر المستخدم في المحادثة الأصلية (الكروب)
+        await message_object.reply_text("عذراً، لم أتمكن من إرسال فاتورة الإدارة إلى خاصك. يرجى التأكد من أنني أستطيع مراسلتك في الخاص (قد تحتاج إلى بدء محادثة معي أولاً).")
 
 
     running_total = 0.0
@@ -554,7 +557,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     
     # نسخة الزبون (ستظل في المحادثة العامة)
-    await message_to_send_from.reply_text("نسخة الزبون (لإرسالها للعميل):\n" + customer_text, parse_mode="Markdown")
+    await message_object.reply_text("نسخة الزبون (لإرسالها للعميل):\n" + customer_text, parse_mode="Markdown")
 
     encoded_customer_invoice = customer_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
 
@@ -562,15 +565,16 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     whatsapp_customer_button_markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("إرسال فاتورة الزبون للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_customer_invoice}")]
     ])
-    await message_to_send_from.reply_text("دوس على هذه الأزرار لإرسال فاتورة الزبون عبر الواتساب:", reply_markup=whatsapp_customer_button_markup)
+    await message_object.reply_text("دوس على هذه الأزرار لإرسال فاتورة الزبون عبر الواتساب:", reply_markup=whatsapp_customer_button_markup)
     
     final_actions_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("تعديل الطلب الأخير", callback_data=f"edit_last_order_{order_id}")],
         [InlineKeyboardButton("إنشاء طلب جديد", callback_data="start_new_order")]
     ])
-    await message_to_send_from.reply_text("شنو تريد تسوي هسه؟", reply_markup=final_actions_keyboard)
+    await message_object.reply_text("شنو تريد تسوي هسه؟", reply_markup=final_actions_keyboard)
 
     return ConversationHandler.END
+
 
 async def edit_last_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
