@@ -283,15 +283,6 @@ async def show_buttons(chat_id, context, user_id, order_id, is_final_buttons=Fal
     
     markup = InlineKeyboardMarkup(buttons_list)
     
-    # إرسال الرسالة الجديدة
-    msg = await context.bot.send_message(
-        chat_id=chat_id,
-        text=f"اضغط على منتج لتحديد سعره من *{order['title']}*:",
-        reply_markup=markup,
-        parse_mode="Markdown"
-    )
-    logger.info(f"Sent new button message {msg.message_id} for order {order_id}")
-
     # محاولة حذف الرسالة القديمة وتجاهل الأخطاء
     msg_info = last_button_message.get(order_id)
     if msg_info and msg_info.get("chat_id") == chat_id:
@@ -306,6 +297,15 @@ async def show_buttons(chat_id, context, user_id, order_id, is_final_buttons=Fal
             if order_id in last_button_message:
                 del last_button_message[order_id]
                 save_data() # حفظ التغيير لضمان عدم الرجوع للرسالة المحذوفة بعد إعادة تشغيل البوت
+
+    # إرسال الرسالة الجديدة
+    msg = await context.bot.send_message(
+        chat_id=chat_id,
+        text=f"اضغط على منتج لتحديد سعره من *{order['title']}*:",
+        reply_markup=markup,
+        parse_mode="Markdown"
+    )
+    logger.info(f"Sent new button message {msg.message_id} for order {order_id}")
     
     last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
     save_data() # حفظ الـ ID والـ chat_id للرسالة الجديدة
