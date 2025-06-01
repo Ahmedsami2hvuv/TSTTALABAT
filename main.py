@@ -474,40 +474,6 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     pricing.setdefault(order_id, {}).setdefault(product, {})["sell"] = price
     save_data()
 
-    # ****** الآن، بعد أن تم حفظ السعر، نقوم بحذف رسائل البوت والمستخدم للأسعار الخاصة بهذا المنتج فقط ******
-    # 1. حذف رسالة سؤال الشراء من البوت
-    if 'ask_buy_message_id' in context.user_data[user_id]:
-        try:
-            await context.bot.delete_message(chat_id=update.message.chat_id, message_id=context.user_data[user_id]['ask_buy_message_id'])
-            del context.user_data[user_id]['ask_buy_message_id']
-        except Exception as e:
-            logger.warning(f"Could not delete 'ask buy' message ({context.user_data[user_id].get('ask_buy_message_id', 'N/A')}): {e}")
-    
-    # 2. حذف رسالة إدخال سعر الشراء من المستخدم
-    if 'user_buy_message_id' in context.user_data[user_id]:
-        try:
-            await context.bot.delete_message(chat_id=update.message.chat_id, message_id=context.user_data[user_id]['user_buy_message_id'])
-            del context.user_data[user_id]['user_buy_message_id']
-        except Exception as e:
-            logger.warning(f"Could not delete user's buy message ({context.user_data[user_id].get('user_buy_message_id', 'N/A')}): {e}")
-
-    # 3. حذف رسالة سؤال البيع من البوت
-    if 'ask_sell_message_id' in context.user_data[user_id]:
-        try:
-            await context.bot.delete_message(chat_id=update.message.chat_id, message_id=context.user_data[user_id]['ask_sell_message_id'])
-            del context.user_data[user_id]['ask_sell_message_id']
-        except Exception as e:
-            logger.warning(f"Could not delete 'ask sell' message ({context.user_data[user_id].get('ask_sell_message_id', 'N/A')}): {e}")
-
-    # 4. حذف رسالة إدخال سعر البيع من المستخدم
-    if 'user_sell_message_id' in context.user_data[user_id]:
-        try:
-            await context.bot.delete_message(chat_id=update.message.chat_id, message_id=context.user_data[user_id]['user_sell_message_id'])
-            del context.user_data[user_id]['user_sell_message_id']
-        except Exception as e:
-            logger.warning(f"Could not delete user's sell message ({context.user_data[user_id].get('user_sell_message_id', 'N/A')}): {e}")
-
-
     # فحص ما إذا تم تسعير جميع المنتجات
     order = orders[order_id]
     all_priced = True
@@ -557,8 +523,9 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # ****** بعد الحذف، نرسل الأزرار المحدثة ******
         await show_buttons(update.effective_chat.id, context, user_id, order_id, confirmation_message=confirmation_msg)
         
-        logger.info(f"Transitioning back to ASK_BUY for order {order_id}.")
-        return ASK_BUY
+        # لا نعود إلى ASK_BUY هنا، لأننا انتهينا من تسعير المنتج الحالي، ونريد أن تظهر الأزرار ليختار المستخدم منتجاً آخر
+        # وسننتظر من المستخدم أن يضغط على زر آخر أو يدخل أمر جديد
+        return ConversationHandler.END # ننهي المحادثة الحالية ونترك المستخدم يختار منتجاً آخر بالنقر على الأزرار
 
 
 def calculate_extra(places):
@@ -591,14 +558,6 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         if query.data.startswith("places_"):
             places = int(query.data.split("_")[1])
             message_object = query.message 
-            # حذف رسالة البوت التي تحتوي على أزرار "كم محل"
-            if 'ask_places_message_id' in context.user_data[user_id]:
-                try:
-                    await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=context.user_data[user_id]['ask_places_message_id'])
-                    del context.user_data[user_id]['ask_places_message_id']
-                    logger.info(f"Deleted 'ask places' message {message_object.message_id} after callback.")
-                except Exception as e:
-                    logger.warning(f"Could not delete 'ask places' message {message_object.message_id} via callback: {e}")
         else:
             logger.error(f"Unexpected callback_query in receive_place_count: {query.data}")
             await query.edit_message_text("عذراً، حدث خطأ غير متوقع. الرجاء المحاولة مرة أخرى أو بدء طلبية جديدة.")
@@ -728,18 +687,69 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     ])
     await message_object.reply_text("شنو تريد تسوي هسه؟", reply_markup=final_actions_keyboard)
 
-    # حذف رسالة المستخدم بعد المعالجة بنجاح (فقط إذا كانت رسالة نصية)
+    # ***************************************************************
+    # تم نقل منطق حذف الرسائل إلى هنا، بعد التأكد من إرسال الفواتير
+    # ***************************************************************
+
+    # 1. حذف رسالة سؤال الشراء من البوت (إن وجدت)
+    if 'ask_buy_message_id' in context.user_data[user_id]:
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=context.user_data[user_id]['ask_buy_message_id'])
+            del context.user_data[user_id]['ask_buy_message_id']
+            logger.info(f"Deleted 'ask buy' message {context.user_data[user_id].get('ask_buy_message_id', 'N/A')}.")
+        except Exception as e:
+            logger.warning(f"Could not delete 'ask buy' message: {e}")
+    
+    # 2. حذف رسالة إدخال سعر الشراء من المستخدم (إن وجدت)
+    if 'user_buy_message_id' in context.user_data[user_id]:
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=context.user_data[user_id]['user_buy_message_id'])
+            del context.user_data[user_id]['user_buy_message_id']
+            logger.info(f"Deleted user's buy message {context.user_data[user_id].get('user_buy_message_id', 'N/A')}.")
+        except Exception as e:
+            logger.warning(f"Could not delete user's buy message: {e}")
+
+    # 3. حذف رسالة سؤال البيع من البوت (إن وجدت)
+    if 'ask_sell_message_id' in context.user_data[user_id]:
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=context.user_data[user_id]['ask_sell_message_id'])
+            del context.user_data[user_id]['ask_sell_message_id']
+            logger.info(f"Deleted 'ask sell' message {context.user_data[user_id].get('ask_sell_message_id', 'N/A')}.")
+        except Exception as e:
+            logger.warning(f"Could not delete 'ask sell' message: {e}")
+
+    # 4. حذف رسالة إدخال سعر البيع من المستخدم (إن وجدت)
+    if 'user_sell_message_id' in context.user_data[user_id]:
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=context.user_data[user_id]['user_sell_message_id'])
+            del context.user_data[user_id]['user_sell_message_id']
+            logger.info(f"Deleted user's sell message {context.user_data[user_id].get('user_sell_message_id', 'N/A')}.")
+        except Exception as e:
+            logger.warning(f"Could not delete user's sell message: {e}")
+
+    # 5. حذف رسالة البوت التي تحتوي على أزرار "كم محل" (إن وجدت)
+    if 'ask_places_message_id' in context.user_data[user_id]:
+        try:
+            await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=context.user_data[user_id]['ask_places_message_id'])
+            del context.user_data[user_id]['ask_places_message_id']
+            logger.info(f"Deleted 'ask places' message {context.user_data[user_id].get('ask_places_message_id', 'N/A')}.")
+        except Exception as e:
+            logger.warning(f"Could not delete 'ask places' message: {e}")
+
+    # 6. حذف رسالة المستخدم النصية بعد المعالجة بنجاح (فقط إذا كانت رسالة نصية لأماكن)
     if update.message and 'last_user_message_to_delete_places' in context.user_data[user_id]:
         try:
             await context.bot.delete_message(chat_id=update.message.chat_id, message_id=context.user_data[user_id]['last_user_message_to_delete_places'])
             del context.user_data[user_id]['last_user_message_to_delete_places']
+            logger.info(f"Deleted user's places message {context.user_data[user_id].get('last_user_message_to_delete_places', 'N/A')}.")
         except Exception as e:
             logger.warning(f"Could not delete user message in receive_place_count: {e}")
+
 
     # مسح بيانات المستخدم من context.user_data بعد الانتهاء من الطلب
     if user_id in context.user_data:
         del context.user_data[user_id]
-        logger.info(f"Cleared user_data for user {user_id} after successful order completion.")
+        logger.info(f"Cleared user_data for user {user_id} after successful order completion and message deletion.")
         
     return ConversationHandler.END
 
