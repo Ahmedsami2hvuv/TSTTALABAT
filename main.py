@@ -171,7 +171,7 @@ def get_invoice_number():
 load_data()
 
 # حالات المحادثة
-ASK_BUY, ASK_SELL = range(2) # هنا شلنا ASK_PLACES من حالات المحادثة الرئيسية
+ASK_BUY, ASK_SELL = range(2) 
 
 # جلب التوكن ومعرف المالك من متغيرات البيئة
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -266,7 +266,7 @@ async def process_order(update, context, message, edited=False):
         if msg_info and msg_info.get("message_id") == message.message_id and str(msg_info.get("chat_id")) == str(message.chat_id):
             if oid in orders and str(orders[oid].get("user_id")) == user_id:
                 order_id = oid
-                logger.info(f"Found existing order {existing_order_id} for user {user_id} based on message ID.")
+                logger.info(f"Found existing order {order_id} for user {user_id} based on message ID.")
                 break
             else:
                 logger.warning(f"Message ID {message.message_id} found in last_button_message but not linked to user {user_id} or order {oid} is missing. Treating as new.")
@@ -572,7 +572,9 @@ async def request_places_count(chat_id, context, user_id, order_id):
     """
     تسأل المستخدم عن عدد المحلات وتوفر أزرار اختيار.
     """
-    context.user_data[user_id]["completed_order_id"] = order_id # للتأكد من وجود order_id
+    # هنا نحفظ الـ order_id في user_data["awaiting_places_for"]
+    # حتى لمن المستخدم يكتب رقم يدوي، نعرف هذا الرقم لـ يا طلب.
+    context.user_data.setdefault(user_id, {})["awaiting_places_for"] = order_id 
     
     buttons = []
     emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
@@ -592,9 +594,13 @@ async def request_places_count(chat_id, context, user_id, order_id):
     # لا ننهي المحادثة هنا، هذا جزء من تدفق الطلب وليس Conversation state
     # العودة إلى ConversationHandler.END ستؤدي إلى إنهاء المحادثة بشكل عام
     # ولكن نحن هنا نرسل رسالة وننتظر استجابة لأزرار المحلات
-    return
+    # (هنا ما نرجع ConversationHandler.END, لأنو هذه الدالة تستدعى كجزء من منطق البوت مو كـ state)
+    return 
 
-async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_places_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    هاندلر مخصص لعدد المحلات، يستقبل سواء كان زر أو إدخال نصي.
+    """
     global daily_profit
     
     places = None
@@ -623,7 +629,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
                     await context.bot.send_message(chat_id=chat_id, text="عذراً، الطلب الذي تحاول تعديله غير موجود أو ليس لك. الرجاء بدء طلبية جديدة.")
                     if user_id in context.user_data:
                         del context.user_data[user_id]
-                    return ConversationHandler.END # هنا ننهي الـ conversation إذا كان في مشكلة بالطلب
+                    return # لا ننهي هنا، بس نوقف تنفيذ الدالة
                 
                 if query.message:
                     context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
@@ -634,41 +640,40 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
             await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ في بيانات الزر. الرجاء المحاولة مرة أخرى.")
             if user_id in context.user_data:
                 del context.user_data[user_id]
-            return ConversationHandler.END # هنا ننهي الـ conversation
+            return 
             
 
     elif update.message: # إذا المستخدم كتب رقم يدوي
         context.user_data[user_id]['messages_to_delete'].append({'chat_id': update.message.chat_id, 'message_id': update.message.message_id})
 
+        # هنا نستخدم awaiting_places_for حتى نعرف يا طلب جاي نتعامل وياه
+        target_order_id = context.user_data[user_id].get("awaiting_places_for") 
+        if not target_order_id or target_order_id not in orders or str(orders[target_order_id].get("user_id")) != user_id:
+            logger.warning(f"User {user_id} sent places count manually without an active 'awaiting_places_for' order.")
+            # ممكن تكون رسالة عادية، نرجعها للـ receive_order إذا ما بيها علاقة بالمحلات
+            # (أو نبعث رسالة "يرجى بدء طلب جديد")
+            await context.bot.send_message(chat_id=chat_id, text="عذراً، لا توجد طلبية بانتظار عدد المحلات منك. الرجاء بدء طلبية جديدة أو التحقق من الخطوات.")
+            if user_id in context.user_data:
+                del context.user_data[user_id]
+            return # نطلع من الدالة
+        
         try:
             places = int(update.message.text.strip())
             if places < 0:
                 msg_error = await context.bot.send_message(chat_id=chat_id, text="عدد المحلات يجب أن يكون رقماً موجباً. الرجاء إدخال عدد المحلات بشكل صحيح.")
                 context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
-                # ما ننهي ConversationHandler هنا، نرجع لنفس الـ state
-                return ConversationHandler.END # Changed from ASK_PLACES to END, as it's not part of ConvHandler anymore
+                return # نبقى بنفس الحالة
         except ValueError:
             msg_error = await context.bot.send_message(chat_id=chat_id, text="الرجاء إدخال عدد صحيح لعدد المحلات.")
             context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
-            # ما ننهي ConversationHandler هنا، نرجع لنفس الـ state
-            return ConversationHandler.END # Changed from ASK_PLACES to END, as it's not part of ConvHandler anymore
-    
-    # بعد ما استخرجنا الـ order_id (من الزر أو من الـ user_data إذا إدخال يدوي)
-    if target_order_id is None: # إذا ما استخرجناه من الزر، نجيبه من الـ user_data
-        target_order_id = context.user_data[user_id].get("completed_order_id")
-
-    if not target_order_id or target_order_id not in orders or str(orders[target_order_id].get("user_id")) != user_id:
-        await context.bot.send_message(chat_id=chat_id, text="عذراً، لا توجد طلبية مكتملة لمعالجتها أو تم حذفها. الرجاء بدء طلبية جديدة.")
-        if user_id in context.user_data:
-            del context.user_data[user_id]
-        return ConversationHandler.END # هنا ننهي الـ conversation
+            return # نبقى بنفس الحالة
     
     if places is None:
         logger.warning("No places count received or invalid input.")
         await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من فهم عدد المحلات. الرجاء إدخال رقم صحيح.")
         if user_id in context.user_data:
             del context.user_data[user_id]
-        return ConversationHandler.END # هنا ننهي الـ conversation
+        return 
 
     # تحديث عدد المحلات في بيانات الطلب باستخدام الـ target_order_id
     orders[target_order_id]["places_count"] = places
@@ -679,11 +684,16 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         for msg_info in context.user_data[user_id]['messages_to_delete']:
             context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
         context.user_data[user_id]['messages_to_delete'].clear()
+    
+    # بعد ما تم إدخال عدد المحلات بنجاح، نشيل "awaiting_places_for"
+    if "awaiting_places_for" in context.user_data[user_id]:
+        del context.user_data[user_id]["awaiting_places_for"]
+
 
     # استدعاء show_final_options لعرض الأزرار النهائية
     await show_final_options(chat_id, context, user_id, target_order_id, message_prefix="تم تحديث عدد المحلات بنجاح.")
     
-    return ConversationHandler.END # هنا ننهي الـ conversation
+    return 
 
 
 async def show_final_options(chat_id, context, user_id, order_id, message_prefix=None):
@@ -867,7 +877,9 @@ async def edit_places(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.message:
         context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
 
-    context.user_data[user_id]["completed_order_id"] = order_id # نضع الاوردر اي دي حتى نرجع لـ receive_place_count
+    # هنا نحفظ الـ order_id في user_data["awaiting_places_for"]
+    # حتى لمن المستخدم يكتب رقم يدوي، نعرف هذا الرقم لـ يا طلب.
+    context.user_data.setdefault(user_id, {})["awaiting_places_for"] = order_id 
     
     buttons = []
     emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
@@ -1026,9 +1038,11 @@ def main():
     app.add_handler(CallbackQueryHandler(edit_places, pattern="^edit_places_"))
     app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern="^start_new_order$"))
 
-    # إضافة هاندلر منفصل لعدد المحلات
-    app.add_handler(CallbackQueryHandler(receive_place_count, pattern=r"^places_[a-f0-9]{8}_\d+$"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_place_count)) # لاستقبال الرقم كتابةً
+    # هاندلر منفصل لعدد المحلات (الأزرار والرسائل النصية)
+    # ملاحظة: الأولوية مهمة هنا. لازم يكون بعد الـ conv_handler
+    app.add_handler(CallbackQueryHandler(handle_places_input, pattern=r"^places_[a-f0-9]{8}_\d+$"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(r"^\d+$"), handle_places_input)) # يستقبل فقط الأرقام من غير أوامر
+
 
     # محادثة تجهيز الطلبات (الآن أصبحت فقط لـ ASK_BUY و ASK_SELL)
     conv_handler = ConversationHandler(
@@ -1056,4 +1070,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
