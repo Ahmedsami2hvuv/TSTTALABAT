@@ -135,13 +135,17 @@ def _save_data_to_disk():
             logger.error(f"Error saving data to disk: {e}")
 
 # دالة الحفظ المؤجل
+# دالة الحفظ المؤجل - راح نغيرها
 def schedule_save():
     global save_timer
     if save_timer is not None:
         save_timer.cancel()
 
-    save_timer = threading.Timer(1.0, _save_data_to_disk)
-    save_timer.start()
+    # شيل الـ Timer وخليه يستدعي دالة الحفظ المباشرة بالخلفية
+    # هذا راح يخليها تشتغل بالخلفية بأسرع وقت
+    _save_data_to_disk() # استدعيها مباشرة
+    logger.info("Data save scheduled in background without timer.")
+
 
 # تهيئة ملف عداد الفواتير
 os.makedirs(DATA_DIR, exist_ok=True)
