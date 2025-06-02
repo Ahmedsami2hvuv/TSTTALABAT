@@ -8,8 +8,8 @@ import os
 from collections import Counter
 import json
 import logging
-import asyncio # جبنا asyncio حتى نستخدم sleep
-import threading # جبنا threading حتى نستخدم المؤقت (Timer)
+import asyncio 
+import threading 
 
 # تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
 logging.basicConfig(
@@ -186,6 +186,16 @@ def format_float(value):
         return formatted[:-2]
     return formatted
 
+# دالة مساعدة لحذف الرسائل في الخلفية
+async def delete_message_in_background(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int):
+    try:
+        # ممكن نضيف تأخير بسيط هنا إذا كان الحذف السريع يسبب مشاكل في تليجرام
+        # await asyncio.sleep(0.1) 
+        await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+        logger.info(f"Successfully deleted message {message_id} from chat {chat_id} in background.")
+    except Exception as e:
+        logger.warning(f"Could not delete message {message_id} from chat {chat_id} in background: {e}.")
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # مسح بيانات المستخدم عند بدء جديد لضمان عدم وجود بيانات طلب سابقة
     user_id = str(update.message.from_user.id)
@@ -318,20 +328,16 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
     )
     logger.info(f"Sent new button message {msg.message_id} for order {order_id}")
     
-    # محاولة حذف الرسالة القديمة للأزرار فقط، وتجاهل الأخطاء بعد إرسال الرسالة الجديدة
+    # محاولة حذف الرسالة القديمة للأزرار في الخلفية
     msg_info = last_button_message.get(order_id)
     if msg_info and msg_info.get("chat_id") == chat_id:
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=msg_info["message_id"])
-            logger.info(f"Deleted old button message {msg_info['message_id']} for order {order_id}.")
-        except Exception as e:
-            # تجاهل الخطأ إذا الرسالة لم تعد موجودة أو لا يمكن حذفها
-            logger.warning(f"Could not delete old button message {msg_info.get('message_id', 'N/A')} for order {order_id}: {e}. It might have been deleted already or is inaccessible.")
-        finally:
-            # إزالة الإشارة للرسالة القديمة من الذاكرة والملف فقط بعد محاولة الحذف
-            if order_id in last_button_message:
-                del last_button_message[order_id]
-                schedule_save() # استخدم الدالة الجديدة للحفظ
+        # هنا التعديل: نستخدم context.application.create_task لتشغيل دالة الحذف بالخلفية
+        context.application.create_task(delete_message_in_background(context, chat_id=chat_id, message_id=msg_info["message_id"]))
+        logger.info(f"Scheduled deletion of old button message {msg_info['message_id']} for order {order_id}.")
+        # إزالة الإشارة للرسالة القديمة من الذاكرة والملف فوراً (لكي لا نحاول حذفها مرة أخرى بالخطأ)
+        if order_id in last_button_message:
+            del last_button_message[order_id]
+            schedule_save() # استخدم الدالة الجديدة للحفظ
 
     last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
     schedule_save() # استخدم الدالة الجديدة للحفظ
@@ -370,6 +376,14 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await query.message.reply_text(f"تمام، كم سعر شراء *'{product}'*؟", parse_mode="Markdown")
     context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg.chat_id, 'message_id': msg.message_id})
     
+    # حذف الرسالة اللي بيها الأزرار مال اختيار المنتج فوراً
+    # (هاي الرسالة هي اللي ضغط عليها المستخدم الآن)
+    try:
+        await query.message.delete()
+        logger.info(f"Deleted product selection message {query.message.message_id} from chat {query.message.chat_id}.")
+    except Exception as e:
+        logger.warning(f"Could not delete product selection message {query.message.message_id} from chat {query.message.chat_id}: {e}.")
+
     return ASK_BUY
 
 async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -673,33 +687,25 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     # حذف جميع الرسائل التي تم تسجيلها للحذف
     if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
         for msg_info in context.user_data[user_id]['messages_to_delete']:
-            try:
-                await context.bot.delete_message(chat_id=msg_info['chat_id'], message_id=msg_info['message_id'])
-                logger.info(f"Successfully deleted message {msg_info['message_id']} from chat {msg_info['chat_id']}.")
-            except Exception as e:
-                logger.warning(f"Could not delete message {msg_info['chat_id']} : {msg_info['message_id']} - {e}")
-        # بعد الحذف، نفرغ القائمة
+            # هنا التعديل: نستخدم create_task لحذف الرسائل في الخلفية
+            context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
+        # بعد الجدولة للحذف، نفرغ القائمة فوراً
         context.user_data[user_id]['messages_to_delete'].clear()
 
     # بالإضافة إلى الرسائل المتتبعة، نحاول حذف رسالة الأزرار القديمة الخاصة بهذا الطلب
     # (التي قد تكون ما زالت معروضة إذا لم يتم تحديثها بأزرار جديدة)
     msg_info_buttons = last_button_message.get(order_id)
     if msg_info_buttons and msg_info_buttons.get("chat_id") == message_object.chat_id: # التأكد من نفس المحادثة
-        try:
-            await context.bot.delete_message(chat_id=message_object.chat_id, message_id=msg_info_buttons["message_id"])
-            logger.info(f"Successfully deleted final button message {msg_info_buttons['message_id']} for order {order_id}.")
-        except Exception as e:
-            logger.warning(f"Could not delete final button message {msg_info_buttons.get('message_id', 'N/A')} for order {order_id}: {e}.")
-        finally:
-            if order_id in last_button_message:
-                del last_button_message[order_id] 
-                schedule_save() # استخدم الدالة الجديدة للحفظ
+        context.application.create_task(delete_message_in_background(context, chat_id=message_object.chat_id, message_id=msg_info_buttons["message_id"]))
+        if order_id in last_button_message:
+            del last_button_message[order_id] 
+            schedule_save() # استخدم الدالة الجديدة للحفظ
 
 
     # مسح بيانات المستخدم من context.user_data بعد الانتهاء من الطلب
     if user_id in context.user_data:
         del context.user_data[user_id]
-        logger.info(f"Cleared user_data for user {user_id} after successful order completion and message deletion.")
+        logger.info(f"Cleared user_data for user {user_id} after successful order completion and message deletion scheduling.")
         
     return ConversationHandler.END
 
