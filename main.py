@@ -78,7 +78,7 @@ def load_data():
                 pricing.clear()
 
     if os.path.exists(INVOICE_NUMBERS_FILE):
-        with open(INVOVOICE_NUMBERS_FILE, "r") as f:
+        with open(INVOICE_NUMBERS_FILE, "r") as f:
             try:
                 temp_data = json.load(f)
                 invoice_numbers.clear()
@@ -625,6 +625,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         try:
             parts = query.data.split('_')
+            # تأكد أن الكول باك يبدأ بـ "places_" ولديه 3 أجزاء بالضبط (places_orderid_عدد)
             if len(parts) == 3 and parts[0] == "places":
                 # نتأكد أن الـ order_id من الكول باك يطابق الـ order_id اللي بالك user_data
                 if parts[1] != target_order_id:
@@ -1042,7 +1043,7 @@ def main():
                 # يستقبل الكول باك لعدد المحلات من الأزرار
                 CallbackQueryHandler(receive_place_count, pattern=r"^places_[a-f0-9]{8}_\d+$"),
                 # يستقبل الرسائل النصية اللي بيها أرقام لعدد المحلات
-                MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(r"^\d+$"), receive_place_count),
+                MessageHandler(filters.TEXT & filters.Regex(r"^\d+$"), receive_place_count), # ازلنا filters.COMMAND
             ]
         },
         fallbacks=[
