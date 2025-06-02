@@ -64,7 +64,8 @@ def load_data():
                 temp_data = json.load(f)
                 pricing.clear()
                 pricing.update(temp_data)
-                pricing = {str(k): v for pk, pv in temp_data.items()} # Ensure string keys
+                # Ensure keys are strings, and nested dict keys are strings
+                pricing = {str(k): v for k, v in pricing.items()}
                 for oid in pricing:
                     if isinstance(pricing[oid], dict):
                         pricing[oid] = {str(pk): pv for pk, pv in pricing[oid].items()}
@@ -455,6 +456,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         # حذف رسالة الأزرار القديمة (قائمة المنتجات) قبل إرسال سؤال "كم محل"
+        # هذه الرسالة هي الرسالة الوحيدة التي يجب حذفها قبل الفواتير
         msg_info = last_button_message.get(order_id)
         if msg_info and msg_info.get("chat_id") == update.effective_chat.id:
             try:
@@ -481,11 +483,10 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         confirmation_msg = f"تم حفظ السعر لـ *'{product}'*."
         logger.info(f"Price saved for '{product}' in order {order_id}. Showing updated buttons with confirmation.")
         
-        # ****** لا نقوم بحذف الرسائل هنا ******
-        # ****** نرسل الأزرار المحدثة للمنتجات فقط ******
+        # ****** لا نقوم بحذف الرسائل هنا، فقط نعرض الأزرار المحدثة للمنتجات ******
         await show_buttons(update.effective_chat.id, context, user_id, order_id, confirmation_message=confirmation_msg)
         
-        # نعود إلى END للسماح للمستخدم بالضغط على زر منتج آخر
+        # نعود إلى ConversationHandler.END للسماح للمستخدم بالضغط على زر منتج آخر
         return ConversationHandler.END
 
 
@@ -506,12 +507,10 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     places = None
     message_object = None 
     user_id = str(update.effective_user.id) # استخدم effective_user للحصول على ID المستخدم
-
-    # تخزين ID رسالة المستخدم النصية إن وجدت
-    if update.message:
-        context.user_data.setdefault(user_id, {})
-        context.user_data[user_id]['messages_to_delete'] = context.user_data[user_id].get('messages_to_delete', [])
-        context.user_data[user_id]['messages_to_delete'].append({'chat_id': update.message.chat_id, 'message_id': update.message.message_id})
+    
+    # تأكد من تهيئة list 'messages_to_delete'
+    context.user_data.setdefault(user_id, {})
+    context.user_data[user_id]['messages_to_delete'] = context.user_data[user_id].get('messages_to_delete', [])
 
     if update.callback_query:
         query = update.callback_query
@@ -530,6 +529,9 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif update.message:
         message_object = update.message 
         
+        # حفظ رسالة المستخدم الحالية (عدد المحلات) لحذفها لاحقاً
+        context.user_data[user_id]['messages_to_delete'].append({'chat_id': update.message.chat_id, 'message_id': update.message.message_id})
+
         try:
             places = int(message_object.text.strip())
             if places < 0:
@@ -567,7 +569,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     for p in order["products"]:
         if p in pricing.get(order_id, {}) and "buy" in pricing[order_id].get(p, {}) and "sell" in pricing[order_id].get(p, {}):
             buy = pricing[order_id][p]["buy"]
-            sell = pricing[order_id][p]["p_sell"] # اسم المفتاح هنا كان 'sell' والآن هو 'p_sell'
+            sell = pricing[order_id][p]["sell"] # هنا تم التصحيح لكي لا يكون هناك خطأ في المفتاح 'p_sell'
             profit = sell - buy
             total_buy += buy
             total_sell += sell
@@ -650,7 +652,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     await message_object.reply_text("شنو تريد تسوي هسه؟", reply_markup=final_actions_keyboard)
 
     # ***************************************************************
-    # تم نقل منطق حذف الرسائل إلى هنا، بعد التأكد من إرسال الفواتير
+    # تم نقل منطق حذف الرسائل إلى هنا، بعد التأكد من إرسال الفواتير بالكامل
     # ***************************************************************
     logger.info(f"Attempting to delete {len(context.user_data[user_id].get('messages_to_delete', []))} messages for user {user_id}.")
 
