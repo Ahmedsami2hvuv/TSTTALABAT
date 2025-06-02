@@ -37,6 +37,7 @@ last_button_message = {}
 
 # متغيرات الحفظ المؤجل
 save_timer = None
+save_pending = False # علم جديد يبين إذا اكو حفظ معلق
 save_lock = threading.Lock()
 
 # تحميل البيانات عند بدء تشغيل البوت
@@ -117,6 +118,7 @@ def load_data():
 
 # حفظ البيانات
 def _save_data_to_disk():
+    global save_pending
     with save_lock:
         os.makedirs(DATA_DIR, exist_ok=True)
         try:
@@ -133,18 +135,24 @@ def _save_data_to_disk():
             logger.info("All data saved to disk successfully.")
         except Exception as e:
             logger.error(f"Error saving data to disk: {e}")
+        finally:
+            save_pending = False # خلص الحفظ، رجّع العلم لـ False
 
 # دالة الحفظ المؤجل
 # دالة الحفظ المؤجل - راح نغيرها
 def schedule_save():
-    global save_timer
+    global save_timer, save_pending
+    if save_pending: # إذا اكو عملية حفظ معلقة، لا تبدي وحدة جديدة
+        logger.info("Save already pending, skipping new schedule.")
+        return
+
     if save_timer is not None:
         save_timer.cancel()
 
-    # شيل الـ Timer وخليه يستدعي دالة الحفظ المباشرة بالخلفية
-    # هذا راح يخليها تشتغل بالخلفية بأسرع وقت
-    _save_data_to_disk() # استدعيها مباشرة
-    logger.info("Data save scheduled in background without timer.")
+    save_pending = True # اكو عملية حفظ راح تبدي
+    save_timer = threading.Timer(0.5, _save_data_to_disk) # قللت الوقت لـ 0.5 ثانية
+    save_timer.start()
+    logger.info("Data save scheduled with 0.5 sec delay.")
 
 
 # تهيئة ملف عداد الفواتير
@@ -391,7 +399,6 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'messages_to_delete' not in context.user_data[user_id]:
         context.user_data[user_id]['messages_to_delete'] = []
     
-    # نضيف رسالة المستخدم اللي كتبها للحذف
     context.user_data[user_id]['messages_to_delete'].append({
         'chat_id': update.message.chat_id,
         'message_id': update.message.message_id
@@ -399,7 +406,6 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = context.user_data.get(user_id, {})
     if not data or "order_id" not in data or "product" not in data:
-        # هنا ممكن نضيف رسالة سريعة للمستخدم قبل الريبلاي
         await update.message.reply_text("حدث خطأ، الرجاء البدء من جديد")
         return ConversationHandler.END
     
@@ -418,13 +424,12 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         msg_error = await update.message.reply_text("الرجاء إدخال رقم صحيح")
         context.user_data[user_id]['messages_to_delete'].append({
-            'chat_id': msg_error.chat_id, 
-            'message_id': msg_error.message_id
-        })
+                'chat_id': msg_error.chat_id, 
+                'message_id': msg_error.message_id
+            })
         return ASK_BUY
     
-    # 1. إرسال رسالة "بيش راح تبيع؟" فوراً
-    # هذا لازم يكون أول شي نسوي بعد التحقق من السعر حتى يكون أسرع
+    # 1. إرسال رسالة "بيش راح تبيع؟" فوراً (مع الـ Markdown)
     msg = await update.message.reply_text(f"شكراً. وهسه، بيش راح تبيع *'{product}'*؟", parse_mode="Markdown")
     context.user_data[user_id]['messages_to_delete'].append({
         'chat_id': msg.chat_id,
@@ -432,11 +437,9 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     })
     
     # 2. حفظ السعر بعد إرسال الرسالة
-    # هذا راح يصير بعد ما تروح الرسالة للمستخدم
     pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = price
     
     # 3. جدولة الحفظ بالخلفية
-    # هاي العملية ممكن تأخذ وقت وتشتغل بالخلفية، ما تأثر على سرعة إرسال الرسالة
     context.application.create_task(save_data_in_background(context))
     
     return ASK_SELL
