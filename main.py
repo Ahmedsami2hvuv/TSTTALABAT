@@ -171,7 +171,7 @@ def get_invoice_number():
 load_data()
 
 # حالات المحادثة
-ASK_BUY, ASK_SELL, ASK_PLACES = range(3)
+ASK_BUY, ASK_SELL, ASK_PLACES = range(3) # ASK_PLACES now used directly after ASK_SELL if all products priced
 
 # جلب التوكن ومعرف المالك من متغيرات البيئة
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -531,11 +531,11 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
             
     if all_priced:
         context.user_data[user_id]["completed_order_id"] = order_id # نخليه حتى نقدر نستخدمه في تعديل المحلات
-
-        # هنا نستدعي دالة جديدة لعرض الأزرار النهائية
-        await show_final_options(update.effective_chat.id, context, user_id, order_id)
         
-        return ConversationHandler.END # ننهي المحادثة هنا لأن الأزرار النهائية تفتح مسارات جديدة
+        # هنا نستدعي دالة طلب عدد المحلات
+        await request_places_count(update.effective_chat.id, context, user_id, order_id)
+        
+        return ASK_PLACES # نستمر في المحادثة لطلب عدد المحلات
     else:
         # هنا نستدعي show_buttons بوضوح حتى تظهر الأزرار المحدثة
         confirmation_msg = f"تم حفظ السعر لـ *'{product}'*."
@@ -546,9 +546,34 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ConversationHandler.END
 
 
+async def request_places_count(chat_id, context, user_id, order_id):
+    """
+    تسأل المستخدم عن عدد المحلات وتوفر أزرار اختيار.
+    """
+    context.user_data[user_id]["completed_order_id"] = order_id # للتأكد من وجود order_id
+    
+    buttons = []
+    emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
+    for i in range(1, 11):
+        buttons.append(InlineKeyboardButton(emojis[i-1], callback_data=f"places_{order_id}_{i}"))
+    
+    keyboard = [buttons[i:i + 5] for i in range(0, len(buttons), 5)]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    msg_places = await context.bot.send_message(
+        chat_id=chat_id,
+        text="تمام، كل المنتجات تسعّرت. هسه، كم محل كلفتك الطلبية؟ (اختر من الأزرار أو اكتب الرقم)", 
+        reply_markup=reply_markup
+    )
+    context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_places.chat_id, 'message_id': msg_places.message_id})
+
+    # لا ننهي المحادثة هنا، بل ننتقل لحالة ASK_PLACES
+    return ASK_PLACES
+
+
 async def show_final_options(chat_id, context, user_id, order_id, message_prefix=None):
     """
-    تعرض الأزرار النهائية بعد اكتمال تسعير الطلب أو بعد التعديل.
+    تعرض فاتورة الزبون ثم الأزرار النهائية بعد اكتمال تسعير الطلب وتحديد عدد المحلات.
     """
     if order_id not in orders:
         logger.warning(f"Attempted to show final options for non-existent order_id: {order_id}")
@@ -569,17 +594,16 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
 
     net_profit = total_sell - total_buy
     
-    # نحتاج عدد المحلات الحالي حتى نكدر نعرض السعر الكلي الصحيح بالزر
-    current_places = orders[order_id].get("places_count", 0) # افتراض 0 إذا ما موجود
+    current_places = orders[order_id].get("places_count", 0) 
     extra_cost = calculate_extra(current_places)
     final_total = total_sell + extra_cost
 
     # --- بناء فاتورة الزبون ---
     customer_invoice_lines = []
-    customer_invoice_lines.append(f"**أبو الأكبر للتوصيل**") # ضفت مارك داون هنا
+    customer_invoice_lines.append(f"**أبو الأكبر للتوصيل**") 
     customer_invoice_lines.append(f"رقم الفاتورة: {invoice}")
     customer_invoice_lines.append(f"عنوان الزبون: {order['title']}")
-    customer_invoice_lines.append(f"\n*المواد:*") # ضفت مارك داون هنا
+    customer_invoice_lines.append(f"\n*المواد:*") 
     
     running_total_for_customer = 0.0
     for p in order["products"]:
@@ -591,7 +615,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             customer_invoice_lines.append(f"{p} - (لم يتم تسعيره)")
     
     customer_invoice_lines.append(f"كلفة تجهيز من - {current_places} محلات {format_float(extra_cost)} = {format_float(final_total)}")
-    customer_invoice_lines.append(f"\n*المجموع الكلي:* {format_float(final_total)} (مع احتساب عدد المحلات)") # ضفت مارك داون هنا
+    customer_invoice_lines.append(f"\n*المجموع الكلي:* {format_float(final_total)} (مع احتساب عدد المحلات)") 
     
     customer_final_text = "\n".join(customer_invoice_lines)
 
@@ -612,7 +636,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
     keyboard = [
         [InlineKeyboardButton("1️⃣ تعديل الأسعار", callback_data=f"edit_prices_{order_id}")],
         [InlineKeyboardButton("2️⃣ تعديل المحلات", callback_data=f"edit_places_{order_id}")],
-        [InlineKeyboardButton("3️⃣ إرسال فاتورة الزبون (واتساب)", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={customer_final_text.replace(' ', '%20').replace('\n', '%0A').replace('*', '')}")], # استخدام النص الأصلي للفاتورة
+        [InlineKeyboardButton("3️⃣ إرسال فاتورة الزبون (واتساب)", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={customer_final_text.replace(' ', '%20').replace('\n', '%0A').replace('*', '')}")],
         [InlineKeyboardButton("4️⃣ إنشاء طلب جديد", callback_data="start_new_order")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -662,7 +686,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
     await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup, parse_mode="Markdown")
     
     # حذف أي رسائل سابقة في user_data['messages_to_delete']
-    if user_id in context.user_data: # تأكد انه user_id موجود قبل الوصول للقاموس
+    if user_id in context.user_data: 
         if 'messages_to_delete' in context.user_data[user_id]:
             for msg_info in context.user_data[user_id]['messages_to_delete']:
                 context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
@@ -691,7 +715,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     if 'messages_to_delete' not in context.user_data[user_id]:
         context.user_data[user_id]['messages_to_delete'] = []
 
-    order_id = context.user_data[user_id].get("completed_order_id") # نستخدم هذا للتاكد من الاوردر هو نفسه
+    order_id = context.user_data[user_id].get("completed_order_id") 
     if not order_id or order_id not in orders or str(orders[order_id].get("user_id")) != user_id:
         await context.bot.send_message(chat_id=chat_id, text="عذراً، لا توجد طلبية مكتملة لمعالجتها أو تم حذفها. الرجاء بدء طلبية جديدة.")
         if user_id in context.user_data:
@@ -704,7 +728,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.info(f"Places callback query received: {query.data}")
         await query.answer()
         
-        if query.data.startswith(f"places_{order_id}_"): # تعديل على فحص الكولباك داتا
+        if query.data.startswith(f"places_{order_id}_"): 
             try:
                 places = int(query.data.split(f"places_{order_id}_")[1])
                 if query.message:
@@ -752,7 +776,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
             context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
         context.user_data[user_id]['messages_to_delete'].clear()
 
-    # استدعاء show_final_options لعرض الأزرار النهائية
+    # استدعاء show_final_options لعرض الأزرار النهائية (بعد أن أكملنا تحديد عدد المحلات)
     await show_final_options(chat_id, context, user_id, order_id, message_prefix="تم تحديث عدد المحلات بنجاح.")
     
     return ConversationHandler.END
@@ -805,7 +829,6 @@ async def edit_places(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buttons = []
     emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
     for i in range(1, 11):
-        # تعديل الكولباك داتا لتضمين order_id
         buttons.append(InlineKeyboardButton(emojis[i-1], callback_data=f"places_{order_id}_{i}"))
     
     keyboard = [buttons[i:i + 5] for i in range(0, len(buttons), 5)]
@@ -825,24 +848,17 @@ async def start_new_order_callback(update: Update, context: ContextTypes.DEFAULT
     
     user_id = str(query.from_user.id)
     if user_id in context.user_data:
-        # إزالة completed_order_id عند بدء طلب جديد
         if "completed_order_id" in context.user_data[user_id]:
             del context.user_data[user_id]["completed_order_id"]
-        del context.user_data[user_id] # نمسح كل البيانات
+        del context.user_data[user_id]
         logger.info(f"Cleared user_data for user {user_id} after starting a new order from button.")
 
-    # نحذف رسالة الأزرار النهائية (تعديل/إنشاء جديد)
     if query.message:
         context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
 
     await query.message.reply_text("تمام، دز الطلبية الجديدة كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", parse_mode="Markdown")
     
     return ConversationHandler.END
-
-
-# هذه الدالة لم تعد ضرورية بما أن فاتورة الزبون سترسل بشكل تلقائي
-# async def send_customer_invoice_to_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-#     pass
 
 
 async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -964,7 +980,6 @@ def main():
     app.add_handler(CallbackQueryHandler(edit_prices, pattern="^edit_prices_"))
     app.add_handler(CallbackQueryHandler(edit_places, pattern="^edit_places_"))
     app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern="^start_new_order$"))
-    # تم إزالة الهاندلر الخاص بـ send_customer_invoice_to_chat هنا
 
 
     # محادثة تجهيز الطلبات
@@ -980,9 +995,8 @@ def main():
             ASK_SELL: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sell_price),
             ],
-            ASK_PLACES: [
+            ASK_PLACES: [ # هذا الـ state الجديد اللي راح يسأل عن المحلات
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_place_count),
-                # تعديل الـ pattern ليتطابق مع الفورمات الجديد places_ORDERID_PLACESCOUNT
                 CallbackQueryHandler(receive_place_count, pattern=r"^places_[^_]+_\d+$") 
             ],
         },
