@@ -363,42 +363,51 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
     
-    context.user_data.setdefault(user_id, {})
-    if 'messages_to_delete' not in context.user_data[user_id]:
-        context.user_data[user_id]['messages_to_delete'] = []
-    context.user_data[user_id]['messages_to_delete'].append({'chat_id': update.message.chat_id, 'message_id': update.message.message_id})
+    # حفظ رسالة المستخدم لحذفها لاحقاً
+    if 'messages_to_delete' not in context.user_data.get(user_id, {}):
+        context.user_data[user_id] = {'messages_to_delete': []}
+    context.user_data[user_id]['messages_to_delete'].append({
+        'chat_id': update.message.chat_id,
+        'message_id': update.message.message_id
+    })
 
-    data = context.user_data.get(user_id)
+    data = context.user_data.get(user_id, {})
     if not data or "order_id" not in data or "product" not in data:
-        await update.message.reply_text("عذراً، حدث خطأ. الرجاء المحاولة مرة أخرى أو بدء طلبية جديدة.")
-        if user_id in context.user_data:
-            del context.user_data[user_id]
+        await update.message.reply_text("حدث خطأ، الرجاء البدء من جديد")
         return ConversationHandler.END
     
-    order_id, product = data["order_id"], data["product"]
+    order_id = data["order_id"]
+    product = data["product"]
     
-    if order_id not in orders or product not in orders[order_id].get("products", []):
-        await update.message.reply_text("عذراً، الطلب أو المنتج لم يعد موجوداً. الرجاء بدء طلبية جديدة.")
-        if user_id in context.user_data:
-            del context.user_data[user_id]
-        return ConversationHandler.END
-
     try:
         price = float(update.message.text.strip())
         if price < 0:
-            msg_error = await update.message.reply_text("سعر الشراء يجب أن يكون رقماً إيجابياً. بيش اشتريت بالضبط؟")
-            context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
-            return ASK_BUY 
+            msg = await update.message.reply_text("السعر يجب أن يكون موجباً")
+            context.user_data[user_id]['messages_to_delete'].append({
+                'chat_id': msg.chat_id,
+                'message_id': msg.message_id
+            })
+            return ASK_BUY
     except ValueError:
-        msg_error = await update.message.reply_text("الرجاء إدخال رقم صحيح لسعر الشراء. بيش اشتريت؟")
-        context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
-        return ASK_BUY 
+        msg = await update.message.reply_text("الرجاء إدخال رقم صحيح")
+        context.user_data[user_id]['messages_to_delete'].append({
+            'chat_id': msg.chat_id,
+            'message_id': msg.message_id
+        })
+        return ASK_BUY
     
+    # حفظ السعر فوراً دون انتظار
     pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = price
-    context.application.create_task(save_data_in_background(context))
-
+    
+    # إرسال رسالة البيع فوراً قبل أي شيء آخر
     msg = await update.message.reply_text(f"شكراً. وهسه، بيش راح تبيع *'{product}'*؟", parse_mode="Markdown")
-    context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg.chat_id, 'message_id': msg.message_id})
+    context.user_data[user_id]['messages_to_delete'].append({
+        'chat_id': msg.chat_id,
+        'message_id': msg.message_id
+    })
+    
+    # تشغيل عملية الحفظ في الخلفية بعد إرسال الرسالة
+    context.application.create_task(save_data_in_background(context))
     
     return ASK_SELL
 
