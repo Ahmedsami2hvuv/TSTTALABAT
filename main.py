@@ -292,6 +292,17 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
             del context.user_data[user_id]
         return
 
+    # **الخطوة الأهم: حذف رسالة الأزرار القديمة أولاً وبسرعة**
+    msg_info = last_button_message.get(order_id)
+    if msg_info and str(msg_info.get("chat_id")) == str(chat_id): # تأكدنا إنها لنفس الشات
+        # شغّل مهمة الحذف بالخلفية بدون تأخير
+        context.application.create_task(delete_message_in_background(context, chat_id=msg_info["chat_id"], message_id=msg_info["message_id"]))
+        logger.info(f"Scheduled immediate deletion of old button message {msg_info['message_id']} for order {order_id}.")
+        # حذفها من القائمة حتى ما نسوي بيها مشاكل
+        if order_id in last_button_message:
+            del last_button_message[order_id]
+            context.application.create_task(save_data_in_background(context)) # احفظ التغيير مال الحذف
+
     order = orders[order_id]
     
     completed_products = []
@@ -318,6 +329,7 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
         message_text += f"{confirmation_message}\n\n"
     message_text += f"اضغط على منتج لتحديد سعره من *{order['title']}*:"
 
+    # **إرسال رسالة الأزرار الجديدة مباشرةً بعد جدولة حذف القديمة**
     msg = await context.bot.send_message(
         chat_id=chat_id,
         text=message_text,
@@ -326,16 +338,10 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
     )
     logger.info(f"Sent new button message {msg.message_id} for order {order_id}")
     
-    msg_info = last_button_message.get(order_id)
-    if msg_info and msg_info.get("chat_id") == chat_id:
-        context.application.create_task(delete_message_in_background(context, chat_id=chat_id, message_id=msg_info["message_id"]))
-        logger.info(f"Scheduled deletion of old button message {msg_info['message_id']} for order {order_id}.")
-        if order_id in last_button_message:
-            del last_button_message[order_id]
-            context.application.create_task(save_data_in_background(context))
-
+    # حفظ معلومات الرسالة الجديدة
     last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
     context.application.create_task(save_data_in_background(context))
+
 
 # **تم إزالة app.add_handler(CommandHandler("start", start)) من هنا لأنه يجب أن يكون داخل main() فقط**
 
@@ -447,7 +453,6 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-
 async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
     
@@ -483,7 +488,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ASK_SELL 
     
     pricing.setdefault(order_id, {}).setdefault(product, {})["sell"] = price
-    context.application.create_task(save_data_in_background(context))
+    context.application.create_task(save_data_in_background(context)) # حفظ البيانات مباشرة بعد التسعير
 
     order = orders[order_id]
     all_priced = True
@@ -495,6 +500,20 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if all_priced:
         context.user_data[user_id]["completed_order_id"] = order_id 
         
+        # حذف رسائل المستخدم والبوت السابقة قبل إرسال السؤال الجديد
+        for msg_info in context.user_data[user_id].get('messages_to_delete', []):
+            context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
+        context.user_data[user_id]['messages_to_delete'].clear()
+
+        # هنا أيضاً نحذف رسالة الأزرار القديمة (اللي اختفت أصلا) قبل إرسال السؤال الجديد
+        # وهذا يمنع أي تأخير محتمل
+        msg_info_buttons = last_button_message.get(order_id)
+        if msg_info_buttons and str(msg_info_buttons.get("chat_id")) == str(update.effective_chat.id):
+            context.application.create_task(delete_message_in_background(context, chat_id=msg_info_buttons["chat_id"], message_id=msg_info_buttons["message_id"]))
+            if order_id in last_button_message:
+                del last_button_message[order_id] # نشيلها من القائمة
+                context.application.create_task(save_data_in_background(context)) # نحفظ التغيير مال الحذف
+
         buttons = []
         emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
         for i in range(1, 11):
@@ -513,23 +532,19 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         return ASK_PLACES 
     else:
+        # **مهم جدًا: هنا نستدعي show_buttons بوضوح حتى تظهر الأزرار المحدثة**
         confirmation_msg = f"تم حفظ السعر لـ *'{product}'*."
         logger.info(f"Price saved for '{product}' in order {order_id}. Showing updated buttons with confirmation.")
         
+        # قبل ما نعرض الأزرار الجديدة، نمسح رسائل الكوتش والمستخدم اللي طلعت من سؤال سعر البيع
+        for msg_info in context.user_data[user_id].get('messages_to_delete', []):
+            context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
+        context.user_data[user_id]['messages_to_delete'].clear()
+
         await show_buttons(update.effective_chat.id, context, user_id, order_id, confirmation_message=confirmation_msg)
         
         return ConversationHandler.END
 
-def calculate_extra(places):
-    extra_fees = {
-        1: 0,
-        2: 0,
-        3: 1,
-        4: 2,
-        5: 3,
-        6: 4
-    }
-    return extra_fees.get(places, places - 2)
 
 async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global daily_profit
