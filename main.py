@@ -8,8 +8,8 @@ import os
 from collections import Counter
 import json
 import logging
-import asyncio 
-import threading 
+import asyncio # جبنا asyncio حتى نستخدم sleep
+import threading # جبنا threading حتى نستخدم المؤقت (Timer)
 
 # تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
 logging.basicConfig(
@@ -190,11 +190,19 @@ def format_float(value):
 async def delete_message_in_background(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int):
     try:
         # ممكن نضيف تأخير بسيط هنا إذا كان الحذف السريع يسبب مشاكل في تليجرام
-        # await asyncio.sleep(0.1) 
+        await asyncio.sleep(0.05) # تأخير بسيط جدًا لضمان معالجة التليجرام
         await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
         logger.info(f"Successfully deleted message {message_id} from chat {chat_id} in background.")
     except Exception as e:
         logger.warning(f"Could not delete message {message_id} from chat {chat_id} in background: {e}.")
+
+# دالة مساعدة لحفظ البيانات في الخلفية
+async def save_data_in_background(context: ContextTypes.DEFAULT_TYPE):
+    # نستخدم نفس مؤقت الـ threading للحفظ المؤجل، لكن نطلقه من دالة async
+    # هذا يضمن أن يتم استدعاء _save_data_to_disk() بشكل متسلسل عبر المؤقت
+    schedule_save()
+    logger.info("Data save scheduled in background.")
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # مسح بيانات المستخدم عند بدء جديد لضمان عدم وجود بيانات طلب سابقة
@@ -266,7 +274,7 @@ async def process_order(update, context, message, edited=False):
                 if p in pricing[order_id]:
                     del pricing[order_id][p]
 
-        schedule_save() # استخدم الدالة الجديدة للحفظ
+        context.application.create_task(save_data_in_background(context)) # حفظ بالخلفية
         await show_buttons(message.chat_id, context, user_id, order_id, confirmation_message="تم تحديث الطلب.")
         return
 
@@ -277,7 +285,7 @@ async def process_order(update, context, message, edited=False):
     pricing[order_id] = {p: {} for p in products}
     invoice_numbers[order_id] = invoice_no
     
-    schedule_save() # استخدم الدالة الجديدة للحفظ
+    context.application.create_task(save_data_in_background(context)) # حفظ بالخلفية
     
     await message.reply_text(f"استلمت الطلب بعنوان: *{title}* (عدد المنتجات: {len(products)})", parse_mode="Markdown")
     await show_buttons(message.chat_id, context, user_id, order_id)
@@ -337,10 +345,10 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
         # إزالة الإشارة للرسالة القديمة من الذاكرة والملف فوراً (لكي لا نحاول حذفها مرة أخرى بالخطأ)
         if order_id in last_button_message:
             del last_button_message[order_id]
-            schedule_save() # استخدم الدالة الجديدة للحفظ
+            context.application.create_task(save_data_in_background(context)) # حفظ بالخلفية
 
     last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
-    schedule_save() # استخدم الدالة الجديدة للحفظ
+    context.application.create_task(save_data_in_background(context)) # حفظ بالخلفية
 
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -376,13 +384,10 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await query.message.reply_text(f"تمام، كم سعر شراء *'{product}'*؟", parse_mode="Markdown")
     context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg.chat_id, 'message_id': msg.message_id})
     
-    # حذف الرسالة اللي بيها الأزرار مال اختيار المنتج فوراً
+    # حذف الرسالة اللي بيها الأزرار مال اختيار المنتج فوراً بالخلفية
     # (هاي الرسالة هي اللي ضغط عليها المستخدم الآن)
-    try:
-        await query.message.delete()
-        logger.info(f"Deleted product selection message {query.message.message_id} from chat {query.message.chat_id}.")
-    except Exception as e:
-        logger.warning(f"Could not delete product selection message {query.message.message_id} from chat {query.message.chat_id}: {e}.")
+    context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
+    
 
     return ASK_BUY
 
@@ -425,7 +430,8 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ASK_BUY 
     
     pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = price
-    schedule_save() # استخدم الدالة الجديدة للحفظ
+    # هنا التعديل: جدولة الحفظ بالخلفية فوراً
+    context.application.create_task(save_data_in_background(context)) 
 
     # إرسال الرد أولاً (السؤال عن سعر البيع) وحفظ الـ ID الخاص بها
     msg = await update.message.reply_text(f"شكراً. وهسه، بيش راح تبيع *'{product}'*؟", parse_mode="Markdown")
@@ -472,7 +478,8 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ASK_SELL 
     
     pricing.setdefault(order_id, {}).setdefault(product, {})["sell"] = price
-    schedule_save() # استخدم الدالة الجديدة للحفظ
+    # هنا التعديل: جدولة الحفظ بالخلفية فوراً
+    context.application.create_task(save_data_in_background(context)) 
 
     # فحص ما إذا تم تسعير جميع المنتجات
     order = orders[order_id]
@@ -607,7 +614,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     net_profit = total_sell - total_buy
     daily_profit += net_profit
-    schedule_save() # استخدم الدالة الجديدة للحفظ
+    context.application.create_task(save_data_in_background(context)) # حفظ بالخلفية
 
     extra = calculate_extra(places)
     total_with_extra = total_sell + extra
@@ -699,7 +706,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.application.create_task(delete_message_in_background(context, chat_id=message_object.chat_id, message_id=msg_info_buttons["message_id"]))
         if order_id in last_button_message:
             del last_button_message[order_id] 
-            schedule_save() # استخدم الدالة الجديدة للحفظ
+            context.application.create_task(save_data_in_background(context)) # حفظ بالخلفية
 
 
     # مسح بيانات المستخدم من context.user_data بعد الانتهاء من الطلب
