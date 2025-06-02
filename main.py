@@ -320,8 +320,9 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
 
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    await query.answer() # تم نقل هذا السطر ليصبح أولاً لضمان استجابة سريعة
+
     logger.info(f"Callback query received: {query.data}")
-    await query.answer()
 
     user_id = str(query.from_user.id)
     
