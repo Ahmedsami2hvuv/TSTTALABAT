@@ -748,7 +748,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
     # --- إنشاء الأزرار النهائية ---
     keyboard = [
         [InlineKeyboardButton("1️⃣ تعديل الأسعار", callback_data=f"edit_prices_{order_id}")],
-        [InlineKeyboardButton("2️⃣ تعديل المحلات", callback_data=f"edit_places_{order_id}")],
+        # [InlineKeyboardButton("2️⃣ تعديل المحلات", callback_data=f"edit_places_{order_id}")], # تم إزالة هذا الزر بناءً على طلبك
         [InlineKeyboardButton("3️⃣ إرسال فاتورة الزبون (واتساب)", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={customer_final_text.replace(' ', '%20').replace('\n', '%0A').replace('*', '')}")],
         [InlineKeyboardButton("4️⃣ إنشاء طلب جديد", callback_data="start_new_order")]
     ]
@@ -846,6 +846,9 @@ async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return ConversationHandler.END # ننهي الـ ConversationHandler هنا
 
+# دالة edit_places لم تعد تُستخدم بعد إزالة الزر
+# لكن نتركها موجودة في الكود حتى لا يصير خطأ إذا كانت هناك أي مرجعيات لها
+# ولكن فعلياً لن تُستدعى ما دام الزر محذوفاً.
 async def edit_places(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1023,7 +1026,8 @@ def main():
 
     # إضافة الهاندلرات الجديدة لأزرار ما بعد اكتمال الطلب
     app.add_handler(CallbackQueryHandler(edit_prices, pattern="^edit_prices_"))
-    app.add_handler(CallbackQueryHandler(edit_places, pattern="^edit_places_"))
+    # بما أن زر تعديل المحلات تم إزالته من الواجهة، هذا الهاندلر لن يُستدعى
+    # app.add_handler(CallbackQueryHandler(edit_places, pattern="^edit_places_")) 
     app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern="^start_new_order$"))
 
     # محادثة تجهيز الطلبات (الآن مع إضافة حالة ASK_PLACES)
@@ -1043,7 +1047,7 @@ def main():
                 # يستقبل الكول باك لعدد المحلات من الأزرار
                 CallbackQueryHandler(receive_place_count, pattern=r"^places_[a-f0-9]{8}_\d+$"),
                 # يستقبل الرسائل النصية اللي بيها أرقام لعدد المحلات
-                MessageHandler(filters.TEXT & filters.Regex(r"^\d+$"), receive_place_count), # ازلنا filters.COMMAND
+                MessageHandler(filters.TEXT & filters.Regex(r"^\d+$"), receive_place_count), 
             ]
         },
         fallbacks=[
