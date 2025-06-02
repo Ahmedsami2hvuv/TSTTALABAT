@@ -399,6 +399,10 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # حفظ السعر فوراً دون انتظار
     pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = price
     
+    # تشغيل عملية الحفظ في الخلفية مباشرةً بعد حفظ سعر الشراء
+    # هذا يضمن أن البيانات محفوظة قبل ما نسأل عن سعر البيع
+    context.application.create_task(save_data_in_background(context))
+
     # إرسال رسالة البيع فوراً قبل أي شيء آخر
     msg = await update.message.reply_text(f"شكراً. وهسه، بيش راح تبيع *'{product}'*؟", parse_mode="Markdown")
     context.user_data[user_id]['messages_to_delete'].append({
@@ -406,10 +410,8 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'message_id': msg.message_id
     })
     
-    # تشغيل عملية الحفظ في الخلفية بعد إرسال الرسالة
-    context.application.create_task(save_data_in_background(context))
-    
     return ASK_SELL
+
 
 async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
