@@ -353,8 +353,8 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.setdefault(user_id, {}) # تأكد من تهيئة user_data لهذا المستخدم
     context.user_data[user_id].update({"order_id": order_id, "product": product}) # استخدام user_data لتخزين البيانات الخاصة بالمستخدم
     
-    # تهيئة قائمة الرسائل للحذف
-    context.user_data[user_id]['messages_to_delete'] = [] # نبدأ قائمة جديدة لكل عملية تسعير منتج
+    # تهيئة قائمة الرسائل للحذف لكل عملية تسعير منتج جديدة
+    context.user_data[user_id]['messages_to_delete'] = [] 
 
     # حفظ ID رسالة سؤال الشراء الجديدة
     msg = await query.message.reply_text(f"تمام، كم سعر شراء *'{product}'*؟", parse_mode="Markdown")
@@ -367,6 +367,9 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # حفظ رسالة المستخدم الحالية لحذفها لاحقاً
     context.user_data.setdefault(user_id, {})
+    # تأكد من وجود القائمة قبل الإضافة إليها
+    if 'messages_to_delete' not in context.user_data[user_id]:
+        context.user_data[user_id]['messages_to_delete'] = []
     context.user_data[user_id]['messages_to_delete'].append({'chat_id': update.message.chat_id, 'message_id': update.message.message_id})
 
     data = context.user_data.get(user_id) # استخدام context.user_data
@@ -409,6 +412,9 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     # حفظ رسالة المستخدم الحالية (سعر البيع) لحذفها لاحقاً
     context.user_data.setdefault(user_id, {})
+    # تأكد من وجود القائمة قبل الإضافة إليها
+    if 'messages_to_delete' not in context.user_data[user_id]:
+        context.user_data[user_id]['messages_to_delete'] = []
     context.user_data[user_id]['messages_to_delete'].append({'chat_id': update.message.chat_id, 'message_id': update.message.message_id})
 
     data = context.user_data.get(user_id) # استخدام context.user_data
@@ -459,7 +465,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         keyboard = [buttons[i:i + 5] for i in range(0, len(buttons), 5)]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # إرسال الرسالة الجديدة لسؤال عدد المحلات أولاً
+        # إرسال الرسالة الجديدة لسؤال عدد المحلات
         msg_places = await update.message.reply_text(
             "كل المنتجات تم تسعيرها. كم محل كلفتك الطلبية؟ (اختر من الأزرار أو اكتب الرقم)", 
             reply_markup=reply_markup
@@ -468,18 +474,8 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_places.chat_id, 'message_id': msg_places.message_id})
         
-        # حذف رسالة الأزرار القديمة (قائمة المنتجات) بعد إرسال سؤال "كم محل"
-        msg_info = last_button_message.get(order_id)
-        if msg_info and msg_info.get("chat_id") == update.effective_chat.id:
-            try:
-                await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg_info["message_id"])
-                logger.info(f"Deleted old button message {msg_info['message_id']} after sending new places message.")
-            except Exception as e:
-                logger.warning(f"Could not delete old button message {msg_info.get('message_id', 'N/A')} for order {order_id} after sending new places message: {e}. It might have been deleted already or is inaccessible.")
-            finally:
-                if order_id in last_button_message:
-                    del last_button_message[order_id] 
-                    save_data() 
+        # لا نحذف رسالة الأزرار القديمة (قائمة المنتجات) هنا
+        # سيتم حذفها مع كل الرسائل الأخرى في receive_place_count
         
         return ASK_PLACES 
     else:
@@ -514,7 +510,8 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     # تأكد من تهيئة list 'messages_to_delete'
     context.user_data.setdefault(user_id, {})
-    context.user_data[user_id]['messages_to_delete'] = context.user_data[user_id].get('messages_to_delete', [])
+    if 'messages_to_delete' not in context.user_data[user_id]:
+        context.user_data[user_id]['messages_to_delete'] = []
 
     if update.callback_query:
         query = update.callback_query
@@ -668,6 +665,21 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
                 logger.info(f"Successfully deleted message {msg_info['message_id']} from chat {msg_info['chat_id']}.")
             except Exception as e:
                 logger.warning(f"Could not delete message {msg_info['message_id']} from chat {msg_info['chat_id']}: {e}")
+
+    # بالإضافة إلى الرسائل المتتبعة، نحاول حذف رسالة الأزرار القديمة الخاصة بهذا الطلب
+    # (التي قد تكون ما زالت معروضة إذا لم يتم تحديثها بأزرار جديدة)
+    msg_info_buttons = last_button_message.get(order_id)
+    if msg_info_buttons and msg_info_buttons.get("chat_id") == message_object.chat_id: # التأكد من نفس المحادثة
+        try:
+            await context.bot.delete_message(chat_id=message_object.chat_id, message_id=msg_info_buttons["message_id"])
+            logger.info(f"Successfully deleted final button message {msg_info_buttons['message_id']} for order {order_id}.")
+        except Exception as e:
+            logger.warning(f"Could not delete final button message {msg_info_buttons.get('message_id', 'N/A')} for order {order_id}: {e}.")
+        finally:
+            if order_id in last_button_message:
+                del last_button_message[order_id] 
+                save_data() 
+
 
     # مسح بيانات المستخدم من context.user_data بعد الانتهاء من الطلب
     if user_id in context.user_data:
@@ -870,4 +882,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
