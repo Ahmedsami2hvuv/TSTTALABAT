@@ -195,21 +195,21 @@ def calculate_extra(places_count):
     if places_count <= 2:
         return 0
     elif places_count == 3:
-        return 1000
+        return 1
     elif places_count == 4:
-        return 2000
+        return 2
     elif places_count == 5:
-        return 3000
+        return 3
     elif places_count == 6:
-        return 4000
+        return 4
     elif places_count == 7:
-        return 5000
+        return 5
     elif places_count == 8:
-        return 6000
+        return 6
     elif places_count == 9:
-        return 7000
+        return 7
     elif places_count >= 10:
-        return 8000
+        return 8
     return 0
 
 # دالة مساعدة لحذف الرسائل في الخلفية
