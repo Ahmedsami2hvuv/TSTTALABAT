@@ -509,7 +509,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     if update.callback_query:
         query = update.callback_query
         logger.info(f"Places callback query received: {query.data}")
-        await query.answer()
+        await query.answer() # تم نقله للأعلى لسرعة الاستجابة
         if query.data.startswith("places_"):
             places = int(query.data.split("_")[1])
             message_object = query.message 
@@ -871,4 +871,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
