@@ -216,16 +216,6 @@ async def process_order(update, context, message, edited=False):
                 existing_order_id = None
                 break
 
-    # إذا لم يتم العثور على طلب مرتبط بالرسالة، نبحث عن طلب بنفس العنوان (للسلوك القديم)
-    # هذا الجزء يمكن أن يؤدي إلى خلط الطلبات إذا كان هناك طلبان بنفس العنوان لمستخدم واحد،
-    # ولكن نحتفظ به لدعم السلوك القديم، مع إعطاء الأولوية للبحث عبر message_id.
-    if not existing_order_id and not edited: # فقط للرسائل الجديدة
-         for oid, order in orders.items():
-            if str(order.get("user_id")) == user_id and order.get("title") == title:
-                existing_order_id = oid
-                logger.info(f"Found existing order {existing_order_id} for user {user_id} based on title.")
-                break
-
 
     if existing_order_id:
         order_id = existing_order_id
@@ -301,16 +291,7 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
         message_text += f"{confirmation_message}\n\n"
     message_text += f"اضغط على منتج لتحديد سعره من *{order['title']}*:"
 
-    # إرسال الرسالة الجديدة أولاً
-    msg = await context.bot.send_message(
-        chat_id=chat_id,
-        text=message_text,
-        reply_markup=markup,
-        parse_mode="Markdown"
-    )
-    logger.info(f"Sent new button message {msg.message_id} for order {order_id}")
-    
-    # محاولة حذف الرسالة القديمة للأزرار فقط، وتجاهل الأخطاء
+    # محاولة حذف الرسالة القديمة للأزرار فقط، وتجاهل الأخطاء قبل إرسال الرسالة الجديدة
     msg_info = last_button_message.get(order_id)
     if msg_info and msg_info.get("chat_id") == chat_id:
         try:
@@ -325,6 +306,16 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
                 del last_button_message[order_id]
                 save_data() # حفظ التغيير لضمان عدم الرجوع للرسالة المحذوفة بعد إعادة تشغيل البوت
 
+
+    # إرسال الرسالة الجديدة أولاً
+    msg = await context.bot.send_message(
+        chat_id=chat_id,
+        text=message_text,
+        reply_markup=markup,
+        parse_mode="Markdown"
+    )
+    logger.info(f"Sent new button message {msg.message_id} for order {order_id}")
+    
     last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
     save_data() # حفظ الـ ID والـ chat_id للرسالة الجديدة
 
@@ -392,10 +383,12 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         price = float(update.message.text.strip())
         if price < 0:
-            await update.message.reply_text("سعر الشراء يجب أن يكون رقماً إيجابياً. بيش اشتريت بالضبط؟")
+            msg_error = await update.message.reply_text("سعر الشراء يجب أن يكون رقماً إيجابياً. بيش اشتريت بالضبط؟")
+            context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
             return ASK_BUY 
     except ValueError:
-        await update.message.reply_text("الرجاء إدخال رقم صحيح لسعر الشراء. بيش اشتريت؟")
+        msg_error = await update.message.reply_text("الرجاء إدخال رقم صحيح لسعر الشراء. بيش اشتريت؟")
+        context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
         return ASK_BUY 
     
     pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = price
@@ -437,10 +430,12 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         price = float(update.message.text.strip())
         if price < 0:
-            await update.message.reply_text("سعر البيع يجب أن يكون رقماً إيجابياً. بيش راح تبيع بالضبط؟")
+            msg_error = await update.message.reply_text("سعر البيع يجب أن يكون رقماً إيجابياً. بيش راح تبيع بالضبط؟")
+            context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
             return ASK_SELL 
     except ValueError:
-        await update.message.reply_text("الرجاء إدخال رقم صحيح لسعر البيع. بيش حتبيع؟")
+        msg_error = await update.message.reply_text("الرجاء إدخال رقم صحيح لسعر البيع. بيش حتبيع؟")
+        context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
         return ASK_SELL 
     
     pricing.setdefault(order_id, {}).setdefault(product, {})["sell"] = price
@@ -473,9 +468,6 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.info(f"All products priced for order {order_id}. Transitioning to ASK_PLACES. Sent new message ID: {msg_places.message_id}")
 
         context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_places.chat_id, 'message_id': msg_places.message_id})
-        
-        # لا نحذف رسالة الأزرار القديمة (قائمة المنتجات) هنا
-        # سيتم حذفها مع كل الرسائل الأخرى في receive_place_count
         
         return ASK_PLACES 
     else:
@@ -536,10 +528,12 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         try:
             places = int(message_object.text.strip())
             if places < 0:
-                await message_object.reply_text("عدد المحلات يجب أن يكون رقماً موجباً. الرجاء إدخال عدد المحلات بشكل صحيح.")
+                msg_error = await message_object.reply_text("عدد المحلات يجب أن يكون رقماً موجباً. الرجاء إدخال عدد المحلات بشكل صحيح.")
+                context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
                 return ASK_PLACES
         except ValueError:
-            await message_object.reply_text("الرجاء إدخال عدد صحيح لعدد المحلات.")
+            msg_error = await message_object.reply_text("الرجاء إدخال عدد صحيح لعدد المحلات.")
+            context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
             return ASK_PLACES 
     
     if places is None:
@@ -706,12 +700,6 @@ async def edit_last_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await show_buttons(query.message.chat_id, context, user_id, order_id, confirmation_message="يمكنك الآن تعديل أسعار المنتجات أو إضافة/حذف منتجات بتعديل الرسالة الأصلية.")
     
-    # بعد أن يقوم المستخدم بتعديل الطلب، يجب أن نبقيه في حالة تسمح له بالتعامل مع المنتجات
-    # لذلك، سنعود إلى ASK_BUY ليتمكن من النقر على المنتجات لتسعيرها أو إعادة تسعيرها.
-    # بما أننا الآن نستخدم ConversationHandler.END بعد كل تسعير منتج،
-    # سنعيد المحادثة إلى حالة البدء (entry_points) في حال قام المستخدم بالضغط على منتج.
-    # لا حاجة لتعيين حالة هنا بشكل صريح لأن show_buttons ستعرض الأزرار،
-    # والـ CallbackQueryHandler لـ product_selected هو جزء من entry_points.
     return ConversationHandler.END
 
 async def start_new_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
