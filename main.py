@@ -682,9 +682,20 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.answer()
         
         if query.data.startswith("places_"):
-            places = int(query.data.split("_")[1])
-            if query.message:
-                context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
+    # نقسم الكولباك داتا: places_ORDERID_PLACESCOUNT
+    parts = query.data.split("_")
+    if len(parts) == 3: # تأكد انه بيها 3 اجزاء
+        order_id_from_callback = parts[1]
+        places = int(parts[2])
+        context.user_data[user_id]["completed_order_id"] = order_id_from_callback # نرجع نخزنه
+        if query.message:
+            context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
+    else:
+        logger.error(f"Invalid places callback_data format: {query.data}")
+        await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ في بيانات الزر. الرجاء المحاولة مرة أخرى.")
+        if user_id in context.user_data:
+            del context.user_data[user_id]
+        return ConversationHandler.END
         else:
             logger.error(f"Unexpected callback_query in receive_place_count: {query.data}")
             await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ غير متوقع. الرجاء المحاولة مرة أخرى أو بدء طلبية جديدة.")
@@ -782,7 +793,8 @@ async def edit_places(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buttons = []
     emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
     for i in range(1, 11):
-        buttons.append(InlineKeyboardButton(emojis[i-1], callback_data=f"places_{i}"))
+        buttons.append(InlineKeyboardButton(emojis[i-1], callback_data=f"places_{order_id}_{i}"))
+
     
     keyboard = [buttons[i:i + 5] for i in range(0, len(buttons), 5)]
     reply_markup = InlineKeyboardMarkup(keyboard)
