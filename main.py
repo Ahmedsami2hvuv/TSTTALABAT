@@ -574,11 +574,12 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
     extra_cost = calculate_extra(current_places)
     final_total = total_sell + extra_cost
 
+    # --- بناء فاتورة الزبون ---
     customer_invoice_lines = []
-    customer_invoice_lines.append(f"أبو الأكبر للتوصيل")
+    customer_invoice_lines.append(f"**أبو الأكبر للتوصيل**") # ضفت مارك داون هنا
     customer_invoice_lines.append(f"رقم الفاتورة: {invoice}")
     customer_invoice_lines.append(f"عنوان الزبون: {order['title']}")
-    customer_invoice_lines.append(f"\nالمواد:")
+    customer_invoice_lines.append(f"\n*المواد:*") # ضفت مارك داون هنا
     
     running_total_for_customer = 0.0
     for p in order["products"]:
@@ -590,17 +591,28 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             customer_invoice_lines.append(f"{p} - (لم يتم تسعيره)")
     
     customer_invoice_lines.append(f"كلفة تجهيز من - {current_places} محلات {format_float(extra_cost)} = {format_float(final_total)}")
-    customer_invoice_lines.append(f"\nالمجموع الكلي: {format_float(final_total)} (مع احتساب عدد المحلات)")
+    customer_invoice_lines.append(f"\n*المجموع الكلي:* {format_float(final_total)} (مع احتساب عدد المحلات)") # ضفت مارك داون هنا
     
     customer_final_text = "\n".join(customer_invoice_lines)
-    encoded_customer_invoice = customer_final_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
 
-    # إنشاء الأزرار الجديدة المدمجة
+    # --- إرسال فاتورة الزبون برسالة منفصلة أولاً ---
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=customer_final_text,
+            parse_mode="Markdown"
+        )
+        logger.info(f"Customer invoice sent as a separate message for order {order_id}.")
+    except Exception as e:
+        logger.error(f"Could not send customer invoice as separate message to chat {chat_id}: {e}")
+        await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من إرسال فاتورة الزبون. الرجاء المحاولة مرة أخرى.")
+
+
+    # --- إنشاء الأزرار النهائية ---
     keyboard = [
         [InlineKeyboardButton("1️⃣ تعديل الأسعار", callback_data=f"edit_prices_{order_id}")],
         [InlineKeyboardButton("2️⃣ تعديل المحلات", callback_data=f"edit_places_{order_id}")],
-        [InlineKeyboardButton("3️⃣ إرسال فاتورة الزبون (واتساب)", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_customer_invoice}")],
-        [InlineKeyboardButton("3️⃣ إرسال فاتورة الزبون (بالكروب)", callback_data=f"send_customer_invoice_to_chat_{order_id}")], # الزر الجديد
+        [InlineKeyboardButton("3️⃣ إرسال فاتورة الزبون (واتساب)", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={customer_final_text.replace(' ', '%20').replace('\n', '%0A').replace('*', '')}")], # استخدام النص الأصلي للفاتورة
         [InlineKeyboardButton("4️⃣ إنشاء طلب جديد", callback_data="start_new_order")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -646,7 +658,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         logger.error(f"Could not send admin invoice to OWNER_ID {OWNER_ID}: {e}")
         await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من إرسال فاتورة الإدارة إلى خاصك. يرجى التأكد من أنني أستطيع مراسلتك في الخاص (قد تحتاج إلى بدء محادثة معي أولاً).")
 
-    # إرسال الرسالة النهائية مع الأزرار للزبون
+    # إرسال الرسالة النهائية مع الأزرار للزبون (هذه الرسالة تحتوي الأزرار فقط)
     await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup, parse_mode="Markdown")
     
     # حذف أي رسائل سابقة في user_data['messages_to_delete']
@@ -828,67 +840,9 @@ async def start_new_order_callback(update: Update, context: ContextTypes.DEFAULT
     return ConversationHandler.END
 
 
-async def send_customer_invoice_to_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer("جاري إرسال الفاتورة...")
-
-    user_id = str(query.from_user.id)
-    
-    # استخراج order_id من الكولباك داتا
-    if query.data.startswith("send_customer_invoice_to_chat_"):
-        order_id = query.data.replace("send_customer_invoice_to_chat_", "")
-    else:
-        await query.edit_message_text("عذراً، حدث خطأ في بيانات الزر.")
-        return
-
-    if order_id not in orders or str(orders[order_id].get("user_id")) != user_id:
-        await query.edit_message_text("عذراً، الطلب غير موجود أو ليس لك.")
-        return
-
-    order = orders[order_id]
-    invoice = invoice_numbers.get(order_id, "غير معروف")
-
-    total_sell = 0.0
-    for p in order["products"]:
-        if p in pricing.get(order_id, {}) and "sell" in pricing[order_id].get(p, {}):
-            total_sell += pricing[order_id][p]["sell"]
-
-    current_places = orders[order_id].get("places_count", 0)
-    extra_cost = calculate_extra(current_places)
-    final_total = total_sell + extra_cost
-
-    customer_invoice_lines = []
-    customer_invoice_lines.append(f"أبو الأكبر للتوصيل")
-    customer_invoice_lines.append(f"رقم الفاتورة: {invoice}")
-    customer_invoice_lines.append(f"عنوان الزبون: {order['title']}")
-    customer_invoice_lines.append(f"\n*المواد:*") # خليتها بمارك داون
-    
-    running_total_for_customer = 0.0
-    for p in order["products"]:
-        if p in pricing.get(order_id, {}) and "sell" in pricing[order_id].get(p, {}):
-            sell = pricing[order_id][p]["sell"]
-            running_total_for_customer += sell
-            customer_invoice_lines.append(f"{p} - {format_float(sell)} = {format_float(running_total_for_customer)}")
-        else:
-            customer_invoice_lines.append(f"{p} - (لم يتم تسعيره)")
-    
-    customer_invoice_lines.append(f"كلفة تجهيز من - {current_places} محلات {format_float(extra_cost)} = {format_float(final_total)}")
-    customer_invoice_lines.append(f"\n*المجموع الكلي:* {format_float(final_total)} (مع احتساب عدد المحلات)") # خليتها بمارك داون
-    
-    customer_final_text = "\n".join(customer_invoice_lines)
-
-    try:
-        # هنا الرسالة حتندز للكروب اللي إجا منه الكولباك (زر الفاتورة)
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text=customer_final_text,
-            parse_mode="Markdown" # حتى يعرض المارك داون
-        )
-        await query.edit_message_text("تم إرسال فاتورة الزبون للكروب بنجاح!")
-        logger.info(f"Customer invoice sent to chat {query.message.chat_id} for order {order_id}.")
-    except Exception as e:
-        logger.error(f"Could not send customer invoice to chat {query.message.chat_id}: {e}")
-        await query.edit_message_text("عذراً، لم أتمكن من إرسال فاتورة الزبون للكروب. الرجاء المحاولة مرة أخرى.")
+# هذه الدالة لم تعد ضرورية بما أن فاتورة الزبون سترسل بشكل تلقائي
+# async def send_customer_invoice_to_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+#     pass
 
 
 async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1010,8 +964,7 @@ def main():
     app.add_handler(CallbackQueryHandler(edit_prices, pattern="^edit_prices_"))
     app.add_handler(CallbackQueryHandler(edit_places, pattern="^edit_places_"))
     app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern="^start_new_order$"))
-    # إضافة الهاندلر لزر إرسال فاتورة الزبون للكروب
-    app.add_handler(CallbackQueryHandler(send_customer_invoice_to_chat, pattern="^send_customer_invoice_to_chat_"))
+    # تم إزالة الهاندلر الخاص بـ send_customer_invoice_to_chat هنا
 
 
     # محادثة تجهيز الطلبات
