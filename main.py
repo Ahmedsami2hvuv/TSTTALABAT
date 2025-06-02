@@ -8,6 +8,8 @@ import os
 from collections import Counter
 import json
 import logging
+import asyncio # جبنا asyncio حتى نستخدم sleep
+import threading # جبنا threading حتى نستخدم المؤقت (Timer)
 
 # تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
 logging.basicConfig(
@@ -34,8 +36,10 @@ pricing = {}
 invoice_numbers = {}
 daily_profit = 0.0
 last_button_message = {} 
-# current_product لم يعد يُستخدم بشكل مباشر لتخزين حالة المحادثة
-# بدلاً من ذلك، نستخدم context.user_data لخصوصية كل مستخدم
+
+# متغيرات الحفظ المؤجل
+save_timer = None
+save_lock = threading.Lock() # قفل لضمان عدم حدوث مشاكل عند الحفظ المتعدد
 
 # تحميل البيانات عند بدء تشغيل البوت
 def load_data():
@@ -116,20 +120,34 @@ def load_data():
                 logger.error(f"Error loading last_button_message.json: {e}, reinitializing.")
                 last_button_message.clear()
 
-# حفظ البيانات
-def save_data():
-    os.makedirs(DATA_DIR, exist_ok=True)
-    with open(ORDERS_FILE, "w") as f:
-        json.dump(orders, f)
-    with open(PRICING_FILE, "w") as f:
-        json.dump(pricing, f)
-    with open(INVOICE_NUMBERS_FILE, "w") as f:
-        json.dump(invoice_numbers, f)
-    with open(DAILY_PROFIT_FILE, "w") as f:
-        json.dump(daily_profit, f)
-    # حفظ IDs رسائل الأزرار
-    with open(LAST_BUTTON_MESSAGE_FILE, "w") as f:
-        json.dump(last_button_message, f)
+# حفظ البيانات (الدالة الفعلية اللي تكتب على الملف)
+def _save_data_to_disk():
+    with save_lock: # نستخدم القفل هنا حتى نضمن بس عملية حفظ وحدة تصير بنفس الوقت
+        os.makedirs(DATA_DIR, exist_ok=True)
+        try:
+            with open(ORDERS_FILE, "w") as f:
+                json.dump(orders, f)
+            with open(PRICING_FILE, "w") as f:
+                json.dump(pricing, f)
+            with open(INVOICE_NUMBERS_FILE, "w") as f:
+                json.dump(invoice_numbers, f)
+            with open(DAILY_PROFIT_FILE, "w") as f:
+                json.dump(daily_profit, f)
+            with open(LAST_BUTTON_MESSAGE_FILE, "w") as f:
+                json.dump(last_button_message, f)
+            logger.info("All data saved to disk successfully.")
+        except Exception as e:
+            logger.error(f"Error saving data to disk: {e}")
+
+# دالة الحفظ المؤجل
+def schedule_save():
+    global save_timer
+    if save_timer is not None:
+        save_timer.cancel() # نلغي أي مؤقت سابق إذا موجود
+
+    # نحدد مؤقت جديد يحفظ بعد 1 ثانية
+    save_timer = threading.Timer(1.0, _save_data_to_disk)
+    save_timer.start()
 
 # تهيئة ملف عداد الفواتير
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -238,7 +256,7 @@ async def process_order(update, context, message, edited=False):
                 if p in pricing[order_id]:
                     del pricing[order_id][p]
 
-        save_data()
+        schedule_save() # استخدم الدالة الجديدة للحفظ
         await show_buttons(message.chat_id, context, user_id, order_id, confirmation_message="تم تحديث الطلب.")
         return
 
@@ -249,7 +267,7 @@ async def process_order(update, context, message, edited=False):
     pricing[order_id] = {p: {} for p in products}
     invoice_numbers[order_id] = invoice_no
     
-    save_data()
+    schedule_save() # استخدم الدالة الجديدة للحفظ
     
     await message.reply_text(f"استلمت الطلب بعنوان: *{title}* (عدد المنتجات: {len(products)})", parse_mode="Markdown")
     await show_buttons(message.chat_id, context, user_id, order_id)
@@ -313,10 +331,10 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
             # إزالة الإشارة للرسالة القديمة من الذاكرة والملف فقط بعد محاولة الحذف
             if order_id in last_button_message:
                 del last_button_message[order_id]
-                save_data() # حفظ التغيير لضمان عدم الرجوع للرسالة المحذوفة بعد إعادة تشغيل البوت
+                schedule_save() # استخدم الدالة الجديدة للحفظ
 
     last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
-    save_data() # حفظ الـ ID والـ chat_id للرسالة الجديدة
+    schedule_save() # استخدم الدالة الجديدة للحفظ
 
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -393,7 +411,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ASK_BUY 
     
     pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = price
-    save_data()
+    schedule_save() # استخدم الدالة الجديدة للحفظ
 
     # إرسال الرد أولاً (السؤال عن سعر البيع) وحفظ الـ ID الخاص بها
     msg = await update.message.reply_text(f"شكراً. وهسه، بيش راح تبيع *'{product}'*؟", parse_mode="Markdown")
@@ -440,7 +458,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ASK_SELL 
     
     pricing.setdefault(order_id, {}).setdefault(product, {})["sell"] = price
-    save_data()
+    schedule_save() # استخدم الدالة الجديدة للحفظ
 
     # فحص ما إذا تم تسعير جميع المنتجات
     order = orders[order_id]
@@ -575,7 +593,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     net_profit = total_sell - total_buy
     daily_profit += net_profit
-    save_data()
+    schedule_save() # استخدم الدالة الجديدة للحفظ
 
     extra = calculate_extra(places)
     total_with_extra = total_sell + extra
@@ -659,7 +677,9 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await context.bot.delete_message(chat_id=msg_info['chat_id'], message_id=msg_info['message_id'])
                 logger.info(f"Successfully deleted message {msg_info['message_id']} from chat {msg_info['chat_id']}.")
             except Exception as e:
-                logger.warning(f"Could not delete message {msg_info['message_id']} from chat {msg_info['chat_id']}: {e}")
+                logger.warning(f"Could not delete message {msg_info['chat_id']} : {msg_info['message_id']} - {e}")
+        # بعد الحذف، نفرغ القائمة
+        context.user_data[user_id]['messages_to_delete'].clear()
 
     # بالإضافة إلى الرسائل المتتبعة، نحاول حذف رسالة الأزرار القديمة الخاصة بهذا الطلب
     # (التي قد تكون ما زالت معروضة إذا لم يتم تحديثها بأزرار جديدة)
@@ -673,7 +693,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         finally:
             if order_id in last_button_message:
                 del last_button_message[order_id] 
-                save_data() 
+                schedule_save() # استخدم الدالة الجديدة للحفظ
 
 
     # مسح بيانات المستخدم من context.user_data بعد الانتهاء من الطلب
@@ -758,7 +778,7 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.error(f"Could not reset invoice counter file: {e}")
 
-        save_data()
+        _save_data_to_disk() # هنا نحفظ مباشرة لأن هذا تصفير كامل
         await query.edit_message_text("تم تصفير الأرباح ومسح كل الطلبات بنجاح.")
     elif query.data == "cancel_reset":
         await query.edit_message_text("تم إلغاء عملية التصفير.")
