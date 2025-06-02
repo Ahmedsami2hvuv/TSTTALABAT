@@ -66,7 +66,7 @@ def load_data():
                 temp_data = json.load(f)
                 pricing.clear()
                 pricing.update(temp_data)
-                pricing = {str(k): v for k, v in pricing.items()}
+                pricing = {str(pk): pv for pk, pv in pricing.items()}
                 for oid in pricing:
                     if isinstance(pricing[oid], dict):
                         pricing[oid] = {str(pk): pv for pk, pv in pricing[oid].items()}
@@ -139,7 +139,6 @@ def _save_data_to_disk():
             save_pending = False # خلص الحفظ، رجّع العلم لـ False
 
 # دالة الحفظ المؤجل
-# دالة الحفظ المؤجل - راح نغيرها
 def schedule_save():
     global save_timer, save_pending
     if save_pending: # إذا اكو عملية حفظ معلقة، لا تبدي وحدة جديدة
@@ -191,10 +190,33 @@ def format_float(value):
         return formatted[:-2]
     return formatted
 
+# دالة لحساب مبلغ الأجرة الإضافي بناءً على عدد المحلات
+def calculate_extra(places_count):
+    if places_count <= 2:
+        return 0
+    elif places_count == 3:
+        return 1000
+    elif places_count == 4:
+        return 2000
+    elif places_count == 5:
+        return 3000
+    elif places_count == 6:
+        return 4000
+    elif places_count == 7:
+        return 5000
+    elif places_count == 8:
+        return 6000
+    elif places_count == 9:
+        return 7000
+    elif places_count >= 10:
+        return 8000
+    return 0
+
+
 # دالة مساعدة لحذف الرسائل في الخلفية
 async def delete_message_in_background(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int):
     try:
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.05) # تأخير خفيف قبل الحذف
         await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
         logger.info(f"Successfully deleted message {message_id} from chat {chat_id} in background.")
     except Exception as e:
@@ -240,14 +262,15 @@ async def process_order(update, context, message, edited=False):
 
     existing_order_id = None
     for oid, msg_info in last_button_message.items():
-        if msg_info.get("message_id") == message.message_id and str(msg_info.get("chat_id")) == str(message.chat_id):
+        # تأكد من أن msg_info تحتوي على كل من message_id و chat_id قبل الوصول إليهما
+        if msg_info and msg_info.get("message_id") == message.message_id and str(msg_info.get("chat_id")) == str(message.chat_id):
             if oid in orders and str(orders[oid].get("user_id")) == user_id:
                 existing_order_id = oid
                 logger.info(f"Found existing order {existing_order_id} for user {user_id} based on message ID.")
                 break
             else:
                 logger.warning(f"Message ID {message.message_id} found in last_button_message but not linked to user {user_id} or order {oid} is missing. Treating as new.")
-                existing_order_id = None
+                existing_order_id = None # إذا ما لكينا الاوردر أو اليوزر، نعتبره طلب جديد
                 break
 
     if existing_order_id:
@@ -292,16 +315,15 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
             del context.user_data[user_id]
         return
 
-    # **الخطوة الأهم: حذف رسالة الأزرار القديمة أولاً وبسرعة**
+    # حذف رسالة الأزرار القديمة أولاً وبسرعة
     msg_info = last_button_message.get(order_id)
     if msg_info and str(msg_info.get("chat_id")) == str(chat_id): # تأكدنا إنها لنفس الشات
-        # شغّل مهمة الحذف بالخلفية بدون تأخير
         context.application.create_task(delete_message_in_background(context, chat_id=msg_info["chat_id"], message_id=msg_info["message_id"]))
         logger.info(f"Scheduled immediate deletion of old button message {msg_info['message_id']} for order {order_id}.")
         # حذفها من القائمة حتى ما نسوي بيها مشاكل
         if order_id in last_button_message:
             del last_button_message[order_id]
-            context.application.create_task(save_data_in_background(context)) # احفظ التغيير مال الحذف
+            # ما يحتاج نحفظ هنا، راح تنحفظ ويه البيانات الجديدة بعد ما نرسل الرسالة الجديدة
 
     order = orders[order_id]
     
@@ -329,7 +351,7 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
         message_text += f"{confirmation_message}\n\n"
     message_text += f"اضغط على منتج لتحديد سعره من *{order['title']}*:"
 
-    # **إرسال رسالة الأزرار الجديدة مباشرةً بعد جدولة حذف القديمة**
+    # إرسال رسالة الأزرار الجديدة مباشرةً بعد جدولة حذف القديمة
     msg = await context.bot.send_message(
         chat_id=chat_id,
         text=message_text,
@@ -342,8 +364,6 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
     last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
     context.application.create_task(save_data_in_background(context))
 
-
-# **تم إزالة app.add_handler(CommandHandler("start", start)) من هنا لأنه يجب أن يكون داخل main() فقط**
 
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -373,30 +393,14 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'messages_to_delete' not in context.user_data[user_id]:
         context.user_data[user_id]['messages_to_delete'] = [] 
 
-    # حذف رسالة الأزرار القديمة فوراً (أسرع من قبل)
-    context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
+    # حذف رسالة الأزرار القديمة فوراً
+    if query.message: # التأكد من وجود الرسالة قبل محاولة حذفها
+        context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
 
     msg = await query.message.reply_text(f"تمام، كم سعر شراء *'{product}'*؟", parse_mode="Markdown")
     context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg.chat_id, 'message_id': msg.message_id})
     
     return ASK_BUY
-
-# **تم دمج هذا الجزء داخل دالة receive_buy_price الصحيحة**
-# حفظ السعر فوراً دون انتظار
-# pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = price
-# 
-# # إرسال رسالة البيع فوراً قبل أي شيء آخر
-# msg = await update.message.reply_text(f"شكراً. وهسه، بيش راح تبيع *'{product}'*؟", parse_mode="Markdown")
-# context.user_data[user_id]['messages_to_delete'].append({
-#     'chat_id': msg.chat_id,
-#     'message_id': msg.message_id
-# })
-# 
-# # تشغيل عملية الحفظ في الخلفية بعد إرسال رسالة السؤال
-# # هذا يضمن أن السؤال ينرسل بأسرع وقت ممكن
-# context.application.create_task(save_data_in_background(context))
-# 
-# return ASK_SELL
     
 async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
@@ -449,8 +453,6 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.application.create_task(save_data_in_background(context))
     
     return ASK_SELL
-
-
 
 
 async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -506,7 +508,6 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         context.user_data[user_id]['messages_to_delete'].clear()
 
         # هنا أيضاً نحذف رسالة الأزرار القديمة (اللي اختفت أصلا) قبل إرسال السؤال الجديد
-        # وهذا يمنع أي تأخير محتمل
         msg_info_buttons = last_button_message.get(order_id)
         if msg_info_buttons and str(msg_info_buttons.get("chat_id")) == str(update.effective_chat.id):
             context.application.create_task(delete_message_in_background(context, chat_id=msg_info_buttons["chat_id"], message_id=msg_info_buttons["message_id"]))
@@ -532,7 +533,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         return ASK_PLACES 
     else:
-        # **مهم جدًا: هنا نستدعي show_buttons بوضوح حتى تظهر الأزرار المحدثة**
+        # مهم جدًا: هنا نستدعي show_buttons بوضوح حتى تظهر الأزرار المحدثة
         confirmation_msg = f"تم حفظ السعر لـ *'{product}'*."
         logger.info(f"Price saved for '{product}' in order {order_id}. Showing updated buttons with confirmation.")
         
@@ -550,50 +551,60 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     global daily_profit
     
     places = None
-    message_object = None 
+    chat_id = update.effective_chat.id # تحديد الـ chat_id بشكل صريح
     user_id = str(update.effective_user.id)
     
     context.user_data.setdefault(user_id, {})
     if 'messages_to_delete' not in context.user_data[user_id]:
         context.user_data[user_id]['messages_to_delete'] = []
 
+    # إذا كان الرد من زر InlineKeyboardButton
     if update.callback_query:
         query = update.callback_query
         logger.info(f"Places callback query received: {query.data}")
-        await query.answer()
+        await query.answer() # مهم للـ UX حتى لا يضل الزر معلق
+        
         if query.data.startswith("places_"):
             places = int(query.data.split("_")[1])
-            message_object = query.message 
+            # بما أنه رد من زر، نحذف رسالة الأزرار القديمة
+            if query.message: # التأكد من وجود الرسالة
+                context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
+                # بعد الحذف، يجب إزالة هذه الرسالة من قائمة الحذف أيضاً
+                # ولكن هذه الرسالة هي نفسها التي أدت إلى هذا الكولباك، فلا تحتاج لإضافتها للـ messages_to_delete لتُحذف لاحقاً
         else:
             logger.error(f"Unexpected callback_query in receive_place_count: {query.data}")
-            await query.edit_message_text("عذراً، حدث خطأ غير متوقع. الرجاء المحاولة مرة أخرى أو بدء طلبية جديدة.")
+            # نرسل رسالة خطأ للـ chat_id المحدد
+            await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ غير متوقع. الرجاء المحاولة مرة أخرى أو بدء طلبية جديدة.")
             if user_id in context.user_data:
                 del context.user_data[user_id]
             return ConversationHandler.END
+    # إذا كان الرد رسالة نصية
     elif update.message:
-        message_object = update.message 
+        # نضيف رسالة المستخدم الحالية إلى قائمة الحذف
         context.user_data[user_id]['messages_to_delete'].append({'chat_id': update.message.chat_id, 'message_id': update.message.message_id})
 
         try:
-            places = int(message_object.text.strip())
+            places = int(update.message.text.strip())
             if places < 0:
-                msg_error = await message_object.reply_text("عدد المحلات يجب أن يكون رقماً موجباً. الرجاء إدخال عدد المحلات بشكل صحيح.")
+                msg_error = await context.bot.send_message(chat_id=chat_id, text="عدد المحلات يجب أن يكون رقماً موجباً. الرجاء إدخال عدد المحلات بشكل صحيح.")
                 context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
                 return ASK_PLACES
         except ValueError:
-            msg_error = await message_object.reply_text("الرجاء إدخال عدد صحيح لعدد المحلات.")
+            msg_error = await context.bot.send_message(chat_id=chat_id, text="الرجاء إدخال عدد صحيح لعدد المحلات.")
             context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
             return ASK_PLACES 
     
     if places is None:
-        logger.warning("No places count received.")
+        logger.warning("No places count received or invalid input.")
+        # نرسل رسالة خطأ للـ chat_id المحدد
+        await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من فهم عدد المحلات. الرجاء إدخال رقم صحيح.")
         if user_id in context.user_data:
             del context.user_data[user_id]
         return ConversationHandler.END
 
     order_id = context.user_data[user_id].get("completed_order_id")
     if not order_id or order_id not in orders:
-        await message_object.reply_text("عذراً، لا توجد طلبية مكتملة لمعالجتها أو تم حذفها. الرجاء بدء طلبية جديدة.")
+        await context.bot.send_message(chat_id=chat_id, text="عذراً، لا توجد طلبية مكتملة لمعالجتها أو تم حذفها. الرجاء بدء طلبية جديدة.")
         if user_id in context.user_data:
             del context.user_data[user_id]
         return ConversationHandler.END
@@ -648,7 +659,7 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.info(f"Admin invoice and WhatsApp button sent to OWNER_ID: {OWNER_ID}")
     except Exception as e:
         logger.error(f"Could not send admin invoice to OWNER_ID {OWNER_ID}: {e}")
-        await message_object.reply_text("عذراً، لم أتمكن من إرسال فاتورة الإدارة إلى خاصك. يرجى التأكد من أنني أستطيع مراسلتك في الخاص (قد تحتاج إلى بدء محادثة معي أولاً).")
+        await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من إرسال فاتورة الإدارة إلى خاصك. يرجى التأكد من أنني أستطيع مراسلتك في الخاص (قد تحتاج إلى بدء محادثة معي أولاً).")
 
     customer_invoice_lines = []
     customer_invoice_lines.append(f"أبو الأكبر للتوصيل")
@@ -670,31 +681,33 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     customer_final_text = "\n".join(customer_invoice_lines)
     
-    await message_object.reply_text("نسخة الزبون (لإرسالها للعميل):\n" + customer_final_text, parse_mode="Markdown")
+    await context.bot.send_message(chat_id=chat_id, text="نسخة الزبون (لإرسالها للعميل):\n" + customer_final_text, parse_mode="Markdown")
 
     encoded_customer_invoice = customer_final_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
 
     whatsapp_customer_button_markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("إرسال فاتورة الزبون للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_customer_invoice}")]
     ])
-    await message_object.reply_text("دوس على هذه الأزرار لإرسال فاتورة الزبون عبر الواتساب:", reply_markup=whatsapp_customer_button_markup)
+    await context.bot.send_message(chat_id=chat_id, text="دوس على هذه الأزرار لإرسال فاتورة الزبون عبر الواتساب:", reply_markup=whatsapp_customer_button_markup)
     
     final_actions_keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("تعديل الطلب الأخير", callback_data=f"edit_last_order_{order_id}")],
         [InlineKeyboardButton("إنشاء طلب جديد", callback_data="start_new_order")]
     ])
-    await message_object.reply_text("شنو تريد تسوي هسه؟", reply_markup=final_actions_keyboard)
+    await context.bot.send_message(chat_id=chat_id, text="شنو تريد تسوي هسه؟", reply_markup=final_actions_keyboard)
 
     logger.info(f"Attempting to delete {len(context.user_data[user_id].get('messages_to_delete', []))} messages for user {user_id}.")
 
+    # حذف الرسائل اللي جمعناها بالـ context.user_data
     if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
         for msg_info in context.user_data[user_id]['messages_to_delete']:
             context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
         context.user_data[user_id]['messages_to_delete'].clear()
 
+    # حذف رسالة الأزرار القديمة (مال المحلات) إذا كانت لا تزال موجودة
     msg_info_buttons = last_button_message.get(order_id)
-    if msg_info_buttons and msg_info_buttons.get("chat_id") == message_object.chat_id:
-        context.application.create_task(delete_message_in_background(context, chat_id=message_object.chat_id, message_id=msg_info_buttons["message_id"]))
+    if msg_info_buttons and str(msg_info_buttons.get("chat_id")) == str(chat_id):
+        context.application.create_task(delete_message_in_background(context, chat_id=chat_id, message_id=msg_info_buttons["message_id"]))
         if order_id in last_button_message:
             del last_button_message[order_id] 
             context.application.create_task(save_data_in_background(context))
@@ -720,6 +733,10 @@ async def edit_last_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("عذراً، الطلب الذي تحاول تعديله غير موجود أو ليس لك.")
         return ConversationHandler.END
 
+    # نحذف رسالة الأزرار النهائية (تعديل/إنشاء جديد)
+    if query.message:
+        context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
+
     await show_buttons(query.message.chat_id, context, user_id, order_id, confirmation_message="يمكنك الآن تعديل أسعار المنتجات أو إضافة/حذف منتجات بتعديل الرسالة الأصلية.")
     
     return ConversationHandler.END
@@ -732,6 +749,10 @@ async def start_new_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id in context.user_data:
         del context.user_data[user_id]
         logger.info(f"Cleared user_data for user {user_id} after starting a new order from button.")
+
+    # نحذف رسالة الأزرار النهائية (تعديل/إنشاء جديد)
+    if query.message:
+        context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
 
     await query.message.reply_text("تمام، دز الطلبية الجديدة كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", parse_mode="Markdown")
     
