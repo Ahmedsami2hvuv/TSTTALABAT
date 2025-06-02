@@ -715,37 +715,44 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     if 'messages_to_delete' not in context.user_data[user_id]:
         context.user_data[user_id]['messages_to_delete'] = []
 
-    order_id = context.user_data[user_id].get("completed_order_id") 
-    if not order_id or order_id not in orders or str(orders[order_id].get("user_id")) != user_id:
-        await context.bot.send_message(chat_id=chat_id, text="عذراً، لا توجد طلبية مكتملة لمعالجتها أو تم حذفها. الرجاء بدء طلبية جديدة.")
-        if user_id in context.user_data:
-            del context.user_data[user_id]
-        return ConversationHandler.END
-
+    # هذا المتغير راح نحتاجه حتى نعرف على أي طلبية دنتعامل
+    # ممكن يجي من الـ user_data إذا إدخال يدوي، أو من الـ callback_data إذا زر
+    target_order_id = None 
 
     if update.callback_query:
         query = update.callback_query
         logger.info(f"Places callback query received: {query.data}")
         await query.answer()
         
-        if query.data.startswith(f"places_{order_id}_"): 
-            try:
-                places = int(query.data.split(f"places_{order_id}_")[1])
+        try:
+            # هنا التعديل الأساسي: نستخرج الـ order_id و الـ places من الـ callback_data مباشرة
+            parts = query.data.split('_')
+            if len(parts) == 3 and parts[0] == "places":
+                target_order_id = parts[1] # هذا هو الـ order_id اللي جاي من الزر
+                places = int(parts[2])
+
+                # نتحقق إنو الـ order_id اللي استخرجناه من الزر صحيح وموجود
+                if target_order_id not in orders or str(orders[target_order_id].get("user_id")) != user_id:
+                    logger.error(f"Order ID '{target_order_id}' from callback not found or not owned by user {user_id}.")
+                    await context.bot.send_message(chat_id=chat_id, text="عذراً، الطلب الذي تحاول تعديله غير موجود أو ليس لك. الرجاء بدء طلبية جديدة.")
+                    if user_id in context.user_data:
+                        del context.user_data[user_id]
+                    return ConversationHandler.END
+                
+                # نحذف الرسالة اللي بيها الأزرار بعد ما اختارينا
                 if query.message:
                     context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
-            except (ValueError, IndexError) as e:
-                logger.error(f"Failed to parse places count from callback data '{query.data}': {e}")
-                await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ في بيانات الزر. الرجاء المحاولة مرة أخرى.")
-                if user_id in context.user_data:
-                    del context.user_data[user_id]
-                return ConversationHandler.END
-        else:
-            logger.error(f"Unexpected callback_query in receive_place_count: {query.data}")
-            await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ غير متوقع. الرجاء المحاولة مرة أخرى أو بدء طلبية جديدة.")
+            else:
+                # إذا صيغة الـ callback_data غلط، نرمي خطأ
+                raise ValueError(f"Unexpected callback_data format for places: {query.data}")
+        except (ValueError, IndexError) as e:
+            logger.error(f"Failed to parse places count from callback data '{query.data}': {e}")
+            await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ في بيانات الزر. الرجاء المحاولة مرة أخرى.")
             if user_id in context.user_data:
                 del context.user_data[user_id]
             return ConversationHandler.END
-    elif update.message:
+
+    elif update.message: # إذا المستخدم كتب رقم يدوي
         context.user_data[user_id]['messages_to_delete'].append({'chat_id': update.message.chat_id, 'message_id': update.message.message_id})
 
         try:
@@ -759,6 +766,18 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
             context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
             return ASK_PLACES 
     
+    # بعد ما استخرجنا الـ order_id (من الزر أو من الـ user_data إذا إدخال يدوي)
+    # نتأكد من الـ order_id اللي راح نعتمد عليه
+    if target_order_id is None: # إذا ما استخرجناه من الزر، نجيبه من الـ user_data
+        target_order_id = context.user_data[user_id].get("completed_order_id")
+
+    # هذا التحقق يصير بعد ما نكون متأكدين من الـ target_order_id
+    if not target_order_id or target_order_id not in orders or str(orders[target_order_id].get("user_id")) != user_id:
+        await context.bot.send_message(chat_id=chat_id, text="عذراً، لا توجد طلبية مكتملة لمعالجتها أو تم حذفها. الرجاء بدء طلبية جديدة.")
+        if user_id in context.user_data:
+            del context.user_data[user_id]
+        return ConversationHandler.END
+    
     if places is None:
         logger.warning("No places count received or invalid input.")
         await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من فهم عدد المحلات. الرجاء إدخال رقم صحيح.")
@@ -766,8 +785,8 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
             del context.user_data[user_id]
         return ConversationHandler.END
 
-    # تحديث عدد المحلات في بيانات الطلب
-    orders[order_id]["places_count"] = places
+    # تحديث عدد المحلات في بيانات الطلب باستخدام الـ target_order_id
+    orders[target_order_id]["places_count"] = places
     context.application.create_task(save_data_in_background(context))
 
     # حذف رسائل الحوار السابقة
@@ -776,8 +795,8 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
             context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
         context.user_data[user_id]['messages_to_delete'].clear()
 
-    # استدعاء show_final_options لعرض الأزرار النهائية (بعد أن أكملنا تحديد عدد المحلات)
-    await show_final_options(chat_id, context, user_id, order_id, message_prefix="تم تحديث عدد المحلات بنجاح.")
+    # استدعاء show_final_options لعرض الأزرار النهائية
+    await show_final_options(chat_id, context, user_id, target_order_id, message_prefix="تم تحديث عدد المحلات بنجاح.")
     
     return ConversationHandler.END
 
@@ -968,19 +987,7 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # إضافة الـ Handlers
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^الارباح$|^ارباح$"), show_profit))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^صفر$|^تصفير$"), reset_all))
-    app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^التقارير$|^تقرير$|^تقارير$"), show_report))
-    app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
-
-    # إضافة الهاندلرات الجديدة لأزرار ما بعد اكتمال الطلب
-    app.add_handler(CallbackQueryHandler(edit_prices, pattern="^edit_prices_"))
-    app.add_handler(CallbackQueryHandler(edit_places, pattern="^edit_places_"))
-    app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern="^start_new_order$"))
-
+    # ... باقي الـ Handlers ...
 
     # محادثة تجهيز الطلبات
     conv_handler = ConversationHandler(
@@ -997,7 +1004,8 @@ def main():
             ],
             ASK_PLACES: [ # هذا الـ state الجديد اللي راح يسأل عن المحلات
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_place_count),
-                CallbackQueryHandler(receive_place_count, pattern=r"^places_[^_]+_\d+$") 
+                # تأكد إنو هذا الـ pattern هيچ بالضبط:
+                CallbackQueryHandler(receive_place_count, pattern=r"^places_[a-f0-9]{8}_\d+$") 
             ],
         },
         fallbacks=[
@@ -1011,4 +1019,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
