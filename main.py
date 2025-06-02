@@ -325,7 +325,8 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
     last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
     context.application.create_task(save_data_in_background(context))
 
-app.add_handler(CommandHandler("start", start))
+# **تم إزالة app.add_handler(CommandHandler("start", start)) من هنا لأنه يجب أن يكون داخل main() فقط**
+
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -362,21 +363,22 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return ASK_BUY
 
+# **تم دمج هذا الجزء داخل دالة receive_buy_price الصحيحة**
 # حفظ السعر فوراً دون انتظار
-    pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = price
-    
-    # إرسال رسالة البيع فوراً قبل أي شيء آخر
-    msg = await update.message.reply_text(f"شكراً. وهسه، بيش راح تبيع *'{product}'*؟", parse_mode="Markdown")
-    context.user_data[user_id]['messages_to_delete'].append({
-        'chat_id': msg.chat_id,
-        'message_id': msg.message_id
-    })
-    
-    # تشغيل عملية الحفظ في الخلفية بعد إرسال رسالة السؤال
-    # هذا يضمن أن السؤال ينرسل بأسرع وقت ممكن
-    context.application.create_task(save_data_in_background(context))
-    
-    return ASK_SELL
+# pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = price
+# 
+# # إرسال رسالة البيع فوراً قبل أي شيء آخر
+# msg = await update.message.reply_text(f"شكراً. وهسه، بيش راح تبيع *'{product}'*؟", parse_mode="Markdown")
+# context.user_data[user_id]['messages_to_delete'].append({
+#     'chat_id': msg.chat_id,
+#     'message_id': msg.message_id
+# })
+# 
+# # تشغيل عملية الحفظ في الخلفية بعد إرسال رسالة السؤال
+# # هذا يضمن أن السؤال ينرسل بأسرع وقت ممكن
+# context.application.create_task(save_data_in_background(context))
+# 
+# return ASK_SELL
     
 async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
@@ -427,57 +429,6 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # تشغيل عملية الحفظ في الخلفية بعد إرسال رسالة السؤال
     # هذا يضمن أن السؤال ينرسل بأسرع وقت ممكن
     context.application.create_task(save_data_in_background(context))
-    
-    return ASK_SELL
-async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.message.from_user.id)
-    
-    # حفظ رسالة المستخدم لحذفها لاحقاً
-    if 'messages_to_delete' not in context.user_data.get(user_id, {}):
-        context.user_data[user_id] = {'messages_to_delete': []}
-    context.user_data[user_id]['messages_to_delete'].append({
-        'chat_id': update.message.chat_id,
-        'message_id': update.message.message_id
-    })
-
-    data = context.user_data.get(user_id, {})
-    if not data or "order_id" not in data or "product" not in data:
-        await update.message.reply_text("حدث خطأ، الرجاء البدء من جديد")
-        return ConversationHandler.END
-    
-    order_id = data["order_id"]
-    product = data["product"]
-    
-    try:
-        price = float(update.message.text.strip())
-        if price < 0:
-            msg = await update.message.reply_text("السعر يجب أن يكون موجباً")
-            context.user_data[user_id]['messages_to_delete'].append({
-                'chat_id': msg.chat_id,
-                'message_id': msg.message_id
-            })
-            return ASK_BUY
-    except ValueError:
-        msg = await update.message.reply_text("الرجاء إدخال رقم صحيح")
-        context.user_data[user_id]['messages_to_delete'].append({
-            'chat_id': msg.chat_id,
-            'message_id': msg.message_id
-        })
-        return ASK_BUY
-    
-    # حفظ السعر فوراً دون انتظار
-    pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = price
-    
-    # تشغيل عملية الحفظ في الخلفية مباشرةً بعد حفظ سعر الشراء
-    # هذا يضمن أن البيانات محفوظة قبل ما نسأل عن سعر البيع
-    context.application.create_task(save_data_in_background(context))
-
-    # إرسال رسالة البيع فوراً قبل أي شيء آخر
-    msg = await update.message.reply_text(f"شكراً. وهسه، بيش راح تبيع *'{product}'*؟", parse_mode="Markdown")
-    context.user_data[user_id]['messages_to_delete'].append({
-        'chat_id': msg.chat_id,
-        'message_id': msg.message_id
-    })
     
     return ASK_SELL
 
