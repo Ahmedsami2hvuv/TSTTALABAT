@@ -326,46 +326,93 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
     context.application.create_task(save_data_in_background(context))
 
 app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^الارباح$|^ارباح$"), show_profit))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^صفر$|^تصفير$"), reset_all))
-    app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^التقارير$|^تقرير$|^تقارير$"), show_report))
-    app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
+async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-    # إضافة الهاندلرات الجديدة لأزرار ما بعد اكتمال الطلب
-    app.add_handler(CallbackQueryHandler(edit_last_order, pattern="^edit_last_order_"))
-    app.add_handler(CallbackQueryHandler(start_new_order, pattern="^start_new_order$"))
+    logger.info(f"Callback query received: {query.data}")
 
-    # محادثة تجهيز الطلبات
-    conv_handler = ConversationHandler(
-        entry_points=[
-            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
-            CallbackQueryHandler(product_selected)
-        ],
-        states={
-            ASK_BUY: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
-            ],
-            ASK_SELL: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sell_price),
-            ],
-            ASK_PLACES: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_place_count),
-                CallbackQueryHandler(receive_place_count, pattern="^places_")
-            ],
-        },
-        fallbacks=[
-            CommandHandler("cancel", lambda u, c: ConversationHandler.END)
-        ]
-    )
-    app.add_handler(conv_handler)
+    user_id = str(query.from_user.id)
+    
+    try:
+        order_id, product = query.data.split("|", 1) 
+    except ValueError as e:
+        logger.error(f"Failed to parse callback_data for product selection: {query.data}. Error: {e}")
+        await query.message.reply_text("عذراً، حدث خطأ في بيانات الزر. الرجاء بدء طلبية جديدة.")
+        return ConversationHandler.END
 
-    logger.info("Bot is running...")
-    app.run_polling()
+    if order_id not in orders or product not in orders[order_id].get("products", []):
+        logger.warning(f"Order ID '{order_id}' not found or Product '{product}' not in products for order '{order_id}'.")
+        await query.message.reply_text("عذراً، الطلب أو المنتج غير موجود. الرجاء بدء طلبية جديدة أو التحقق من المنتجات.")
+        if user_id in context.user_data:
+            del context.user_data[user_id]
+        return ConversationHandler.END
+    
+    context.user_data.setdefault(user_id, {})
+    context.user_data[user_id].update({"order_id": order_id, "product": product})
+    
+    if 'messages_to_delete' not in context.user_data[user_id]:
+        context.user_data[user_id]['messages_to_delete'] = [] 
 
-if name == "main":
-    main()
+    # حذف رسالة الأزرار القديمة فوراً (أسرع من قبل)
+    context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
 
+    msg = await query.message.reply_text(f"تمام، كم سعر شراء *'{product}'*؟", parse_mode="Markdown")
+    context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg.chat_id, 'message_id': msg.message_id})
+    
+    return ASK_BUY
+
+async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.message.from_user.id)
+    
+    # حفظ رسالة المستخدم لحذفها لاحقاً
+    if 'messages_to_delete' not in context.user_data.get(user_id, {}):
+        context.user_data[user_id] = {'messages_to_delete': []}
+    context.user_data[user_id]['messages_to_delete'].append({
+        'chat_id': update.message.chat_id,
+        'message_id': update.message.message_id
+    })
+
+    data = context.user_data.get(user_id, {})
+    if not data or "order_id" not in data or "product" not in data:
+        await update.message.reply_text("حدث خطأ، الرجاء البدء من جديد")
+        return ConversationHandler.END
+    
+    order_id = data["order_id"]
+    product = data["product"]
+    
+    try:
+        price = float(update.message.text.strip())
+        if price < 0:
+            msg = await update.message.reply_text("السعر يجب أن يكون موجباً")
+            context.user_data[user_id]['messages_to_delete'].append({
+                'chat_id': msg.chat_id,
+                'message_id': msg.message_id
+            })
+            return ASK_BUY
+    except ValueError:
+        msg = await update.message.reply_text("الرجاء إدخال رقم صحيح")
+        context.user_data[user_id]['messages_to_delete'].append({
+            'chat_id': msg.chat_id,
+            'message_id': msg.message_id
+        })
+        return ASK_BUY
+    
+    # حفظ السعر فوراً دون انتظار
+    pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = price
+    
+    # إرسال رسالة البيع فوراً قبل أي شيء آخر
+    msg = await update.message.reply_text(f"شكراً. وهسه، بيش راح تبيع *'{product}'*؟", parse_mode="Markdown")
+    context.user_data[user_id]['messages_to_delete'].append({
+        'chat_id': msg.chat_id,
+        'message_id': msg.message_id
+    })
+    
+    # تشغيل عملية الحفظ في الخلفية بعد إرسال رسالة السؤال
+    # هذا يضمن أن السؤال ينرسل بأسرع وقت ممكن
+    context.application.create_task(save_data_in_background(context))
+    
+    return ASK_SELL
 async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
     
