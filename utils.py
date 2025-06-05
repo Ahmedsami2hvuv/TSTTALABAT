@@ -641,11 +641,17 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data[user_id]['messages_to_delete'].append({'chat_id': update.message.chat_id, 'message_id': update.message.message_id})
         
         # التأكد من وجود target_order_id بعد معالجته من البداية
+        # هاي نقطة ضعف هنا، لو المجهز دخل رقم بدون ما يبدي طلبية أو يضغط زر بالأول
+        # راح نضيف تحقق من الطلبية نفسها
+        
+        # إذا target_order_id ما موجود بـ user_data (يعني المجهز دز رقم بدون ما يضغط زر)
+        # أو إذا الـ target_order_id موجود بس الطلبية الأساسية انمسحت
         if not target_order_id or target_order_id not in orders:
-            await context.bot.send_message(chat_id=chat_id, text="عذراً، لا توجد طلبية مكتملة لمعالجتها أو تم حذفها. الرجاء بدء طلبية جديدة.")
-            if user_id in context.user_data:
-                del context.user_data[user_id]
-            return ConversationHandler.END
+             await context.bot.send_message(chat_id=chat_id, text="عذراً، ماكو طلبية حالية منتظر عدد محلاتها. الرجاء دز الطلبية أول شي أو اضغط على الزر الخاص بالطلبية.")
+             if user_id in context.user_data:
+                 del context.user_data[user_id]
+             return ConversationHandler.END
+
 
         try:
             places = int(update.message.text.strip())
@@ -684,6 +690,8 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def show_final_options(chat_id, context, user_id, order_id, message_prefix=None):
+    global daily_profit # مهم: حتى نكدر نعدل على المتغير العام
+    
     if order_id not in orders:
         logger.warning(f"Attempted to show final options for non-existent order_id: {order_id}")
         await context.bot.send_message(chat_id=chat_id, text="عذراً، الطلب الذي تحاول الوصول إليه غير موجود أو تم حذفه. الرجاء بدء طلبية جديدة.")
@@ -706,6 +714,12 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
     current_places = orders[order_id].get("places_count", 0) 
     extra_cost = calculate_extra(current_places)
     final_total = total_sell + extra_cost
+
+    # ******* إضافة الربح للربح التراكمي هنا *******
+    logger.info(f"Daily profit before addition: {daily_profit}")
+    daily_profit += net_profit
+    logger.info(f"Daily profit after adding {net_profit}: {daily_profit}")
+    context.application.create_task(save_data_in_background(context)) # نحفظ التغيير مال الربح التراكمي
 
     # بناء فاتورة الزبون مع الحفاظ على الترتيب
     customer_invoice_lines = []
@@ -1045,4 +1059,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
