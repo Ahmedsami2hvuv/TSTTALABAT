@@ -701,7 +701,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
 
     # بناء فاتورة الزبون مع الحفاظ على الترتيب
     customer_invoice_lines = []
-    customer_invoice_lines.append(f"أبو الأكبر للتوصيل") 
+    customer_invoice_lines.append(f"**أبو الأكبر للتوصيل**") 
     customer_invoice_lines.append(f"رقم الفاتورة: {invoice}")
     customer_invoice_lines.append(f"عنوان الزبون: {order['title']}")
     customer_invoice_lines.append(f"\n*المواد:*") 
@@ -751,7 +751,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             sell = pricing[order_id][p]["sell"] 
             profit_item = sell - buy
             owner_invoice_details.append(f"{p} - شراء: {format_float(buy)}, بيع: {format_float(sell)}, ربح: {format_float(profit_item)}")
-            else:
+        else:
             owner_invoice_details.append(f"{p} - (لم يتم تسعيره بعد)")
     owner_invoice_details.append(f"\nالمجموع شراء: {format_float(total_buy)}")
     owner_invoice_details.append(f"المجموع بيع: {format_float(total_sell)}")
@@ -762,6 +762,36 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
     final_owner_invoice_text = "\n".join(owner_invoice_details)
     
     encoded_owner_invoice = final_owner_invoice_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
+    whatsapp_owner_button_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("إرسال فاتورة الإدارة للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}")]
+    ])
+
+    try:
+        await context.bot.send_message(
+            chat_id=OWNER_ID,
+            text=f"**فاتورة طلبية (الإدارة):**\n{final_owner_invoice_text}",
+            parse_mode="Markdown",
+            reply_markup=whatsapp_owner_button_markup
+        )
+        logger.info(f"Admin invoice and WhatsApp button sent to OWNER_ID: {OWNER_ID}")
+    except Exception as e:
+        logger.error(f"Could not send admin invoice to OWNER_ID {OWNER_ID}: {e}")
+        await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من إرسال فاتورة الإدارة إلى خاصك. يرجى التأكد من أنني أستطيع مراسلتك في الخاص (قد تحتاج إلى بدء محادثة معي أولاً).")
+
+    await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup, parse_mode="Markdown")
+    
+    if user_id in context.user_data: 
+        if 'messages_to_delete' in context.user_data[user_id]:
+            for msg_info in context.user_data[user_id]['messages_to_delete']:
+                context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
+            context.user_data[user_id]['messages_to_delete'].clear()
+
+    if user_id in context.user_data:
+        if "order_id" in context.user_data[user_id]:
+            del context.user_data[user_id]["order_id"]
+        if "product" in context.user_data[user_id]:
+            del context.user_data[user_id]["product"]
+        logger.info(f"Cleaned up order-specific user_data for user {user_id} after showing final options.")
 
 async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1007,3 +1037,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
