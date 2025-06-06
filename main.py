@@ -94,7 +94,7 @@ def _save_data_to_disk():
         try:
             # Save to temporary files first, then rename to prevent data corruption
             with open(ORDERS_FILE + ".tmp", "w") as f:
-                json.dump(orders, f, indent=4)
+                json.dump(orders, f, indent=4) # Use indent for readability in files
             os.replace(ORDERS_FILE + ".tmp", ORDERS_FILE)
 
             with open(PRICING_FILE + ".tmp", "w") as f:
@@ -114,7 +114,6 @@ def _save_data_to_disk():
             os.replace(LAST_BUTTON_MESSAGE_FILE + ".tmp", LAST_BUTTON_MESSAGE_FILE)
 
             logger.info("All data saved to disk successfully.")
-            # For debugging, print pricing state after save
             logger.info(f"Pricing state after _save_data_to_disk(): {pricing}")
         except Exception as e:
             logger.error(f"Error saving data to disk: {e}")
@@ -321,7 +320,7 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
             logger.info(f"[{chat_id}] Product '{p}' in order {order_id} is completed.")
         else:
             pending_products.append(p)
-            logger.info(f"[{chat_id}] Product '{p}' in order {order_id} is pending. Pricing state: {pricing.get(order_id, {}).get(p, {})}")
+            logger.info(f"[{chat_id}] Product '{p}' in order {order_id} is pending. Pricing state for this product: {pricing.get(order_id, {}).get(p, {})}")
     
     buttons_list = []
     for p in completed_products:
@@ -340,7 +339,7 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
     if msg_info:
         logger.info(f"[{chat_id}] Deleting old button message {msg_info['message_id']} for order {order_id} before sending new one.")
         context.application.create_task(delete_message_in_background(context, chat_id=msg_info["chat_id"], message_id=msg_info["message_id"]))
-        del last_button_message[order_id] # Remove from last_button_message right away to avoid issues
+        # No del last_button_message[order_id] here, it's updated after new message is sent
 
     msg = await context.bot.send_message(
         chat_id=chat_id,
@@ -396,7 +395,6 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'message_id': query.message.message_id
         })
         logger.info(f"[{query.message.chat_id}] Added button message {query.message.message_id} to delete queue for order {order_id}.")
-        # نعدل الرسالة لتظهر أنها تم الضغط عليها (يمكن إزالة الأزرار فوراً)
         try:
             await context.bot.edit_message_reply_markup(
                 chat_id=query.message.chat_id,
@@ -476,6 +474,10 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             })
         return ASK_BUY
     
+    # ***** هنا يتم تخزين سعر الشراء في user_data *****
+    context.user_data[user_id]["buy_price"] = price 
+    logger.info(f"[{update.effective_chat.id}] Buy price '{price}' stored in user_data for product '{product}'. User data: {context.user_data.get(user_id)}")
+
     msg = await update.message.reply_text(f"شكراً. وهسه، بيش راح تبيع *'{product}'*؟", parse_mode="Markdown")
     context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg.chat_id, 'message_id': msg.message_id})
     logger.info(f"[{update.effective_chat.id}] Asking for sell price for '{product}'. Next state: ASK_SELL. Current user_data: {context.user_data.get(user_id)}")
@@ -493,8 +495,8 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data[user_id]['messages_to_delete'].append({'chat_id': update.message.chat_id, 'message_id': update.message.message_id})
 
     data = context.user_data.get(user_id)
-    if not data or "order_id" not in data or "product" not in data:
-        logger.error(f"[{update.effective_chat.id}] Sell price: Missing order_id or product in user_data for user {user_id}. User data: {data}")
+    if not data or "order_id" not in data or "product" not in data or "buy_price" not in data: # Added buy_price check
+        logger.error(f"[{update.effective_chat.id}] Sell price: Missing order_id, product, or buy_price in user_data for user {user_id}. User data: {data}")
         msg_error = await update.message.reply_text("عذراً، لم أتمكن من تحديد الطلبية أو المنتج لتسعيره. الرجاء اضغط على المنتج من القائمة أولاً لتحديد سعره، أو ابدأ طلبية جديدة.", parse_mode="Markdown")
         context.user_data[user_id]['messages_to_delete'].append({
             'chat_id': msg_error.chat_id, 
@@ -502,7 +504,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         })
         return ConversationHandler.END
     
-    order_id, product = data["order_id"], data["product"]
+    order_id, product, buy_price_from_user_data = data["order_id"], data["product"], data["buy_price"]
     
     if order_id not in orders or product not in orders[order_id].get("products", []):
         logger.warning(f"[{update.effective_chat.id}] Sell price: Order ID '{order_id}' not found or Product '{product}' not in products for order '{order_id}'.")
@@ -520,8 +522,8 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ASK_SELL 
 
     try:
-        price = float(update.message.text.strip())
-        if price < 0:
+        sell_price = float(update.message.text.strip())
+        if sell_price < 0:
             logger.warning(f"[{update.effective_chat.id}] Sell price: Negative price from user {user_id}: '{update.message.text}'")
             msg_error = await update.message.reply_text("سعر البيع يجب أن يكون رقماً إيجابياً. بيش راح تبيع بالضبط؟")
             context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
@@ -532,9 +534,9 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
         return ASK_SELL 
     
-    # ***** هنا نقطة الحفظ الفعلية للأسعار *****
-    pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = data["buy_price"] # Assuming buy price stored somewhere before
-    pricing[order_id][product]["sell"] = price
+    # ***** هنا يتم حفظ سعر الشراء وسعر البيع في الـ pricing global dictionary *****
+    pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = buy_price_from_user_data
+    pricing[order_id][product]["sell"] = sell_price
     
     # طباعة حالة pricing بعد الحفظ مباشرةً للتحقق
     logger.info(f"[{update.effective_chat.id}] Pricing for order '{order_id}' and product '{product}' AFTER SAVE: {pricing.get(order_id, {}).get(product)}")
@@ -557,6 +559,9 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         confirmation_msg = f"تم حفظ السعر لـ *'{product}'*."
         logger.info(f"[{update.effective_chat.id}] Price saved for '{product}' in order {order_id}. Showing updated buttons with confirmation. User {user_id} can select next product.")
         await show_buttons(update.effective_chat.id, context, user_id, order_id, confirmation_message=confirmation_msg)
+        # ***** هنا هو التعديل اللي يخلي البوت ما يسكت *****
+        # بما إن show_buttons راح تنزل قائمة الأزرار الجديدة، ننهي المحادثة الحالية ونعتمد على Product_selected
+        # كنقطة دخول جديدة عندما يضغط المستخدم على زر آخر.
         return ConversationHandler.END 
 
 async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT_TYPE, user_id: str, order_id: str):
