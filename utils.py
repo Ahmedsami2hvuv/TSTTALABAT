@@ -95,6 +95,7 @@ def load_data():
         with open(DAILY_PROFIT_FILE, "r") as f:
             try:
                 daily_profit = json.load(f)
+                logger.info(f"Loaded daily_profit: {daily_profit}") # جديد: طباعة قيمة الربح عند التحميل
             except json.JSONDecodeError:
                 daily_profit = 0.0
                 logger.warning("daily_profit.json is corrupted or empty, reinitializing.")
@@ -130,6 +131,7 @@ def _save_data_to_disk():
                 json.dump(invoice_numbers, f)
             with open(DAILY_PROFIT_FILE, "w") as f:
                 json.dump(daily_profit, f)
+                logger.info(f"Saved daily_profit: {daily_profit} to disk.") # جديد: طباعة قيمة الربح عند الحفظ
             with open(LAST_BUTTON_MESSAGE_FILE, "w") as f:
                 json.dump(last_button_message, f)
             logger.info("All data saved to disk successfully.")
@@ -601,9 +603,10 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
     if 'messages_to_delete' not in context.user_data[user_id]:
         context.user_data[user_id]['messages_to_delete'] = []
 
-    target_order_id = context.user_data[user_id].get("completed_order_id") # نجلب order_id من الـ user_data
+    # هنا راح نغير طريقة تحديد target_order_id
+    target_order_id_to_process = None 
 
-    # إذا كان كول باك، نستخلص الـ order_id من الكول باك داتا
+    # إذا كان كول باك (يعني ضغطة زر)
     if update.callback_query:
         query = update.callback_query
         logger.info(f"Places callback query received: {query.data}")
@@ -612,11 +615,12 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
         try:
             parts = query.data.split('_')
             if len(parts) == 3 and parts[0] == "places":
-                # هنا راح نستخدم الـ order_id اللي جاي من الكول باك داتا كـ target_order_id مؤقت
-                # ونخزنه بـ user_data لهذا المستخدم حتى نقدر نكمله
-                potential_order_id = parts[1]
-                if potential_order_id not in orders:
-                    logger.error(f"Order ID '{potential_order_id}' from callback data not found in global orders.")
+                # نستخلص الـ order_id مباشرة من الـ callback_data
+                potential_order_id_from_callback = parts[1] 
+                
+                # نتحقق إذا الـ order_id هذا موجود فعلاً بالـ orders
+                if potential_order_id_from_callback not in orders:
+                    logger.error(f"Order ID '{potential_order_id_from_callback}' from callback data not found in global orders.")
                     await context.bot.send_message(chat_id=chat_id, text="عذراً، الطلبية اللي حاول تختار عدد محلاتها ما موجودة عندي. الرجاء بدء طلبية جديدة.")
                     # نمسح الـ completed_order_id إذا كان موجود لأنو الطلبية مو فعالة
                     if "completed_order_id" in context.user_data[user_id]:
@@ -624,8 +628,8 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
                     return ConversationHandler.END
 
                 # إذا الطلبية موجودة، نخزن الـ order_id بـ user_data للمستخدم الحالي
-                context.user_data[user_id]["completed_order_id"] = potential_order_id
-                target_order_id = potential_order_id # نحدّث الـ target_order_id
+                context.user_data[user_id]["completed_order_id"] = potential_order_id_from_callback
+                target_order_id_to_process = potential_order_id_from_callback # هذا هو الـ order_id اللي راح نشتغل عليه
                 
                 places = int(parts[2])
                 if query.message:
@@ -637,21 +641,22 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
             await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ في بيانات الزر. الرجاء المحاولة مرة أخرى.")
             return ASK_PLACES # نطلب منه المحاولة مرة أخرى
 
-    elif update.message: # إذا المستخدم كتب رقم يدوي
+    # إذا المستخدم كتب رقم يدوي (هنا لازم يبقى يعتمد على الـ completed_order_id من user_data)
+    elif update.message: 
         context.user_data[user_id]['messages_to_delete'].append({'chat_id': update.message.chat_id, 'message_id': update.message.message_id})
         
-        # التأكد من وجود target_order_id بعد معالجته من البداية
-        # هاي نقطة ضعف هنا، لو المجهز دخل رقم بدون ما يبدي طلبية أو يضغط زر بالأول
-        # راح نضيف تحقق من الطلبية نفسها
-        
-        # إذا target_order_id ما موجود بـ user_data (يعني المجهز دز رقم بدون ما يضغط زر)
-        # أو إذا الـ target_order_id موجود بس الطلبية الأساسية انمسحت
-        if not target_order_id or target_order_id not in orders:
+        # هنا نبقى نعتمد على completed_order_id المخزون في user_data
+        # لأنو ماكو order_id جاي مباشرة من الرسالة النصية
+        current_target_order_id_from_user_data = context.user_data[user_id].get("completed_order_id") 
+
+        if not current_target_order_id_from_user_data or current_target_order_id_from_user_data not in orders:
              await context.bot.send_message(chat_id=chat_id, text="عذراً، ماكو طلبية حالية منتظر عدد محلاتها. الرجاء دز الطلبية أول شي أو اضغط على الزر الخاص بالطلبية.")
              if user_id in context.user_data:
                  del context.user_data[user_id]
              return ConversationHandler.END
 
+        # نستخدم الـ order_id من user_data لإكمال العملية
+        target_order_id_to_process = current_target_order_id_from_user_data # هذا هو الـ order_id اللي راح نشتغل عليه
 
         try:
             places = int(update.message.text.strip())
@@ -664,13 +669,14 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
             context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
             return ASK_PLACES # نبقى بنفس الحالة
     
-    if places is None:
-        logger.warning("No places count received or invalid input.")
-        await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من فهم عدد المحلات. الرجاء إدخال رقم صحيح.")
+    # نستخدم target_order_id_to_process (الذي تم تحديده سواء من الزر أو من user_data)
+    if places is None or target_order_id_to_process is None:
+        logger.warning("No places count or order ID received or invalid input.")
+        await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من فهم عدد المحلات أو الطلبية. الرجاء إدخال رقم صحيح أو البدء بطلبية جديدة.")
         return ASK_PLACES # نطلب منه المحاولة مرة أخرى
 
-    # تحديث عدد المحلات في بيانات الطلب باستخدام الـ target_order_id
-    orders[target_order_id]["places_count"] = places
+    # تحديث عدد المحلات في بيانات الطلب باستخدام الـ target_order_id_to_process
+    orders[target_order_id_to_process]["places_count"] = places
     context.application.create_task(save_data_in_background(context))
 
     # حذف رسائل الحوار السابقة
@@ -679,12 +685,13 @@ async def receive_place_count(update: Update, context: ContextTypes.DEFAULT_TYPE
             context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
         context.user_data[user_id]['messages_to_delete'].clear()
     
-    # بعد ما تم إدخال عدد المحلات بنجاح، نشيل "completed_order_id"
+    # بعد ما تم إدخال عدد المحلات بنجاح، نشيل "completed_order_id" للمستخدم الحالي
+    # لأنو العملية اكتملت
     if "completed_order_id" in context.user_data[user_id]:
         del context.user_data[user_id]["completed_order_id"]
 
     # استدعاء show_final_options لعرض الأزرار النهائية
-    await show_final_options(chat_id, context, user_id, target_order_id, message_prefix="تم تحديث عدد المحلات بنجاح.")
+    await show_final_options(chat_id, context, user_id, target_order_id_to_process, message_prefix="تم تحديث عدد المحلات بنجاح.")
     
     return ConversationHandler.END # هنا ننهي الـ conversation بعد ما اكتمل كل شي
 
@@ -716,9 +723,9 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
     final_total = total_sell + extra_cost
 
     # ******* إضافة الربح للربح التراكمي هنا *******
-    logger.info(f"Daily profit before addition: {daily_profit}")
+    logger.info(f"Daily profit before addition for order {order_id}: {daily_profit}")
     daily_profit += net_profit
-    logger.info(f"Daily profit after adding {net_profit}: {daily_profit}")
+    logger.info(f"Daily profit after adding {net_profit} for order {order_id}: {daily_profit}")
     context.application.create_task(save_data_in_background(context)) # نحفظ التغيير مال الربح التراكمي
 
     # بناء فاتورة الزبون مع الحفاظ على الترتيب
@@ -911,6 +918,8 @@ async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.message.from_user.id) != str(OWNER_ID):
         await update.message.reply_text("عذراً، هذا الأمر متاح للمالك فقط.")
         return
+    # أضفنا طباعة لـ daily_profit هنا أيضاً لتتبع القيمة عند طلبها
+    logger.info(f"Current daily_profit requested by user {update.message.from_user.id}: {daily_profit}")
     await update.message.reply_text(f"الربح التراكمي الإجمالي: *{format_float(daily_profit)}* دينار", parse_mode="Markdown")
 
 async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -935,6 +944,7 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == "confirm_reset":
         global daily_profit, orders, pricing, invoice_numbers, last_button_message
+        logger.info(f"Daily profit before reset: {daily_profit}") # جديد: طباعة قيمة الربح قبل التصفير
         daily_profit = 0.0
         orders.clear()
         pricing.clear()
@@ -948,6 +958,7 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Could not reset invoice counter file: {e}")
 
         _save_data_to_disk()
+        logger.info(f"Daily profit after reset: {daily_profit}") # جديد: طباعة قيمة الربح بعد التصفير
         await query.edit_message_text("تم تصفير الأرباح ومسح كل الطلبات بنجاح.")
     elif query.data == "cancel_reset":
         await query.edit_message_text("تم إلغاء عملية التصفير.")
@@ -1059,3 +1070,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
