@@ -442,6 +442,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     })
 
     data = context.user_data.get(user_id)
+    # الشرط هذا لازم يكون دقيق بس ما يسبب مشاكل
     if not data or "order_id" not in data or "product" not in data:
         msg_error = await update.message.reply_text("عذراً، لم أتمكن من تحديد الطلبية أو المنتج لتسعيره. الرجاء اضغط على المنتج من القائمة أولاً لتحديد سعره، أو ابدأ طلبية جديدة.", parse_mode="Markdown")
         context.user_data[user_id]['messages_to_delete'].append({
@@ -461,6 +462,15 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         })
         return ConversationHandler.END
     
+    # ***** هنا نتحقق إنو الرسالة رقم قبل لا نسوي float *****
+    if not update.message.text.strip().isdigit() and not (update.message.text.strip().count('.') == 1 and update.message.text.strip().replace('.', '').isdigit()):
+        msg_error = await update.message.reply_text("الرجاء إدخال *رقم* صحيح لسعر الشراء.")
+        context.user_data[user_id]['messages_to_delete'].append({
+                'chat_id': msg_error.chat_id, 
+                'message_id': msg_error.message_id
+            })
+        return ASK_BUY # نبقى بنفس الحالة ونطلب رقم جديد
+
     try:
         price = float(update.message.text.strip())
         if price < 0:
@@ -470,7 +480,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'message_id': msg_error.message_id
             })
             return ASK_BUY
-    except ValueError:
+    except ValueError: # هذا الـ ValueError المفروض ما يوصله إذا الـ isdigit فوق اشتغلت صح
         msg_error = await update.message.reply_text("الرجاء إدخال رقم صحيح")
         context.user_data[user_id]['messages_to_delete'].append({
                 'chat_id': msg_error.chat_id, 
@@ -516,6 +526,12 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
             'message_id': msg_error.message_id
         })
         return ConversationHandler.END
+
+    # ***** هنا نتحقق إنو الرسالة رقم قبل لا نسوي float *****
+    if not update.message.text.strip().isdigit() and not (update.message.text.strip().count('.') == 1 and update.message.text.strip().replace('.', '').isdigit()):
+        msg_error = await update.message.reply_text("الرجاء إدخال *رقم* صحيح لسعر البيع.")
+        context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
+        return ASK_SELL # نبقى بنفس الحالة ونطلب رقم جديد
 
     try:
         price = float(update.message.text.strip())
@@ -577,6 +593,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT_TYPE, user_id: str, order_id: str):
     # ***** مهم: هنا نحفظ order_id في user_data["current_active_order_id"] *****
+    # هذا يضمن إنو لو كتب رقم يدوي للمحلات، نعرف يا طلبية يقصد
     context.user_data.setdefault(user_id, {})["current_active_order_id"] = order_id
 
     buttons = []
@@ -640,13 +657,14 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
             await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ في بيانات الزر. الرجاء المحاولة مرة أخرى.")
             return 
 
-    # إذا المستخدم كتب رقم يدوي
+    # إذا المستخدم كتب رقم يدوي (هذا الجزء هو اللي جاي يسبب المشكلة)
     elif update.message: 
         context.user_data[user_id]['messages_to_delete'].append({'chat_id': update.message.chat_id, 'message_id': update.message.message_id})
         
         # ***** نعتمد على current_active_order_id المخزن في user_data *****
         order_id_to_process = context.user_data[user_id].get("current_active_order_id")
 
+        # الشرط اللي يخلي الرسالة "عذراً، ماكو طلبية حالية منتظر عدد محلاتها..." تطلع
         if not order_id_to_process or order_id_to_process not in orders or str(orders[order_id_to_process].get("user_id")) != user_id:
              msg_error = await context.bot.send_message(chat_id=chat_id, text="عذراً، ماكو طلبية حالية منتظر عدد محلاتها أو الطلبية قديمة جداً. الرجاء استخدم الأزرار لتحديد عدد المحلات، أو بدء طلبية جديدة.", parse_mode="Markdown")
              context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
@@ -982,10 +1000,13 @@ def main():
     app.add_handler(CallbackQueryHandler(edit_prices, pattern="^edit_prices_"))
     app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern="^start_new_order$"))
 
-    # الهاندلر المستقل لأزرار المحلات والإدخال اليدوي لعدد المحلات
+    # الهاندلر المستقل لأزرار المحلات فقط، لا يستقبل أي رسالة نصية هنا
     app.add_handler(CallbackQueryHandler(handle_places_count_data, pattern=r"^places_data_[a-f0-9]{8}_\d+$"))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^\d+$") & ~filters.COMMAND, handle_places_count_data))
-
+    
+    # ***** هذا هو التغيير الأهم: إزالة MessageHandler الذي يلتقط الأرقام يدوياً من handle_places_count_data *****
+    # app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^\d+$") & ~filters.COMMAND, handle_places_count_data))
+    # الآن، إذا أراد المستخدم إدخال رقم يدوي لعدد المحلات، فيجب أن يكون ضمن سياق محادثة جديد أو محدد.
+    # بما إنو البوت جاي يدز أزرار لعدد المحلات، نكتفي بالضغط على الأزرار فقط لضمان السلاسة وتجنب التداخل.
 
     order_creation_conv_handler = ConversationHandler(
         entry_points=[
@@ -994,6 +1015,8 @@ def main():
         ],
         states={
             ASK_BUY: [
+                # الآن receive_buy_price فقط تستقبل رسائل نصية (يفترض أن تكون أرقام)
+                # ولا تتعارض مع handle_places_count_data لأن الأخيرة لا تلتقط الأرقام النصية بشكل عام
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
             ],
             ASK_SELL: [
@@ -1011,4 +1034,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
