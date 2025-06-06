@@ -10,6 +10,7 @@ import json
 import logging
 import asyncio
 import threading
+import time # Add time for sleep in case of heavy logging
 
 # تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
 logging.basicConfig(
@@ -46,81 +47,44 @@ def load_data():
 
     os.makedirs(DATA_DIR, exist_ok=True)
 
-    if os.path.exists(ORDERS_FILE):
-        with open(ORDERS_FILE, "r") as f:
-            try:
-                temp_data = json.load(f)
-                orders.clear() 
-                orders.update(temp_data) 
-                orders = {str(k): v for k, v in orders.items()}
-                logger.info(f"Loaded orders.json successfully. Orders count: {len(orders)}")
-            except json.JSONDecodeError:
-                orders.clear() 
-                logger.warning("orders.json is corrupted or empty, reinitializing.")
-            except Exception as e:
-                logger.error(f"Error loading orders.json: {e}, reinitializing.")
-                orders.clear()
+    # Helper function to load a JSON file safely
+    def load_json_file(filepath, default_value, var_name):
+        if os.path.exists(filepath):
+            with open(filepath, "r") as f:
+                try:
+                    data = json.load(f)
+                    logger.info(f"Loaded {var_name} from {filepath} successfully.")
+                    return data
+                except json.JSONDecodeError:
+                    logger.warning(f"{filepath} is corrupted or empty, reinitializing {var_name}.")
+                except Exception as e:
+                    logger.error(f"Error loading {filepath}: {e}, reinitializing {var_name}.")
+        logger.info(f"{var_name} file not found or corrupted, initializing to default.")
+        return default_value
 
-    if os.path.exists(PRICING_FILE):
-        with open(PRICING_FILE, "r") as f:
-            try:
-                temp_data = json.load(f)
-                pricing.clear()
-                pricing.update(temp_data)
-                # Ensure keys are strings for consistency
-                pricing = {str(k): v for k, v in pricing.items()}
-                for oid in pricing:
-                    if isinstance(pricing[oid], dict):
-                        pricing[oid] = {str(pk): pv for pk, pv in pricing[oid].items()}
-                logger.info(f"Loaded pricing.json successfully. Pricing entries: {len(pricing)}")
-            except json.JSONDecodeError:
-                pricing.clear()
-                logger.warning("pricing.json is corrupted or empty, reinitializing.")
-            except Exception as e:
-                logger.error(f"Error loading pricing.json: {e}, reinitializing.")
-                pricing.clear()
+    orders_temp = load_json_file(ORDERS_FILE, {}, "orders")
+    orders.clear()
+    orders.update({str(k): v for k, v in orders_temp.items()})
 
-    if os.path.exists(INVOICE_NUMBERS_FILE):
-        with open(INVOICE_NUMBERS_FILE, "r") as f:
-            try:
-                temp_data = json.load(f)
-                invoice_numbers.clear()
-                invoice_numbers.update(temp_data)
-                invoice_numbers = {str(k): v for k, v in invoice_numbers.items()}
-                logger.info(f"Loaded invoice_numbers.json successfully. Invoice numbers count: {len(invoice_numbers)}")
-            except json.JSONDecodeError:
-                invoice_numbers.clear()
-                logger.warning("invoice_numbers.json is corrupted or empty, reinitializing.")
-            except Exception as e:
-                logger.error(f"Error loading invoice_numbers.json: {e}, reinitializing.")
-                invoice_numbers.clear()
+    pricing_temp = load_json_file(PRICING_FILE, {}, "pricing")
+    pricing.clear()
+    pricing.update({str(pk): pv for pk, pv in pricing_temp.items()})
+    for oid in pricing:
+        if isinstance(pricing[oid], dict):
+            pricing[oid] = {str(pk): pv for pk, pv in pricing[oid].items()} # Ensure inner keys are strings too
 
-    if os.path.exists(DAILY_PROFIT_FILE):
-        with open(DAILY_PROFIT_FILE, "r") as f:
-            try:
-                daily_profit = json.load(f)
-                logger.info(f"Loaded daily_profit: {daily_profit} from {DAILY_PROFIT_FILE}")
-            except json.JSONDecodeError:
-                daily_profit = 0.0
-                logger.warning(f"{DAILY_PROFIT_FILE} is corrupted or empty, reinitializing daily_profit.")
-            except Exception as e:
-                logger.error(f"Error loading {DAILY_PROFIT_FILE}: {e}, reinitializing daily_profit.")
-                daily_profit = 0.0
+    invoice_numbers_temp = load_json_file(INVOICE_NUMBERS_FILE, {}, "invoice_numbers")
+    invoice_numbers.clear()
+    invoice_numbers.update({str(k): v for k, v in invoice_numbers_temp.items()})
+
+    daily_profit = load_json_file(DAILY_PROFIT_FILE, 0.0, "daily_profit")
     
-    if os.path.exists(LAST_BUTTON_MESSAGE_FILE):
-        with open(LAST_BUTTON_MESSAGE_FILE, "r") as f:
-            try:
-                temp_data = json.load(f)
-                last_button_message.clear()
-                last_button_message.update(temp_data)
-                last_button_message = {str(k): v for k, v in last_button_message.items()}
-                logger.info(f"Loaded last_button_message.json successfully. Entries: {len(last_button_message)}")
-            except json.JSONDecodeError:
-                last_button_message.clear()
-                logger.warning("last_button_message.json is corrupted or empty, reinitializing.")
-            except Exception as e:
-                logger.error(f"Error loading last_button_message.json: {e}, reinitializing.")
-                last_button_message.clear()
+    last_button_message_temp = load_json_file(LAST_BUTTON_MESSAGE_FILE, {}, "last_button_message")
+    last_button_message.clear()
+    last_button_message.update({str(k): v for k, v in last_button_message_temp.items()})
+
+    logger.info(f"Initial load complete. Orders: {len(orders)}, Pricing entries: {len(pricing)}, Daily Profit: {daily_profit}")
+
 
 # حفظ البيانات
 def _save_data_to_disk():
@@ -128,18 +92,30 @@ def _save_data_to_disk():
     with save_lock:
         os.makedirs(DATA_DIR, exist_ok=True)
         try:
-            with open(ORDERS_FILE, "w") as f:
-                json.dump(orders, f, indent=4) # Use indent for readability in files
-            with open(PRICING_FILE, "w") as f:
+            # Save to temporary files first, then rename to prevent data corruption
+            with open(ORDERS_FILE + ".tmp", "w") as f:
+                json.dump(orders, f, indent=4)
+            os.replace(ORDERS_FILE + ".tmp", ORDERS_FILE)
+
+            with open(PRICING_FILE + ".tmp", "w") as f:
                 json.dump(pricing, f, indent=4)
-            with open(INVOICE_NUMBERS_FILE, "w") as f:
+            os.replace(PRICING_FILE + ".tmp", PRICING_FILE)
+
+            with open(INVOICE_NUMBERS_FILE + ".tmp", "w") as f:
                 json.dump(invoice_numbers, f, indent=4)
-            with open(DAILY_PROFIT_FILE, "w") as f:
+            os.replace(INVOICE_NUMBERS_FILE + ".tmp", INVOICE_NUMBERS_FILE)
+
+            with open(DAILY_PROFIT_FILE + ".tmp", "w") as f:
                 json.dump(daily_profit, f, indent=4)
-                logger.info(f"Saved daily_profit: {daily_profit} to {DAILY_PROFIT_FILE}.")
-            with open(LAST_BUTTON_MESSAGE_FILE, "w") as f:
+            os.replace(DAILY_PROFIT_FILE + ".tmp", DAILY_PROFIT_FILE)
+
+            with open(LAST_BUTTON_MESSAGE_FILE + ".tmp", "w") as f:
                 json.dump(last_button_message, f, indent=4)
+            os.replace(LAST_BUTTON_MESSAGE_FILE + ".tmp", LAST_BUTTON_MESSAGE_FILE)
+
             logger.info("All data saved to disk successfully.")
+            # For debugging, print pricing state after save
+            logger.info(f"Pricing state after _save_data_to_disk(): {pricing}")
         except Exception as e:
             logger.error(f"Error saving data to disk: {e}")
         finally:
@@ -322,7 +298,6 @@ async def process_order(update, context, message, edited=False):
         
 async def show_buttons(chat_id, context, user_id, order_id, confirmation_message=None):
     logger.info(f"[{chat_id}] show_buttons called for order {order_id}. User: {user_id}.")
-    # طباعة محتوى pricing لـ order_id المحدد للتحقق
     logger.info(f"[{chat_id}] Current pricing data for order {order_id} in show_buttons: {pricing.get(order_id)}")
 
     if order_id not in orders:
@@ -341,13 +316,12 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
     pending_products = []
     
     for p in order["products"]:
-        # التحقق الدقيق من وجود الأسعار
         if p in pricing.get(order_id, {}) and 'buy' in pricing[order_id].get(p, {}) and 'sell' in pricing[order_id].get(p, {}):
             completed_products.append(p)
             logger.info(f"[{chat_id}] Product '{p}' in order {order_id} is completed.")
         else:
             pending_products.append(p)
-            logger.info(f"[{chat_id}] Product '{p}' in order {order_id} is pending.")
+            logger.info(f"[{chat_id}] Product '{p}' in order {order_id} is pending. Pricing state: {pricing.get(order_id, {}).get(p, {})}")
     
     buttons_list = []
     for p in completed_products:
@@ -366,8 +340,7 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
     if msg_info:
         logger.info(f"[{chat_id}] Deleting old button message {msg_info['message_id']} for order {order_id} before sending new one.")
         context.application.create_task(delete_message_in_background(context, chat_id=msg_info["chat_id"], message_id=msg_info["message_id"]))
-        # لا نحذفها من last_button_message هنا
-        # del last_button_message[order_id] 
+        del last_button_message[order_id] # Remove from last_button_message right away to avoid issues
 
     msg = await context.bot.send_message(
         chat_id=chat_id,
@@ -417,8 +390,6 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'messages_to_delete' not in context.user_data[user_id]:
         context.user_data[user_id]['messages_to_delete'] = [] 
 
-    # التعديل هنا: لا نحذف رسالة الأزرار مباشرة، بل نضيفها لقائمة الحذف المتأخر.
-    # الأزرار ستُحذف لاحقاً بواسطة show_buttons عند إرسال القائمة الجديدة.
     if query.message:
         context.user_data[user_id]['messages_to_delete'].append({
             'chat_id': query.message.chat_id,
@@ -561,9 +532,14 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
         return ASK_SELL 
     
-    pricing.setdefault(order_id, {}).setdefault(product, {})["sell"] = price
+    # ***** هنا نقطة الحفظ الفعلية للأسعار *****
+    pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = data["buy_price"] # Assuming buy price stored somewhere before
+    pricing[order_id][product]["sell"] = price
+    
+    # طباعة حالة pricing بعد الحفظ مباشرةً للتحقق
+    logger.info(f"[{update.effective_chat.id}] Pricing for order '{order_id}' and product '{product}' AFTER SAVE: {pricing.get(order_id, {}).get(product)}")
     context.application.create_task(save_data_in_background(context))
-    logger.info(f"[{update.effective_chat.id}] Sell price for '{product}' in order '{order_id}' saved. Current user_data: {context.user_data.get(user_id)}. Updated pricing for order {order_id}: {pricing.get(order_id)}") # Log pricing
+    logger.info(f"[{update.effective_chat.id}] Sell price for '{product}' in order '{order_id}' saved. Current user_data: {context.user_data.get(user_id)}. Updated pricing for order {order_id}: {pricing.get(order_id)}")
 
     order = orders[order_id]
     all_priced = True
@@ -580,10 +556,8 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         confirmation_msg = f"تم حفظ السعر لـ *'{product}'*."
         logger.info(f"[{update.effective_chat.id}] Price saved for '{product}' in order {order_id}. Showing updated buttons with confirmation. User {user_id} can select next product.")
-        # ***** هنا الاستدعاء لدالة show_buttons هو المهم جداً *****
-        # هذا سيضمن إرسال الأزرار المحدثة (مع الصح) وحذف الرسائل القديمة تلقائياً.
         await show_buttons(update.effective_chat.id, context, user_id, order_id, confirmation_message=confirmation_msg)
-        return ConversationHandler.END # ننهي المحادثة هنا بعد كل تسعير منتج
+        return ConversationHandler.END 
 
 async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT_TYPE, user_id: str, order_id: str):
     logger.info(f"[{chat_id}] Requesting places count for order {order_id} from user {user_id}.")
@@ -604,7 +578,6 @@ async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT
     )
     context.user_data.setdefault(user_id, {}).setdefault('messages_to_delete', []).append({'chat_id': msg_places.chat_id, 'message_id': msg_places.message_id})
 
-    # ***** هنا نضيف عملية الحذف المتأخر للرسائل القديمة (سؤال وجواب السعر) *****
     if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
         logger.info(f"[{chat_id}] Scheduling deletion of {len(context.user_data[user_id].get('messages_to_delete', []))} old messages after showing places buttons for user {user_id}.")
         for msg_info in context.user_data[user_id]['messages_to_delete']:
