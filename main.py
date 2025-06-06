@@ -630,6 +630,9 @@ async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT
                 context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
             context.user_data[user_id]['messages_to_delete'].clear()
         
+        # مهم جداً: هنا لا نرجع ASK_PLACES_COUNT. هذا يتم التعامل معه بواسطة ConversationHandler الخاص به.
+        # هذه الدالة فقط تطلب من المستخدم إدخال عدد المحلات.
+        # الإدخال الفعلي (نص أو زر) سيتم التقاطه بواسطة ConversationHandler المناسب.
     except Exception as e:
         logger.error(f"[{chat_id}] Error in request_places_count_standalone: {e}", exc_info=True)
         await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء طلب عدد المحلات. الرجاء بدء طلبية جديدة.")
@@ -700,7 +703,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
                 msg_error = await context.bot.send_message(chat_id=chat_id, text="الرجاء إدخال *رقم صحيح* لعدد المحلات.")
                 context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
                 return ASK_PLACES_COUNT 
-
+            
             try:
                 places = int(update.message.text.strip())
                 if places < 0:
@@ -785,7 +788,6 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
 
         # الأرباح لا تضاف إلا مرة واحدة عند اكتمال الطلب لأول مرة.
         # يجب أن نتأكد أننا لا نضيف الربح إذا تم تعديل الطلب فقط.
-        # هذه المنطقة تحتاج لآلية تتبع أفضل للطلبات المكتملة.
         # حاليا، إذا تم استدعاء هذه الدالة أكثر من مرة لنفس الطلب، سيتم إضافة الربح في كل مرة.
         # للتبسيط، لن نغير سلوك إضافة الربح حالياً، لكن يجب ملاحظة ذلك.
         logger.info(f"[{chat_id}] Daily profit before addition for order {order_id}: {daily_profit}")
@@ -1083,61 +1085,68 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
+    # Handlers لا تدخل في أي ConversationHandler (مثل الـ /start والأوامر الإدارية)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^الارباح$|^ارباح$"), show_profit))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^صفر$|^تصفير$"), reset_all))
     app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^التقارير$|^تقرير$|^تقارير$"), show_report))
     app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
-
     app.add_handler(CallbackQueryHandler(edit_prices, pattern="^edit_prices_"))
     app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern="^start_new_order$"))
 
-    # ConversationHandler لعدد المحلات (منفصل)
+    # ConversationHandler لعدد المحلات
+    # يجب أن يكون هذا الـ ConversationHandler قبل الـ ConversationHandler الخاص بإنشاء الطلب
+    # لضمان التقاط الكولباكات والنصوص المتعلقة بعدد المحلات أولاً.
     places_conv_handler = ConversationHandler(
         entry_points=[
-            # هذا المدخل يستقبل فقط ضغطات أزرار المحلات
             CallbackQueryHandler(handle_places_count_data, pattern=r"^places_data_[a-f0-9]{8}_\d+$"),
-            # هذا المدخل يستقبل الإدخال النصي لعدد المحلات إذا كان المستخدم قد دخل حالة ASK_PLACES_COUNT
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_places_count_data)
+            # هذا يستقبل الإدخال النصي لعدد المحلات فقط إذا كان البوت يطلب ذلك.
+            # ولا يمكن أن يكون entry point وحده بدون سياق واضح.
+            # سيتم تشغيل هذه الحالة فقط إذا كان المستخدم في حالة ASK_PLACES_COUNT من conv_handler آخر.
+            # لذلك لا يمكن أن يكون هنا كـ entry_point بالمعنى التقليدي إذا كان الهدف هو الانتقال إليه.
+            # للتبسيط، دالة request_places_count_standalone هي من تدعو handle_places_count_data بشكل مباشر
+            # بدلاً من محاولة "دخول" إلى هذا ConversationHandler.
         ],
         states={
             ASK_PLACES_COUNT: [
-                # أي رسالة نصية هنا سيتم التعامل معها بواسطة handle_places_count_data
-                # هذا النمط يستقبل الأرقام العشرية والصحيحة
-                MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$"), handle_places_count_data),
+                # هذا النمط يستقبل الأرقام العشرية والصحيحة لعدد المحلات
+                MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, handle_places_count_data),
+                # إذا دز شي مو رقمي في هذه الحالة، ننهي المحادثة أو نعطيه رسالة خطأ
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_places_count_data), # لإعادة الطلب برقم صحيح
             ],
         },
         fallbacks=[
             CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-            # إذا دز شي مو رقمي في هذه الحالة، ننهي المحادثة
-            MessageHandler(filters.TEXT | filters.COMMAND, lambda u, c: ConversationHandler.END)
+            # Fallback عام إذا المستخدم دز شي غير متوقع وهو في محادثة عدد المحلات
+            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END) # ينهي المحادثة
         ]
     )
     app.add_handler(places_conv_handler)
     
-    # ConversationHandler لإنشاء الطلب وتسعير المنتجات (منفصل)
+    # ConversationHandler لإنشاء الطلب وتسعير المنتجات
+    # هذا يجب أن يكون بعد الـ places_conv_handler لأن أزرار places_conv_handler هي جزء من العملية النهائية.
+    # بما إن الـ `handle_places_count_data` يتم استدعاؤها مباشرةً بعد تسعير كل المنتجات
+    # و `request_places_count_standalone` هي اللي ترسلك أزرار عدد المحلات،
+    # فالمفروض ماكو تداخل بين الاثنين لأن كل ConversationHandler ينهي نفسه عند الانتهاء.
     order_creation_conv_handler = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
-            CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$")
+            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order), # يستلم أول رسالة للطلب
+            CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$") # يستلم كولباك اختيار المنتج
         ],
         states={
             ASK_BUY: [
                 MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_buy_price),
-                # إذا دخل المستخدم شي غير رقمي هنا، نعطيه رسالة خطأ ونبقى بنفس الحالة
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price), # لإعادة الطلب برقم صحيح
             ],
             ASK_SELL: [
                 MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_sell_price),
-                # إذا دخل المستخدم شي غير رقمي هنا، نعطيه رسالة خطأ ونبقى بنفس الحالة
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sell_price),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sell_price), # لإعادة الطلب برقم صحيح
             ]
         },
         fallbacks=[
             CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-            # Fallback عام لكل شيء آخر لإنهاء المحادثة
-            MessageHandler(filters.TEXT | filters.COMMAND, lambda u, c: ConversationHandler.END)
+            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END) # ينهي المحادثة
         ]
     )
     app.add_handler(order_creation_conv_handler)
