@@ -422,19 +422,19 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'messages_to_delete' not in context.user_data[user_id]:
         context.user_data[user_id]['messages_to_delete'] = [] 
 
-    # ***** التعديل هنا: لا نحذف رسالة الأزرار مباشرة، بل نضيفها لقائمة الحذف المتأخر *****
+    # التعديل هنا: لا نحذف رسالة الأزرار مباشرة، بل نضيفها لقائمة الحذف المتأخر
     if query.message:
         context.user_data[user_id]['messages_to_delete'].append({
             'chat_id': query.message.chat_id,
             'message_id': query.message.message_id
         })
         logger.info(f"[{query.message.chat_id}] Added button message {query.message.message_id} to delete queue.")
-        # نعدل الرسالة لتظهر أنها تم الضغط عليها (يمكنك تغيير النص إذا أردت)
+        # نعدل الرسالة لتظهر أنها تم الضغط عليها (يمكن إزالة الأزرار فوراً)
         try:
             await context.bot.edit_message_reply_markup(
                 chat_id=query.message.chat_id,
                 message_id=query.message.message_id,
-                reply_markup=None # لإزالة الأزرار فوراً
+                reply_markup=None 
             )
         except Exception as e:
             logger.warning(f"[{query.message.chat_id}] Could not clear buttons from message {query.message.message_id} directly: {e}. Proceeding.")
@@ -569,8 +569,6 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.application.create_task(save_data_in_background(context))
     logger.info(f"[{update.effective_chat.id}] Sell price for '{product}' in order '{order_id}' saved. Current user_data: {context.user_data.get(user_id)}")
 
-    # ***** هنا لا يتم حذف الرسائل مباشرة، بل يتم التعامل معها في show_buttons *****
-
     order = orders[order_id]
     all_priced = True
     for p in order["products"]:
@@ -581,14 +579,14 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if all_priced:
         context.user_data[user_id]["current_active_order_id"] = order_id
         logger.info(f"[{update.effective_chat.id}] All products priced for order {order_id}. Requesting places count. Exiting conversation for user {user_id}.")
-        # هنا ستُحذف رسائل السؤال والجواب بعد ظهور قائمة المحلات
-        await request_places_count_standalone(update.effective_chat.id, context, user_id, order_id)
+        await request_places_count_standalone(update.effective_hat.id, context, user_id, order_id)
         return ConversationHandler.END
     else:
         confirmation_msg = f"تم حفظ السعر لـ *'{product}'*."
-        logger.info(f"[{update.effective_chat.id}] Price saved for '{product}' in order {order_id}. Showing updated buttons with confirmation. Staying in conversation for user {user_id}.")
-        # هنا ستُحذف رسائل السؤال والجواب بعد ظهور قائمة المنتجات المحدّثة
+        logger.info(f"[{update.effective_chat.id}] Price saved for '{product}' in order {order_id}. Showing updated buttons with confirmation. User {user_id} can select next product.")
         await show_buttons(update.effective_chat.id, context, user_id, order_id, confirmation_message=confirmation_msg)
+        # هنا يجب أن ننهي المحادثة ونعتمد على Product_selected كـ entry_point جديد
+        # هذا يسمح للمستخدم بالضغط على زر منتج آخر للدخول في محادثة تسعير جديدة.
         return ConversationHandler.END 
 
 async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT_TYPE, user_id: str, order_id: str):
@@ -651,13 +649,11 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
 
                 places = int(parts[3])
                 if query.message:
-                    # ***** هنا نضيف رسالة أزرار المحلات إلى قائمة الحذف المتأخر *****
                     context.user_data[user_id]['messages_to_delete'].append({
                         'chat_id': query.message.chat_id,
                         'message_id': query.message.message_id
                     })
                     logger.info(f"[{chat_id}] Added places buttons message {query.message.message_id} to delete queue.")
-                    # يمكنك إزالة الأزرار فوراً بعد الضغط عليها لجعلها غير قابلة للضغط مرة أخرى
                     try:
                         await context.bot.edit_message_reply_markup(
                             chat_id=query.message.chat_id,
@@ -719,7 +715,6 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
     logger.info(f"[{chat_id}] Places count {places} saved for order {order_id_to_process}. Current user_data: {context.user_data.get(user_id)}")
 
 
-    # ***** هنا نضيف عملية الحذف المتأخر لرسائل المحلات بعد ظهور الفاتورة النهائية *****
     if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
         logger.info(f"[{chat_id}] Scheduling deletion of {len(context.user_data[user_id].get('messages_to_delete', []))} old messages after showing final options for user {user_id}.")
         for msg_info in context.user_data[user_id]['messages_to_delete']:
@@ -1041,12 +1036,10 @@ def main():
         states={
             ASK_BUY: [
                 MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_buy_price),
-                # إذا المستخدم دز شي مو رقم، ننهي المحادثة
                 MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: ConversationHandler.END),
             ],
             ASK_SELL: [
                 MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_sell_price),
-                # إذا المستخدم دز شي مو رقم، ننهي المحادثة
                 MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: ConversationHandler.END),
             ]
         },
