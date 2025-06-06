@@ -230,8 +230,8 @@ async def save_data_in_background(context: ContextTypes.DEFAULT_TYPE):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
+    # مسح فقط بيانات الطلب الحالية وليس كل شيء
     if user_id in context.user_data:
-        # مسح فقط بيانات الطلب الحالية وليس كل شيء
         context.user_data[user_id].pop("order_id", None)
         context.user_data[user_id].pop("product", None)
         context.user_data[user_id].pop("current_active_order_id", None)
@@ -576,6 +576,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT_TYPE, user_id: str, order_id: str):
+    # ***** مهم: هنا نحفظ order_id في user_data["current_active_order_id"] *****
     context.user_data.setdefault(user_id, {})["current_active_order_id"] = order_id
 
     buttons = []
@@ -607,6 +608,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
 
     order_id_to_process = None 
 
+    # إذا كان كول باك (يعني ضغطة زر)
     if update.callback_query:
         query = update.callback_query
         logger.info(f"Places count callback query received (standalone): {query.data}")
@@ -614,18 +616,22 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
         
         try:
             parts = query.data.split('_')
+            # نتوقع النمط: places_data_{order_id}_{عدد}
             if len(parts) == 4 and parts[0] == "places" and parts[1] == "data":
                 order_id_to_process = parts[2] 
                 
+                # نتحقق إذا الـ order_id هذا موجود فعلاً بالـ orders و يخص المستخدم
                 if order_id_to_process not in orders or str(orders[order_id_to_process].get("user_id")) != user_id:
                     logger.error(f"Order ID '{order_id_to_process}' from callback data not found or not for user {user_id} in global orders (standalone).")
                     await context.bot.send_message(chat_id=chat_id, text="عذراً، الطلبية اللي حاول تختار عدد محلاتها ما موجودة عندي أو ما تخصك. الرجاء بدء طلبية جديدة.")
+                    # ***** هنا نمسح current_active_order_id إذا الطلبية خطأ *****
                     if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
                         del context.user_data[user_id]["current_active_order_id"]
                     return 
 
-                places = int(parts[3])
+                places = int(parts[3]) # عدد المحلات هو الجزء الرابع
                 if query.message:
+                    # نحذف رسالة أزرار المحلات اللي ضغط عليها
                     context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
             else:
                 raise ValueError(f"Unexpected callback_data format for places count (standalone): {query.data}")
@@ -634,14 +640,17 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
             await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ في بيانات الزر. الرجاء المحاولة مرة أخرى.")
             return 
 
+    # إذا المستخدم كتب رقم يدوي
     elif update.message: 
         context.user_data[user_id]['messages_to_delete'].append({'chat_id': update.message.chat_id, 'message_id': update.message.message_id})
         
+        # ***** نعتمد على current_active_order_id المخزن في user_data *****
         order_id_to_process = context.user_data[user_id].get("current_active_order_id")
 
         if not order_id_to_process or order_id_to_process not in orders or str(orders[order_id_to_process].get("user_id")) != user_id:
              msg_error = await context.bot.send_message(chat_id=chat_id, text="عذراً، ماكو طلبية حالية منتظر عدد محلاتها أو الطلبية قديمة جداً. الرجاء استخدم الأزرار لتحديد عدد المحلات، أو بدء طلبية جديدة.", parse_mode="Markdown")
              context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
+             # ***** هنا نمسح current_active_order_id إذا الطلبية خطأ *****
              if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
                  del context.user_data[user_id]["current_active_order_id"]
              return
@@ -674,6 +683,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
     
     await show_final_options(chat_id, context, user_id, order_id_to_process, message_prefix="تم تحديث عدد المحلات بنجاح.")
     
+    # ***** مهم: نمسح current_active_order_id بعد إكمال الطلبية *****
     if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
         del context.user_data[user_id]["current_active_order_id"]
         logger.info(f"Cleared current_active_order_id for user {user_id} after processing places count.")
@@ -731,7 +741,6 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             customer_invoice_lines.append(f"{p} - (لم يتم تسعيره)")
     
     customer_invoice_lines.append(f"كلفة تجهيز من - {current_places} محلات {format_float(extra_cost)} = {format_float(final_total)}")
-    # ***** هذا هو السطر اللي جان بيه الخطأ، تم تصحيحه الآن *****
     customer_invoice_lines.append(f"\n*المجموع الكلي:* {format_float(final_total)} (مع احتساب عدد المحلات)") 
     
     customer_final_text = "\n".join(customer_invoice_lines)
@@ -973,6 +982,7 @@ def main():
     app.add_handler(CallbackQueryHandler(edit_prices, pattern="^edit_prices_"))
     app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern="^start_new_order$"))
 
+    # الهاندلر المستقل لأزرار المحلات والإدخال اليدوي لعدد المحلات
     app.add_handler(CallbackQueryHandler(handle_places_count_data, pattern=r"^places_data_[a-f0-9]{8}_\d+$"))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^\d+$") & ~filters.COMMAND, handle_places_count_data))
 
@@ -1001,3 +1011,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
