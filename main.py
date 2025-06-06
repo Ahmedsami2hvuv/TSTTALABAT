@@ -610,7 +610,12 @@ async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT
             text="تمام، كل المنتجات تسعّرت. هسه، كم محل كلفتك الطلبية؟ (اختر من الأزرار أو اكتب الرقم)", 
             reply_markup=reply_markup
         )
-        context.user_data.setdefault(user_id, {}).setdefault('messages_to_delete', []).append({'chat_id': msg_places.chat_id, 'message_id': msg_places.message_id})
+        
+        # تخزين معرف الرسالة في user_data للرجوع إليها لاحقاً
+        context.user_data[user_id]['places_count_message'] = {
+            'chat_id': msg_places.chat_id,
+            'message_id': msg_places.message_id
+        }
 
         if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
             logger.info(f"[{chat_id}] Scheduling deletion of {len(context.user_data[user_id].get('messages_to_delete', []))} old messages after showing places buttons for user {user_id}.")
@@ -621,10 +626,7 @@ async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT
     except Exception as e:
         logger.error(f"[{chat_id}] Error in request_places_count_standalone: {e}", exc_info=True)
         await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء طلب عدد المحلات. الرجاء بدء طلبية جديدة.")
-        # هنا لا يمكننا إرجاع ConversationHandler.END بشكل مباشر لأنها دالة مساعدة
-        # ولكن هذا الخطأ سيقود إلى توقف البوت في هذا السياق، لذا يجب أن يتم التعامل معه في receive_sell_price
-        # هذا هو السبب الذي يجعلنا نعتمد على receive_sell_price لإرجاع ASK_PLACES_COUNT
-
+        
 async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         global daily_profit
@@ -659,11 +661,6 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
 
                     places = int(parts[3])
                     if query.message:
-                        context.user_data[user_id]['messages_to_delete'].append({
-                            'chat_id': query.message.chat_id,
-                            'message_id': query.message.message_id
-                        })
-                        logger.info(f"[{chat_id}] Added places buttons message {query.message.message_id} to delete queue.")
                         try:
                             await context.bot.edit_message_reply_markup(
                                 chat_id=query.message.chat_id,
@@ -720,10 +717,18 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
                 del context.user_data[user_id]["current_active_order_id"]
             return ConversationHandler.END 
 
+        # حذف رسالة الأزرار الخاصة بعدد المحلات
+        if 'places_count_message' in context.user_data[user_id]:
+            msg_info = context.user_data[user_id]['places_count_message']
+            try:
+                await context.bot.delete_message(chat_id=msg_info['chat_id'], message_id=msg_info['message_id'])
+            except Exception as e:
+                logger.warning(f"[{chat_id}] Could not delete places count message: {e}")
+            del context.user_data[user_id]['places_count_message']
+
         orders[order_id_to_process]["places_count"] = places
         context.application.create_task(save_data_in_background(context))
         logger.info(f"[{chat_id}] Places count {places} saved for order {order_id_to_process}. Current user_data: {json.dumps(context.user_data.get(user_id), indent=2)}")
-
 
         if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
             logger.info(f"[{chat_id}] Scheduling deletion of {len(context.user_data[user_id].get('messages_to_delete', []))} old messages after showing final options for user {user_id}.")
@@ -742,8 +747,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
         logger.error(f"[{chat_id}] Error in handle_places_count_data: {e}", exc_info=True)
         await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء معالجة عدد المحلات. الرجاء بدء طلبية جديدة.")
         return ConversationHandler.END
-
-
+        
 async def show_final_options(chat_id, context, user_id, order_id, message_prefix=None):
     try:
         global daily_profit
