@@ -316,6 +316,7 @@ async def process_order(update, context, message, edited=False):
         await show_buttons(message.chat_id, context, user_id, order_id, confirmation_message="تم تحديث الطلب. الرجاء التأكد من تسعير أي منتجات جديدة.")
         
 async def show_buttons(chat_id, context, user_id, order_id, confirmation_message=None):
+    logger.info(f"[{chat_id}] show_buttons called for order {order_id}. User: {user_id}. Current pricing for order {order_id}: {pricing.get(order_id)}")
     if order_id not in orders:
         logger.warning(f"[{chat_id}] Attempted to show buttons for non-existent order_id: {order_id}")
         await context.bot.send_message(chat_id=chat_id, text="عذراً، الطلب الذي تحاول الوصول إليه غير موجود أو تم حذفه. الرجاء بدء طلبية جديدة.")
@@ -355,7 +356,8 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
     if msg_info:
         logger.info(f"[{chat_id}] Deleting old button message {msg_info['message_id']} for order {order_id} before sending new one.")
         context.application.create_task(delete_message_in_background(context, chat_id=msg_info["chat_id"], message_id=msg_info["message_id"]))
-        del last_button_message[order_id] # إزالتها من القائمة بعد جدولة الحذف
+        # لا نحذفها من last_button_message هنا، بل بعد أن يتم إرسال الرسالة الجديدة بنجاح
+        # del last_button_message[order_id] 
 
     msg = await context.bot.send_message(
         chat_id=chat_id,
@@ -552,7 +554,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     pricing.setdefault(order_id, {}).setdefault(product, {})["sell"] = price
     context.application.create_task(save_data_in_background(context))
-    logger.info(f"[{update.effective_chat.id}] Sell price for '{product}' in order '{order_id}' saved. Current user_data: {context.user_data.get(user_id)}")
+    logger.info(f"[{update.effective_chat.id}] Sell price for '{product}' in order '{order_id}' saved. Current user_data: {context.user_data.get(user_id)}. Updated pricing for order {order_id}: {pricing.get(order_id)}") # Log pricing
 
     order = orders[order_id]
     all_priced = True
@@ -570,6 +572,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         confirmation_msg = f"تم حفظ السعر لـ *'{product}'*."
         logger.info(f"[{update.effective_chat.id}] Price saved for '{product}' in order {order_id}. Showing updated buttons with confirmation. User {user_id} can select next product.")
         # ***** هنا الاستدعاء لدالة show_buttons هو المهم جداً *****
+        # هذا سيضمن إرسال الأزرار المحدثة (مع الصح) وحذف الرسائل القديمة تلقائياً.
         await show_buttons(update.effective_chat.id, context, user_id, order_id, confirmation_message=confirmation_msg)
         return ConversationHandler.END # ننهي المحادثة هنا بعد كل تسعير منتج
 
