@@ -197,7 +197,7 @@ def calculate_extra(places_count):
 # دالة مساعدة لحذف الرسائل في الخلفية
 async def delete_message_in_background(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int):
     try:
-        await asyncio.sleep(0.05) # تأخير خفيف قبل الحذف
+        await asyncio.sleep(0.1) # زيادة التأخير لضمان ظهور الرسالة الجديدة
         await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
         logger.info(f"Successfully deleted message {message_id} from chat {chat_id} in background.")
     except Exception as e:
@@ -252,7 +252,8 @@ async def process_order(update, context, message, edited=False):
         return
 
     title = lines[0]
-    products = [p for p in lines[1:] if p.strip()]
+    # ***** تعديل: تنظيف أسماء المنتجات عند الاستلام *****
+    products = [p.strip() for p in lines[1:] if p.strip()]
 
     if not products:
         if not edited:
@@ -385,6 +386,8 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         try:
             order_id, product = query.data.split("|", 1) 
+            # ***** تعديل: تنظيف اسم المنتج القادم من الـ callback_data أيضاً *****
+            product = product.strip() 
         except ValueError as e:
             logger.error(f"[{query.message.chat_id}] Failed to parse callback_data for product selection: {query.data}. Error: {e}", exc_info=True)
             await query.message.reply_text("عذراً، حدث خطأ في بيانات الزر. الرجاء بدء طلبية جديدة.")
@@ -472,9 +475,9 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"[{update.effective_chat.id}] Buy price: Non-numeric input from user {user_id}: '{update.message.text}'")
             msg_error = await update.message.reply_text("الرجاء إدخال *رقم* صحيح لسعر الشراء.")
             context.user_data[user_id]['messages_to_delete'].append({
-                    'chat_id': msg_error.chat_id, 
-                    'message_id': msg_error.message_id
-                })
+                'chat_id': msg_error.chat_id, 
+                'message_id': msg_error.message_id
+            })
             return ASK_BUY 
 
         try:
@@ -496,7 +499,6 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 })
             return ASK_BUY
         
-        # ***** هنا يتم تخزين سعر الشراء في user_data *****
         context.user_data[user_id]["buy_price"] = price 
         logger.info(f"[{update.effective_chat.id}] Buy price '{price}' stored in user_data for product '{product}'. User data after storing buy_price: {json.dumps(context.user_data.get(user_id), indent=2)}")
 
@@ -578,14 +580,13 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if all_priced:
             context.user_data[user_id]["current_active_order_id"] = order_id
             logger.info(f"[{update.effective_chat.id}] All products priced for order {order_id}. Requesting places count. Transitioning to ASK_PLACES_COUNT.")
-            # هنا يجب أن نستدعي دالة request_places_count_standalone لتدخل في المحادثة الجديدة لعدد المحلات
             await request_places_count_standalone(update.effective_chat.id, context, user_id, order_id)
-            return ASK_PLACES_COUNT # الانتقال إلى حالة طلب عدد المحلات
+            return ASK_PLACES_COUNT 
         else:
             confirmation_msg = f"تم حفظ السعر لـ *'{product}'*."
             logger.info(f"[{update.effective_chat.id}] Price saved for '{product}' in order {order_id}. Showing updated buttons with confirmation. User {user_id} can select next product. Staying in conversation.")
             await show_buttons(update.effective_chat.id, context, user_id, order_id, confirmation_message=confirmation_msg)
-            return ConversationHandler.END # ننهي المحادثة الحالية ونعتمد على Product_selected كنقطة دخول جديدة.
+            return ConversationHandler.END 
     except Exception as e:
         logger.error(f"[{update.effective_chat.id}] Error in receive_sell_price: {e}", exc_info=True)
         await update.message.reply_text("عذراً، حدث خطأ أثناء إدخال سعر البيع. الرجاء بدء طلبية جديدة.")
