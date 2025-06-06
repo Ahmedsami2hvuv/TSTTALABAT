@@ -10,7 +10,7 @@ import json
 import logging
 import asyncio
 import threading
-import time # Add time for sleep in case of heavy logging
+import time 
 
 # تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
 logging.basicConfig(
@@ -153,7 +153,7 @@ def get_invoice_number():
 load_data()
 
 # حالات المحادثة
-ASK_BUY, ASK_SELL = range(2)
+ASK_BUY, ASK_SELL, ASK_PLACES_COUNT = range(3) # أضفنا حالة جديدة لعدد المحلات
 
 # جلب التوكن ومعرف المالك من متغيرات البيئة
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -552,16 +552,16 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
             
     if all_priced:
         context.user_data[user_id]["current_active_order_id"] = order_id
-        logger.info(f"[{update.effective_chat.id}] All products priced for order {order_id}. Requesting places count. Exiting conversation for user {user_id}.")
+        logger.info(f"[{update.effective_chat.id}] All products priced for order {order_id}. Requesting places count. Transitioning to ASK_PLACES_COUNT.")
         await request_places_count_standalone(update.effective_chat.id, context, user_id, order_id)
-        return ConversationHandler.END
+        # هنا لازم نرجع حالة الـ ConversationHandler لـ ASK_PLACES_COUNT
+        return ASK_PLACES_COUNT # الانتقال إلى حالة طلب عدد المحلات
     else:
         confirmation_msg = f"تم حفظ السعر لـ *'{product}'*."
-        logger.info(f"[{update.effective_chat.id}] Price saved for '{product}' in order {order_id}. Showing updated buttons with confirmation. User {user_id} can select next product.")
+        logger.info(f"[{update.effective_chat.id}] Price saved for '{product}' in order {order_id}. Showing updated buttons with confirmation. User {user_id} can select next product. Staying in conversation.")
         await show_buttons(update.effective_chat.id, context, user_id, order_id, confirmation_message=confirmation_msg)
-        # ***** هنا هو التعديل اللي يخلي البوت ما يسكت *****
-        # بما إن show_buttons راح تنزل قائمة الأزرار الجديدة، ننهي المحادثة الحالية ونعتمد على Product_selected
-        # كنقطة دخول جديدة عندما يضغط المستخدم على زر آخر.
+        # بما إنو المستخدم لازم يضغط زر جديد، ننهي المحادثة الحالية ونعتمد على Product_selected
+        # كنقطة دخول جديدة.
         return ConversationHandler.END 
 
 async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT_TYPE, user_id: str, order_id: str):
@@ -588,6 +588,9 @@ async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT
         for msg_info in context.user_data[user_id]['messages_to_delete']:
             context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
         context.user_data[user_id]['messages_to_delete'].clear()
+    
+    # هنا لا نرجع أي شيء، لأن هذا استدعاء لدالة، وليست حالة في ConversationHandler.
+    # لكن بما إننا نريد نستخدم ASK_PLACES_COUNT، فيجب أن يكون هذا part of the ConversationHandler states.
 
 
 async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -619,7 +622,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
                     await context.bot.send_message(chat_id=chat_id, text="عذراً، الطلبية اللي حاول تختار عدد محلاتها ما موجودة عندي. الرجاء بدء طلبية جديدة.")
                     if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
                         del context.user_data[user_id]["current_active_order_id"]
-                    return 
+                    return ConversationHandler.END # ننهي المحادثة هنا إذا الطلبية غلط
 
                 places = int(parts[3])
                 if query.message:
@@ -642,9 +645,9 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
         except (ValueError, IndexError) as e:
             logger.error(f"[{chat_id}] Failed to parse places count from callback data (standalone) '{query.data}': {e}")
             await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ في بيانات الزر. الرجاء المحاولة مرة أخرى.")
-            return 
-
-    elif update.message: 
+            return ConversationHandler.END # ننهي المحادثة هنا إذا صار خطأ
+    
+    elif update.message: # إذا أرسل رسالة نصية (رقم)
         context.user_data[user_id]['messages_to_delete'].append({'chat_id': update.message.chat_id, 'message_id': update.message.message_id})
         logger.info(f"[{chat_id}] Received text message for places count from user {user_id}: '{update.message.text}'")
         
@@ -656,13 +659,13 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
              context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
              if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
                  del context.user_data[user_id]["current_active_order_id"]
-             return
+             return ConversationHandler.END # ننهي المحادثة هنا إذا الطلبية غلط
 
         if not update.message.text.strip().isdigit(): 
             logger.warning(f"[{chat_id}] Places count text input: Non-integer input from user {user_id}: '{update.message.text}'")
             msg_error = await context.bot.send_message(chat_id=chat_id, text="الرجاء إدخال *رقم صحيح* لعدد المحلات.")
             context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
-            return 
+            return ASK_PLACES_COUNT # نبقى بنفس الحالة حتى يدخل رقم صحيح
 
         try:
             places = int(update.message.text.strip())
@@ -670,19 +673,19 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
                 logger.warning(f"[{chat_id}] Places count text input: Negative value from user {user_id}: '{update.message.text}'")
                 msg_error = await context.bot.send_message(chat_id=chat_id, text="عدد المحلات يجب أن يكون رقماً موجباً. الرجاء إدخال عدد المحلات بشكل صحيح.")
                 context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
-                return 
+                return ASK_PLACES_COUNT # نبقى بنفس الحالة
         except ValueError as e: 
             logger.error(f"[{chat_id}] Places count text input: ValueError for user {user_id} with input '{update.message.text}': {e}")
             msg_error = await context.bot.send_message(chat_id=chat_id, text="الرجاء إدخال عدد صحيح لعدد المحلات.")
             context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
-            return 
+            return ASK_PLACES_COUNT # نبقى بنفس الحالة
     
     if places is None or order_id_to_process is None:
         logger.warning(f"[{chat_id}] handle_places_count_data: No valid places count or order ID to process.")
         await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من فهم عدد المحلات أو الطلبية. الرجاء إدخال رقم صحيح أو البدء بطلبية جديدة.")
         if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
             del context.user_data[user_id]["current_active_order_id"]
-        return 
+        return ConversationHandler.END # ننهي المحادثة هنا
 
     orders[order_id_to_process]["places_count"] = places
     context.application.create_task(save_data_in_background(context))
@@ -701,7 +704,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
         del context.user_data[user_id]["current_active_order_id"]
         logger.info(f"[{chat_id}] Cleared current_active_order_id for user {user_id} after processing places count.")
 
-    return
+    return ConversationHandler.END # ننهي المحادثة هنا بعد عرض الفاتورة
 
 
 async def show_final_options(chat_id, context, user_id, order_id, message_prefix=None):
@@ -1011,8 +1014,27 @@ def main():
     app.add_handler(CallbackQueryHandler(edit_prices, pattern="^edit_prices_"))
     app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern="^start_new_order$"))
 
-    # هذا الهاندلر الخاص بأزرار المحلات فقط، ولا يستقبل أي رسالة نصية!
-    app.add_handler(CallbackQueryHandler(handle_places_count_data, pattern=r"^places_data_[a-f0-9]{8}_\d+$"))
+    # ConversationHandler لعدد المحلات
+    places_conv_handler = ConversationHandler(
+        entry_points=[
+            # هذا المدخل يستقبل فقط ضغطات أزرار المحلات
+            CallbackQueryHandler(handle_places_count_data, pattern=r"^places_data_[a-f0-9]{8}_\d+$")
+        ],
+        states={
+            ASK_PLACES_COUNT: [
+                # هذا يستقبل الإدخال النصي لعدد المحلات فقط إذا كان في هذه الحالة
+                MessageHandler(filters.TEXT & filters.Regex(r"^\d+$") & ~filters.COMMAND, handle_places_count_data),
+                # إذا دز شي مو رقمي في هذه الحالة، ننهي المحادثة
+                MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: ConversationHandler.END),
+            ],
+        },
+        fallbacks=[
+            CommandHandler("cancel", lambda u, c: ConversationHandler.END),
+            # Fallback عام إذا المستخدم دز شي غير متوقع وهو في محادثة عدد المحلات
+            MessageHandler(filters.TEXT | filters.COMMAND, lambda u, c: ConversationHandler.END)
+        ]
+    )
+    app.add_handler(places_conv_handler)
     
     order_creation_conv_handler = ConversationHandler(
         entry_points=[
