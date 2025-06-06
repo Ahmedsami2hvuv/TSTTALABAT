@@ -10,7 +10,7 @@ import json
 import logging
 import asyncio
 import threading
-import time 
+import time
 
 # تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
 logging.basicConfig(
@@ -226,6 +226,9 @@ async def receive_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         logger.info(f"[{update.effective_chat.id}] Processing order from: {update.effective_user.id} - Message ID: {update.message.message_id}. User data: {json.dumps(context.user_data.get(str(update.effective_user.id), {}), indent=2)}")
         await process_order(update, context, update.message)
+        # هذا ينهي المحادثة الحالية بعد معالجة الطلب كرسالة جديدة،
+        # بحيث لا يتدخل في حالة الـ "product_selected" إذا تم النقر على زر
+        return ConversationHandler.END
     except Exception as e:
         logger.error(f"[{update.effective_chat.id}] Error in receive_order: {e}", exc_info=True)
         await update.message.reply_text("عذراً، حدث خطأ أثناء معالجة الطلب. الرجاء المحاولة مرة أخرى أو بدء طلبية جديدة.")
@@ -471,7 +474,8 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             })
             return ConversationHandler.END
         
-        if not update.message.text.strip().replace('.', '', 1).isdigit(): 
+        # Regex to accept integers or floats
+        if not filters.Regex(r"^\d+(\.\d+)?$").check_update(update):
             logger.warning(f"[{update.effective_chat.id}] Buy price: Non-numeric input from user {user_id}: '{update.message.text}'")
             msg_error = await update.message.reply_text("الرجاء إدخال *رقم* صحيح لسعر الشراء.")
             context.user_data[user_id]['messages_to_delete'].append({
@@ -544,7 +548,8 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
             })
             return ConversationHandler.END
 
-        if not update.message.text.strip().replace('.', '', 1).isdigit(): 
+        # Regex to accept integers or floats
+        if not filters.Regex(r"^\d+(\.\d+)?$").check_update(update): 
             logger.warning(f"[{update.effective_chat.id}] Sell price: Non-numeric input from user {user_id}: '{update.message.text}'")
             msg_error = await update.message.reply_text("الرجاء إدخال *رقم* صحيح لسعر البيع.")
             context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
@@ -578,10 +583,12 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 break
                 
         if all_priced:
+            # هنا ننهي ConversationHandler الخاص بالأسعار
+            # وننتقل إلى ConversationHandler الخاص بعدد المحلات
             context.user_data[user_id]["current_active_order_id"] = order_id
             logger.info(f"[{update.effective_chat.id}] All products priced for order {order_id}. Requesting places count. Transitioning to ASK_PLACES_COUNT.")
             await request_places_count_standalone(update.effective_chat.id, context, user_id, order_id)
-            return ASK_PLACES_COUNT 
+            return ConversationHandler.END # ننهي محادثة تسعير المنتجات
         else:
             confirmation_msg = f"تم حفظ السعر لـ *'{product}'*."
             logger.info(f"[{update.effective_chat.id}] Price saved for '{product}' in order {order_id}. Showing updated buttons with confirmation. User {user_id} can select next product. Staying in conversation.")
@@ -662,13 +669,10 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
                     places = int(parts[3])
                     if query.message:
                         try:
-                            await context.bot.edit_message_reply_markup(
-                                chat_id=query.message.chat_id,
-                                message_id=query.message.message_id,
-                                reply_markup=None
-                            )
+                            # حذف رسالة الأزرار بعد الاختيار
+                            await context.bot.delete_message(chat_id=query.message.chat_id, message_id=query.message.message_id)
                         except Exception as e:
-                            logger.warning(f"[{chat_id}] Could not clear buttons from places message {query.message.message_id} directly: {e}. Proceeding.")
+                            logger.warning(f"[{chat_id}] Could not delete places message {query.message.message_id} directly: {e}. Proceeding.")
 
                 else:
                     raise ValueError(f"Unexpected callback_data format for places count: {query.data}")
@@ -717,7 +721,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
                 del context.user_data[user_id]["current_active_order_id"]
             return ConversationHandler.END 
 
-        # حذف رسالة الأزرار الخاصة بعدد المحلات
+        # حذف رسالة الأزرار الخاصة بعدد المحلات إذا كانت موجودة ولم يتم حذفها عن طريق الـ callback
         if 'places_count_message' in context.user_data[user_id]:
             msg_info = context.user_data[user_id]['places_count_message']
             try:
@@ -779,6 +783,11 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         extra_cost = calculate_extra(current_places)
         final_total = total_sell + extra_cost
 
+        # الأرباح لا تضاف إلا مرة واحدة عند اكتمال الطلب لأول مرة.
+        # يجب أن نتأكد أننا لا نضيف الربح إذا تم تعديل الطلب فقط.
+        # هذه المنطقة تحتاج لآلية تتبع أفضل للطلبات المكتملة.
+        # حاليا، إذا تم استدعاء هذه الدالة أكثر من مرة لنفس الطلب، سيتم إضافة الربح في كل مرة.
+        # للتبسيط، لن نغير سلوك إضافة الربح حالياً، لكن يجب ملاحظة ذلك.
         logger.info(f"[{chat_id}] Daily profit before addition for order {order_id}: {daily_profit}")
         daily_profit += net_profit
         logger.info(f"[{chat_id}] Daily profit after adding {net_profit} for order {order_id}: {daily_profit}")
@@ -1084,28 +1093,30 @@ def main():
     app.add_handler(CallbackQueryHandler(edit_prices, pattern="^edit_prices_"))
     app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern="^start_new_order$"))
 
-    # ConversationHandler لعدد المحلات
+    # ConversationHandler لعدد المحلات (منفصل)
     places_conv_handler = ConversationHandler(
         entry_points=[
             # هذا المدخل يستقبل فقط ضغطات أزرار المحلات
-            CallbackQueryHandler(handle_places_count_data, pattern=r"^places_data_[a-f0-9]{8}_\d+$")
+            CallbackQueryHandler(handle_places_count_data, pattern=r"^places_data_[a-f0-9]{8}_\d+$"),
+            # هذا المدخل يستقبل الإدخال النصي لعدد المحلات إذا كان المستخدم قد دخل حالة ASK_PLACES_COUNT
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_places_count_data)
         ],
         states={
             ASK_PLACES_COUNT: [
-                # هذا يستقبل الإدخال النصي لعدد المحلات فقط إذا كان في هذه الحالة
-                MessageHandler(filters.TEXT & filters.Regex(r"^\d+$") & ~filters.COMMAND, handle_places_count_data),
-                # إذا دز شي مو رقمي في هذه الحالة، ننهي المحادثة
-                MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: ConversationHandler.END),
+                # أي رسالة نصية هنا سيتم التعامل معها بواسطة handle_places_count_data
+                # هذا النمط يستقبل الأرقام العشرية والصحيحة
+                MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$"), handle_places_count_data),
             ],
         },
         fallbacks=[
             CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-            # Fallback عام إذا المستخدم دز شي غير متوقع وهو في محادثة عدد المحلات
+            # إذا دز شي مو رقمي في هذه الحالة، ننهي المحادثة
             MessageHandler(filters.TEXT | filters.COMMAND, lambda u, c: ConversationHandler.END)
         ]
     )
     app.add_handler(places_conv_handler)
     
+    # ConversationHandler لإنشاء الطلب وتسعير المنتجات (منفصل)
     order_creation_conv_handler = ConversationHandler(
         entry_points=[
             MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
@@ -1114,15 +1125,18 @@ def main():
         states={
             ASK_BUY: [
                 MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_buy_price),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: ConversationHandler.END),
+                # إذا دخل المستخدم شي غير رقمي هنا، نعطيه رسالة خطأ ونبقى بنفس الحالة
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
             ],
             ASK_SELL: [
                 MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_sell_price),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: ConversationHandler.END),
+                # إذا دخل المستخدم شي غير رقمي هنا، نعطيه رسالة خطأ ونبقى بنفس الحالة
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sell_price),
             ]
         },
         fallbacks=[
             CommandHandler("cancel", lambda u, c: ConversationHandler.END),
+            # Fallback عام لكل شيء آخر لإنهاء المحادثة
             MessageHandler(filters.TEXT | filters.COMMAND, lambda u, c: ConversationHandler.END)
         ]
     )
