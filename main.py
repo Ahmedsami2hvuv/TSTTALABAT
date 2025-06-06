@@ -415,7 +415,6 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data[user_id].pop("messages_to_delete", None)
         return ConversationHandler.END
     
-    # Store order_id and product in user_data for the conversation
     context.user_data.setdefault(user_id, {}).update({"order_id": order_id, "product": product})
     logger.info(f"[{query.message.chat_id}] User {user_id} selected product '{product}' for order '{order_id}'. User data updated: {context.user_data.get(user_id)}")
     
@@ -579,15 +578,15 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if all_priced:
         context.user_data[user_id]["current_active_order_id"] = order_id
         logger.info(f"[{update.effective_chat.id}] All products priced for order {order_id}. Requesting places count. Exiting conversation for user {user_id}.")
-        await request_places_count_standalone(update.effective_hat.id, context, user_id, order_id)
+        await request_places_count_standalone(update.effective_chat.id, context, user_id, order_id)
         return ConversationHandler.END
     else:
         confirmation_msg = f"تم حفظ السعر لـ *'{product}'*."
         logger.info(f"[{update.effective_chat.id}] Price saved for '{product}' in order {order_id}. Showing updated buttons with confirmation. User {user_id} can select next product.")
+        # ***** التعديل هنا: بعد عرض الأزرار المحدثة، يجب أن نسمح للـ ConversationHandler بالانتهاء
+        # لأن Product_selected هو entry_point ويمكنه بدء محادثة جديدة.
         await show_buttons(update.effective_chat.id, context, user_id, order_id, confirmation_message=confirmation_msg)
-        # هنا يجب أن ننهي المحادثة ونعتمد على Product_selected كـ entry_point جديد
-        # هذا يسمح للمستخدم بالضغط على زر منتج آخر للدخول في محادثة تسعير جديدة.
-        return ConversationHandler.END 
+        return ConversationHandler.END # ننهي المحادثة هنا بعد كل تسعير منتج
 
 async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT_TYPE, user_id: str, order_id: str):
     logger.info(f"[{chat_id}] Requesting places count for order {order_id} from user {user_id}.")
@@ -874,7 +873,19 @@ async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     if query.message:
-        context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
+        context.user_data.setdefault(user_id, {}).setdefault('messages_to_delete', []).append({
+            'chat_id': query.message.chat_id,
+            'message_id': query.message.message_id
+        })
+        logger.info(f"[{query.message.chat_id}] Added edit prices button message {query.message.message_id} to delete queue.")
+        try:
+            await context.bot.edit_message_reply_markup(
+                chat_id=query.message.chat_id,
+                message_id=query.message.message_id,
+                reply_markup=None 
+            )
+        except Exception as e:
+            logger.warning(f"[{query.message.chat_id}] Could not clear buttons from edit prices message {query.message.message_id} directly: {e}. Proceeding.")
     
     if order_id in last_button_message:
         del last_button_message[order_id]
