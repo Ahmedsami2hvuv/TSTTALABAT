@@ -350,39 +350,24 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
         message_text += f"{confirmation_message}\n\n"
     message_text += f"اضغط على منتج لتحديد سعره من *{order['title']}*:"
 
+    # ***** التعديل الكبير هنا: دائماً نحذف الرسالة القديمة (إذا موجودة) ونرسل رسالة جديدة *****
     msg_info = last_button_message.get(order_id)
-    if msg_info and str(msg_info.get("chat_id")) == str(chat_id):
-        try:
-            msg = await context.bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=msg_info["message_id"],
-                text=message_text,
-                reply_markup=markup,
-                parse_mode="Markdown"
-            )
-            logger.info(f"[{chat_id}] Edited existing button message {msg_info['message_id']} for order {order_id}.")
-        except Exception as e:
-            logger.warning(f"[{chat_id}] Could not edit message {msg_info['message_id']} for order {order_id}: {e}. Sending new one.")
-            msg = await context.bot.send_message(
-                chat_id=chat_id,
-                text=message_text,
-                reply_markup=markup,
-                parse_mode="Markdown"
-            )
-            last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
-            context.application.create_task(save_data_in_background(context))
-    else:
-        msg = await context.bot.send_message(
-            chat_id=chat_id,
-            text=message_text,
-            reply_markup=markup,
-            parse_mode="Markdown"
-        )
-        logger.info(f"[{chat_id}] Sent new button message {msg.message_id} for order {order_id}")
-        last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
-        context.application.create_task(save_data_in_background(context))
+    if msg_info:
+        logger.info(f"[{chat_id}] Deleting old button message {msg_info['message_id']} for order {order_id} before sending new one.")
+        context.application.create_task(delete_message_in_background(context, chat_id=msg_info["chat_id"], message_id=msg_info["message_id"]))
+        del last_button_message[order_id] # إزالتها من القائمة بعد جدولة الحذف
 
-    # ***** هنا راح نضيف عملية الحذف المتأخر للرسائل القديمة *****
+    msg = await context.bot.send_message(
+        chat_id=chat_id,
+        text=message_text,
+        reply_markup=markup,
+        parse_mode="Markdown"
+    )
+    logger.info(f"[{chat_id}] Sent new button message {msg.message_id} for order {order_id}")
+    last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
+    context.application.create_task(save_data_in_background(context))
+
+    # ***** هنا راح نضيف عملية الحذف المتأخر للرسائل القديمة (أسئلة وأجوبة سابقة) *****
     if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
         logger.info(f"[{chat_id}] Scheduling deletion of {len(context.user_data[user_id].get('messages_to_delete', []))} old messages after showing new buttons for user {user_id}.")
         for msg_info in context.user_data[user_id]['messages_to_delete']:
@@ -421,7 +406,8 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'messages_to_delete' not in context.user_data[user_id]:
         context.user_data[user_id]['messages_to_delete'] = [] 
 
-    # التعديل هنا: لا نحذف رسالة الأزرار مباشرة، بل نضيفها لقائمة الحذف المتأخر
+    # التعديل هنا: لا نحذف رسالة الأزرار مباشرة، بل نضيفها لقائمة الحذف المتأخر.
+    # الأزرار ستُحذف لاحقاً بواسطة show_buttons عند إرسال القائمة الجديدة.
     if query.message:
         context.user_data[user_id]['messages_to_delete'].append({
             'chat_id': query.message.chat_id,
@@ -583,8 +569,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         confirmation_msg = f"تم حفظ السعر لـ *'{product}'*."
         logger.info(f"[{update.effective_chat.id}] Price saved for '{product}' in order {order_id}. Showing updated buttons with confirmation. User {user_id} can select next product.")
-        # ***** التعديل هنا: بعد عرض الأزرار المحدثة، يجب أن نسمح للـ ConversationHandler بالانتهاء
-        # لأن Product_selected هو entry_point ويمكنه بدء محادثة جديدة.
+        # ***** هنا الاستدعاء لدالة show_buttons هو المهم جداً *****
         await show_buttons(update.effective_chat.id, context, user_id, order_id, confirmation_message=confirmation_msg)
         return ConversationHandler.END # ننهي المحادثة هنا بعد كل تسعير منتج
 
