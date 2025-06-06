@@ -382,6 +382,14 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
         last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
         context.application.create_task(save_data_in_background(context))
 
+    # ***** هنا راح نضيف عملية الحذف المتأخر للرسائل القديمة *****
+    if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
+        logger.info(f"[{chat_id}] Scheduling deletion of {len(context.user_data[user_id].get('messages_to_delete', []))} old messages after showing new buttons for user {user_id}.")
+        for msg_info in context.user_data[user_id]['messages_to_delete']:
+            context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
+        context.user_data[user_id]['messages_to_delete'].clear()
+
+
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -414,16 +422,23 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'messages_to_delete' not in context.user_data[user_id]:
         context.user_data[user_id]['messages_to_delete'] = [] 
 
+    # ***** التعديل هنا: لا نحذف رسالة الأزرار مباشرة، بل نضيفها لقائمة الحذف المتأخر *****
     if query.message:
+        context.user_data[user_id]['messages_to_delete'].append({
+            'chat_id': query.message.chat_id,
+            'message_id': query.message.message_id
+        })
+        logger.info(f"[{query.message.chat_id}] Added button message {query.message.message_id} to delete queue.")
+        # نعدل الرسالة لتظهر أنها تم الضغط عليها (يمكنك تغيير النص إذا أردت)
         try:
             await context.bot.edit_message_reply_markup(
                 chat_id=query.message.chat_id,
                 message_id=query.message.message_id,
-                reply_markup=InlineKeyboardMarkup([[]]) 
+                reply_markup=None # لإزالة الأزرار فوراً
             )
-            logger.info(f"[{query.message.chat_id}] Cleared buttons from message {query.message.message_id} for order {order_id}.")
         except Exception as e:
-            logger.warning(f"[{query.message.chat_id}] Could not clear buttons from message {query.message.message_id}: {e}. Proceeding.")
+            logger.warning(f"[{query.message.chat_id}] Could not clear buttons from message {query.message.message_id} directly: {e}. Proceeding.")
+
 
     msg = await query.message.reply_text(f"تمام، كم سعر شراء *'{product}'*؟", parse_mode="Markdown")
     context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg.chat_id, 'message_id': msg.message_id})
@@ -457,7 +472,6 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     order_id = data["order_id"]
     product = data["product"]
     
-    # This check now ensures order and product exist, regardless of who sent it.
     if order_id not in orders or product not in orders[order_id].get("products", []):
         logger.warning(f"[{update.effective_chat.id}] Buy price: Order ID '{order_id}' not found or Product '{product}' not in products for order '{order_id}'.")
         msg_error = await update.message.reply_text("عذراً، الطلبية أو المنتج لم يعد موجوداً. الرجاء بدء طلبية جديدة أو التحقق من المنتجات.")
@@ -467,7 +481,6 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         })
         return ConversationHandler.END
     
-    # Enhanced numeric check
     if not update.message.text.strip().replace('.', '', 1).isdigit(): 
         logger.warning(f"[{update.effective_chat.id}] Buy price: Non-numeric input from user {user_id}: '{update.message.text}'")
         msg_error = await update.message.reply_text("الرجاء إدخال *رقم* صحيح لسعر الشراء.")
@@ -487,7 +500,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'message_id': msg_error.message_id
             })
             return ASK_BUY
-    except ValueError as e: # This should ideally not be reached if the isdigit check is robust
+    except ValueError as e: 
         logger.error(f"[{update.effective_chat.id}] Buy price: ValueError for user {user_id} with input '{update.message.text}': {e}")
         msg_error = await update.message.reply_text("الرجاء إدخال رقم صحيح")
         context.user_data[user_id]['messages_to_delete'].append({
@@ -497,14 +510,8 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ASK_BUY
     
     msg = await update.message.reply_text(f"شكراً. وهسه، بيش راح تبيع *'{product}'*؟", parse_mode="Markdown")
-    context.user_data[user_id]['messages_to_delete'].append({
-        'chat_id': msg.chat_id,
-        'message_id': msg.message_id
-    })
-    
-    pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = price
-    context.application.create_task(save_data_in_background(context))
-    logger.info(f"[{update.effective_chat.id}] Buy price for '{product}' in order '{order_id}' saved. Next state: ASK_SELL. Current user_data: {context.user_data.get(user_id)}")
+    context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg.chat_id, 'message_id': msg.message_id})
+    logger.info(f"[{update.effective_chat.id}] Asking for sell price for '{product}'. Next state: ASK_SELL. Current user_data: {context.user_data.get(user_id)}")
     
     return ASK_SELL
 
@@ -562,32 +569,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.application.create_task(save_data_in_background(context))
     logger.info(f"[{update.effective_chat.id}] Sell price for '{product}' in order '{order_id}' saved. Current user_data: {context.user_data.get(user_id)}")
 
-
-    logger.info(f"[{update.effective_chat.id}] Scheduling deletion of {len(context.user_data[user_id].get('messages_to_delete', []))} messages for user {user_id}.")
-    for msg_info in context.user_data[user_id].get('messages_to_delete', []):
-        context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
-    context.user_data[user_id]['messages_to_delete'].clear()
-
-    msg_info_buttons = last_button_message.get(order_id)
-    if msg_info_buttons and str(msg_info_buttons.get("chat_id")) == str(update.effective_chat.id):
-        try:
-            await context.bot.delete_message(chat_id=msg_info_buttons["chat_id"], message_id=msg_info_buttons["message_id"])
-            logger.info(f"[{update.effective_chat.id}] Successfully deleted previous button message {msg_info_buttons['message_id']} for order {order_id}.")
-        except Exception as e:
-            logger.warning(f"[{update.effective_chat.id}] Could not delete previous button message {msg_info_buttons['message_id']} for order {order_id}: {e}. Attempting to edit.")
-            try:
-                await context.bot.edit_message_text(
-                    chat_id=msg_info_buttons["chat_id"],
-                    message_id=msg_info_buttons["message_id"],
-                    text="." 
-                )
-                logger.info(f"[{update.effective_chat.id}] Edited previous button message {msg_info_buttons['message_id']} to remove buttons.")
-            except Exception as edit_e:
-                logger.warning(f"[{update.effective_chat.id}] Could not edit previous button message {msg_info_buttons['message_id']} for order {order_id}: {edit_e}. Skipping.")
-        
-        if order_id in last_button_message:
-            del last_button_message[order_id]
-            context.application.create_task(save_data_in_background(context))
+    # ***** هنا لا يتم حذف الرسائل مباشرة، بل يتم التعامل معها في show_buttons *****
 
     order = orders[order_id]
     all_priced = True
@@ -598,14 +580,16 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
             
     if all_priced:
         context.user_data[user_id]["current_active_order_id"] = order_id
+        logger.info(f"[{update.effective_chat.id}] All products priced for order {order_id}. Requesting places count. Exiting conversation for user {user_id}.")
+        # هنا ستُحذف رسائل السؤال والجواب بعد ظهور قائمة المحلات
         await request_places_count_standalone(update.effective_chat.id, context, user_id, order_id)
-        logger.info(f"[{update.effective_chat.id}] All products priced. Requesting places count. Exiting conversation for user {user_id}.")
         return ConversationHandler.END
     else:
         confirmation_msg = f"تم حفظ السعر لـ *'{product}'*."
         logger.info(f"[{update.effective_chat.id}] Price saved for '{product}' in order {order_id}. Showing updated buttons with confirmation. Staying in conversation for user {user_id}.")
+        # هنا ستُحذف رسائل السؤال والجواب بعد ظهور قائمة المنتجات المحدّثة
         await show_buttons(update.effective_chat.id, context, user_id, order_id, confirmation_message=confirmation_msg)
-        return ConversationHandler.END # المفروض نرجع للـ ConversationHandler هنا
+        return ConversationHandler.END 
 
 async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT_TYPE, user_id: str, order_id: str):
     logger.info(f"[{chat_id}] Requesting places count for order {order_id} from user {user_id}.")
@@ -625,6 +609,13 @@ async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT
         reply_markup=reply_markup
     )
     context.user_data.setdefault(user_id, {}).setdefault('messages_to_delete', []).append({'chat_id': msg_places.chat_id, 'message_id': msg_places.message_id})
+
+    # ***** هنا نضيف عملية الحذف المتأخر للرسائل القديمة (سؤال وجواب السعر) *****
+    if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
+        logger.info(f"[{chat_id}] Scheduling deletion of {len(context.user_data[user_id].get('messages_to_delete', []))} old messages after showing places buttons for user {user_id}.")
+        for msg_info in context.user_data[user_id]['messages_to_delete']:
+            context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
+        context.user_data[user_id]['messages_to_delete'].clear()
 
 
 async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -660,7 +651,22 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
 
                 places = int(parts[3])
                 if query.message:
-                    context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
+                    # ***** هنا نضيف رسالة أزرار المحلات إلى قائمة الحذف المتأخر *****
+                    context.user_data[user_id]['messages_to_delete'].append({
+                        'chat_id': query.message.chat_id,
+                        'message_id': query.message.message_id
+                    })
+                    logger.info(f"[{chat_id}] Added places buttons message {query.message.message_id} to delete queue.")
+                    # يمكنك إزالة الأزرار فوراً بعد الضغط عليها لجعلها غير قابلة للضغط مرة أخرى
+                    try:
+                        await context.bot.edit_message_reply_markup(
+                            chat_id=query.message.chat_id,
+                            message_id=query.message.message_id,
+                            reply_markup=None
+                        )
+                    except Exception as e:
+                        logger.warning(f"[{chat_id}] Could not clear buttons from places message {query.message.message_id} directly: {e}. Proceeding.")
+
             else:
                 raise ValueError(f"Unexpected callback_data format for places count (standalone): {query.data}")
         except (ValueError, IndexError) as e:
@@ -682,12 +688,11 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
                  del context.user_data[user_id]["current_active_order_id"]
              return
 
-        # Improved check for integer only for places count
         if not update.message.text.strip().isdigit(): 
             logger.warning(f"[{chat_id}] Places count text input: Non-integer input from user {user_id}: '{update.message.text}'")
             msg_error = await context.bot.send_message(chat_id=chat_id, text="الرجاء إدخال *رقم صحيح* لعدد المحلات.")
             context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
-            return # Don't process further, await correct input
+            return 
 
         try:
             places = int(update.message.text.strip())
@@ -696,7 +701,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
                 msg_error = await context.bot.send_message(chat_id=chat_id, text="عدد المحلات يجب أن يكون رقماً موجباً. الرجاء إدخال عدد المحلات بشكل صحيح.")
                 context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
                 return 
-        except ValueError as e: # This should ideally not be reached if the isdigit check is robust
+        except ValueError as e: 
             logger.error(f"[{chat_id}] Places count text input: ValueError for user {user_id} with input '{update.message.text}': {e}")
             msg_error = await context.bot.send_message(chat_id=chat_id, text="الرجاء إدخال عدد صحيح لعدد المحلات.")
             context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
@@ -714,7 +719,9 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
     logger.info(f"[{chat_id}] Places count {places} saved for order {order_id_to_process}. Current user_data: {context.user_data.get(user_id)}")
 
 
+    # ***** هنا نضيف عملية الحذف المتأخر لرسائل المحلات بعد ظهور الفاتورة النهائية *****
     if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
+        logger.info(f"[{chat_id}] Scheduling deletion of {len(context.user_data[user_id].get('messages_to_delete', []))} old messages after showing final options for user {user_id}.")
         for msg_info in context.user_data[user_id]['messages_to_delete']:
             context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
         context.user_data[user_id]['messages_to_delete'].clear()
@@ -1023,14 +1030,9 @@ def main():
     app.add_handler(CallbackQueryHandler(edit_prices, pattern="^edit_prices_"))
     app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern="^start_new_order$"))
 
-    # ***** الأهم: هذا الهاندلر الخاص بأزرار المحلات فقط، ولا يستقبل أي رسالة نصية! *****
+    # هذا الهاندلر الخاص بأزرار المحلات فقط، ولا يستقبل أي رسالة نصية!
     app.add_handler(CallbackQueryHandler(handle_places_count_data, pattern=r"^places_data_[a-f0-9]{8}_\d+$"))
     
-    # ***** هذا MessageHandler الذي كان يلتقط الأرقام يدوياً لعدد المحلات: تم إزالته بالكامل. *****
-    # إذا كنت تريد المجهز يدخل عدد المحلات يدوياً، يجب أن يكون ضمن محادثة (ConversationHandler) خاصة به.
-    # حالياً، فقط ضغط أزرار المحلات سيعمل.
-
-
     order_creation_conv_handler = ConversationHandler(
         entry_points=[
             MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
@@ -1038,21 +1040,18 @@ def main():
         ],
         states={
             ASK_BUY: [
-                # هذا الهاندلر الآن مسؤول فقط عن استقبال الأرقام لسعر الشراء
                 MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_buy_price),
-                # إذا المستخدم دز شي مو رقم، ننهي المحادثة أو نعطي رسالة خطأ ونعيد الطلب (الكود أعلاه يفعل ذلك)
-                MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: ConversationHandler.END), # ينهي المحادثة إذا الرسالة ليست رقماً
+                # إذا المستخدم دز شي مو رقم، ننهي المحادثة
+                MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: ConversationHandler.END),
             ],
             ASK_SELL: [
-                # هذا الهاندلر الآن مسؤول فقط عن استقبال الأرقام لسعر البيع
                 MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_sell_price),
                 # إذا المستخدم دز شي مو رقم، ننهي المحادثة
                 MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: ConversationHandler.END),
             ]
         },
         fallbacks=[
-            CommandHandler("cancel", lambda u, c: ConversationHandler.END), # أمر /cancel لإنهاء أي محادثة جارية
-            # Fallback عام إذا المستخدم دز شي غير متوقع، ننهي المحادثة
+            CommandHandler("cancel", lambda u, c: ConversationHandler.END),
             MessageHandler(filters.TEXT | filters.COMMAND, lambda u, c: ConversationHandler.END)
         ]
     )
