@@ -244,7 +244,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data[user_id].pop("buy_price", None) # Clear buy_price too
         logger.info(f"Cleared order-specific user_data for user {user_id} on /start command. User data after clearing: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
     
-    await update.message.reply_text("أهلاً بك يا أبا الأكبر! لإعداد طلبية، دز الطلبية كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون (بدايه السطر يجب ان تكون اسم المنطقة).\n*السطر الثاني:* رقم الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", parse_mode="Markdown")
+    await update.message.reply_text("أهلاً بك يا أبا الأكبر! لإعداد طلبية، دز الطلبية كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون.\n*السطر الثاني:* رقم الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", parse_mode="Markdown")
     return ConversationHandler.END
 
 async def receive_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -277,7 +277,7 @@ async def process_order(update, context, message, edited=False):
             await message.reply_text("الرجاء التأكد من كتابة عنوان الزبون في السطر الأول، رقم الزبون في السطر الثاني، والمنتجات في الأسطر التالية.")
         return
 
-    title = lines[0]
+    title = lines[0] # السطر الأول هو العنوان
     customer_phone = clean_phone_number(lines[1]) # تصحيح رقم الزبون
     products = [p.strip() for p in lines[2:] if p.strip()] # المنتجات تبدأ من السطر الثالث
 
@@ -303,29 +303,19 @@ async def process_order(update, context, message, edited=False):
                     
     # تحديد سعر التوصيل للمنطقة
     delivery_cost_for_region = 0.0
-    region_name = ""
-    # نحاول نلقى اسم المنطقة بأول كلمة من العنوان
-    first_word_of_title = title.split(' ')[0].strip().lower()
+    region_name = "غير محددة" # القيمة الافتراضية إذا لم يتم العثور على منطقة
+    
+    # تحويل العنوان إلى حروف صغيرة للبحث
+    title_lower = title.lower()
 
     found_region = False
     for region, price in delivery_pricing.items():
-        if first_word_of_title == region.lower():
+        if region.lower() in title_lower: # البحث عن اسم المنطقة داخل العنوان
             delivery_cost_for_region = price
             region_name = region
             found_region = True
             break
     
-    if not found_region:
-        # إذا ما لقينا المنطقة بالضبط، نحاول ندور على كلمة داخل العنوان تطابق اسم منطقة
-        # هذا يسمح للعنوان يبدأ بأي شي ويحتوي على اسم المنطقة بعدين
-        # مثال: "طلب من ابو محمد لـ محيلة شارع المشروع"
-        for region, price in delivery_pricing.items():
-            if region.lower() in title.lower():
-                delivery_cost_for_region = price
-                region_name = region
-                found_region = True
-                break
-
     if not order_id: 
         order_id = str(uuid.uuid4())[:8]
         invoice_no = get_invoice_number()
@@ -1001,7 +991,7 @@ async def start_new_order_callback(update: Update, context: ContextTypes.DEFAULT
         if query.message:
             context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
 
-        await query.message.reply_text("تمام، دز الطلبية الجديدة كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون (بدايه السطر يجب ان تكون اسم المنطقة).\n*السطر الثاني:* رقم الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", parse_mode="Markdown")
+        await query.message.reply_text("تمام، دز الطلبية الجديدة كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون.\n*السطر الثاني:* رقم الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", parse_mode="Markdown")
         
         return ConversationHandler.END
     except Exception as e:
