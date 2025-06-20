@@ -14,9 +14,10 @@ import time
 import re
 import urllib.parse
 
-# تفعيل الـ logging
+# تهيئة logging
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
@@ -36,13 +37,7 @@ pricing = {}
 invoice_numbers = {}
 daily_profit = 0.0
 last_button_message = {}
-delivery_pricing = {
-    "بغداد": 5.0,
-    "الكرخ": 4.0,
-    "الرصافة": 4.0,
-    "المحمودية": 7.0,
-    "اللطيفية": 8.0
-}
+delivery_pricing = {}
 
 # متغيرات الحفظ المؤجل
 save_timer = None
@@ -63,12 +58,12 @@ def load_data():
                 logger.error(f"Error loading {filepath}: {e}")
         return default_value
 
-    orders.update(load_json_file(ORDERS_FILE, {}))
-    pricing.update(load_json_file(PRICING_FILE, {}))
-    invoice_numbers.update(load_json_file(INVOICE_NUMBERS_FILE, {}))
+    orders = load_json_file(ORDERS_FILE, {})
+    pricing = load_json_file(PRICING_FILE, {})
+    invoice_numbers = load_json_file(INVOICE_NUMBERS_FILE, {})
     daily_profit = load_json_file(DAILY_PROFIT_FILE, 0.0)
-    last_button_message.update(load_json_file(LAST_BUTTON_MESSAGE_FILE, {}))
-    delivery_pricing.update(load_json_file(DELIVERY_PRICING_FILE, delivery_pricing))
+    last_button_message = load_json_file(LAST_BUTTON_MESSAGE_FILE, {})
+    delivery_pricing = load_json_file(DELIVERY_PRICING_FILE, {})
 
 # حفظ البيانات
 def _save_data_to_disk():
@@ -196,10 +191,14 @@ async def process_order(update, context, message, edited=False):
             delivery_cost = price
             break
 
-    order_id = get_order_id(message, edited)
-    is_new = order_id not in orders
+    order_id = None
+    if edited:
+        for oid, msg_info in last_button_message.items():
+            if msg_info and msg_info.get("message_id") == message.message_id:
+                order_id = oid
+                break
 
-    if is_new:
+    if not order_id:
         order_id = str(uuid.uuid4())[:8]
         orders[order_id] = {
             "user_id": user_id,
@@ -214,24 +213,48 @@ async def process_order(update, context, message, edited=False):
         pricing[order_id] = {p: {} for p in products}
         invoice_numbers[order_id] = get_invoice_number()
     else:
-        update_existing_order(order_id, title, phone, products, delivery_cost, region_name)
+        old_products = set(orders[order_id].get("products", []))
+        new_products = set(products)
+        
+        orders[order_id].update({
+            "title": title,
+            "customer_phone": phone,
+            "products": products,
+            "delivery_cost": delivery_cost,
+            "region_name": region_name
+        })
+
+        for p in new_products:
+            if p not in pricing.get(order_id, {}):
+                pricing.setdefault(order_id, {})[p] = {}
+        
+        for p in old_products - new_products:
+            if p in pricing.get(order_id, {}):
+                del pricing[order_id][p]
 
     await save_data_in_background(context)
-    confirmation = "تم تحديث الطلب" if not is_new else f"استلمت الطلب: {title}"
+    confirmation = "تم تحديث الطلب" if order_id in orders else f"استلمت الطلب: {title}"
     await show_buttons(message.chat_id, context, user_id, order_id, confirmation)
 
 async def show_buttons(chat_id, context, user_id, order_id, confirmation=None):
     try:
         order = orders[order_id]
-        markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton(
-                f"{'✅ ' if p in pricing.get(order_id, {}) and pricing[order_id][p].get('buy') and pricing[order_id][p].get('sell') else ''}{p}",
+        buttons = []
+        for p in order["products"]:
+            is_priced = p in pricing.get(order_id, {}) and 'buy' in pricing[order_id][p] and 'sell' in pricing[order_id][p]
+            buttons.append([InlineKeyboardButton(
+                f"{'✅ ' if is_priced else ''}{p}",
                 callback_data=f"{order_id}|{p}"
-            )] for p in order["products"]
-        ])
+            )])
+
+        markup = InlineKeyboardMarkup(buttons)
 
         if last_button_message.get(order_id):
-            await delete_message_in_background(context, last_button_message[order_id]["chat_id"], last_button_message[order_id]["message_id"])
+            await delete_message_in_background(
+                context,
+                last_button_message[order_id]["chat_id"],
+                last_button_message[order_id]["message_id"]
+            )
 
         msg = await context.bot.send_message(
             chat_id=chat_id,
@@ -246,12 +269,42 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation=None):
 
 async def show_final_options(chat_id, context, user_id, order_id, message_prefix=None):
     try:
+        global daily_profit
         order = orders[order_id]
-        invoice = invoice_numbers[order_id]
+        invoice = invoice_numbers.get(order_id, "غير معروف")
         
         # إنشاء فاتورة الزبون
-        customer_invoice = create_customer_invoice(order, invoice)
+        customer_lines = [
+            "**فاتورة طلبية**",
+            f"رقم الفاتورة: {invoice}",
+            f"العنوان: {order['title']}",
+            f"رقم الزبون: {order.get('customer_phone', 'غير متوفر')}",
+            f"المنطقة: {order.get('region_name', 'غير محددة')}",
+            "\n*المنتجات:*"
+        ]
         
+        total_sell = 0
+        for p in order["products"]:
+            if p in pricing.get(order_id, {}) and 'sell' in pricing[order_id][p]:
+                sell = pricing[order_id][p]['sell']
+                customer_lines.append(f"- {p}: {format_float(sell)}")
+                total_sell += sell
+            else:
+                customer_lines.append(f"- {p}: (لم يتم التسعير)")
+        
+        extra_cost = calculate_extra(order.get("places_count", 0))
+        delivery_cost = order.get("delivery_cost", 0)
+        final_total = total_sell + extra_cost + delivery_cost
+        
+        customer_lines.extend([
+            f"\n*المجموع:* {format_float(total_sell)}",
+            f"كلفة التجهيز: {format_float(extra_cost)}",
+            f"سعر التوصيل: {format_float(delivery_cost)}",
+            f"*المجموع النهائي:* {format_float(final_total)}"
+        ])
+        
+        customer_invoice = "\n".join(customer_lines)
+
         # محاولة إرسال الفاتورة في الكروب
         try:
             await context.bot.send_message(
@@ -260,7 +313,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
                 parse_mode="Markdown"
             )
         except Exception as e:
-            logger.error(f"Failed to send invoice to group: {e}")
+            logger.error(f"Failed to send invoice to group {chat_id}: {e}")
             await context.bot.send_message(
                 chat_id=chat_id,
                 text="⚠️ تم إنشاء الفاتورة ولكن حدث خطأ في عرضها بالمجموعة"
@@ -272,11 +325,39 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
                 parse_mode="Markdown"
             )
 
+        # إنشاء فاتورة الإدارة
+        admin_lines = [
+            "**فاتورة الإدارة**",
+            f"رقم الفاتورة: {invoice}",
+            f"العنوان: {order['title']}",
+            f"المنطقة: {order.get('region_name', 'غير محددة')}",
+            f"سعر التوصيل: {format_float(delivery_cost)}",
+            "\n*تفاصيل الأسعار:*"
+        ]
+        
+        total_buy = 0
+        total_sell = 0
+        for p in order["products"]:
+            if p in pricing.get(order_id, {}) and 'buy' in pricing[order_id][p] and 'sell' in pricing[order_id][p]:
+                buy = pricing[order_id][p]['buy']
+                sell = pricing[order_id][p]['sell']
+                admin_lines.append(f"- {p}: شراء {format_float(buy)} | بيع {format_float(sell)} | ربح {format_float(sell - buy)}")
+                total_buy += buy
+                total_sell += sell
+        
+        net_profit = total_sell - total_buy + delivery_cost
+        admin_lines.extend([
+            f"\n*المجموع شراء:* {format_float(total_buy)}",
+            f"*المجموع بيع:* {format_float(total_sell)}",
+            f"*الربح الصافي:* {format_float(net_profit)}"
+        ])
+        
+        admin_invoice = "\n".join(admin_lines)
+
         # إرسال فاتورة الإدارة
-        owner_invoice = create_owner_invoice(order, invoice)
         await context.bot.send_message(
             chat_id=OWNER_ID,
-            text=owner_invoice,
+            text=admin_invoice,
             parse_mode="Markdown"
         )
 
@@ -289,36 +370,13 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             chat_id=chat_id,
             text="اختر الإجراء التالي:",
             reply_markup=InlineKeyboardMarkup(keyboard)
+        )
             
     except Exception as e:
         logger.error(f"Error in show_final_options: {e}")
         await context.bot.send_message(chat_id, "حدث خطأ في عرض الخيارات النهائية")
 
-def create_customer_invoice(order, invoice_no):
-    lines = [
-        f"فاتورة رقم: {invoice_no}",
-        f"العنوان: {order['title']}",
-        f"المنطقة: {order['region_name']}",
-        f"رقم الهاتف: {order['customer_phone']}",
-        "\nالمنتجات:"
-    ]
-    
-    total = 0
-    for p in order["products"]:
-        if p in pricing.get(order["order_id"], {}):
-            price = pricing[order["order_id"]][p].get("sell", 0)
-            lines.append(f"- {p}: {format_float(price)}")
-            total += price
-        else:
-            lines.append(f"- {p}: (لم يتم التسعير)")
-    
-    lines.append(f"\nإجمالي المنتجات: {format_float(total)}")
-    lines.append(f"سعر التوصيل: {format_float(order['delivery_cost'])}")
-    lines.append(f"المجموع الكلي: {format_float(total + order['delivery_cost'])}")
-    
-    return "\n".join(lines)
-
-# ... [يتبع باقي الكود بنفس الطريقة مع الحفاظ على جميع الدوال والميزات] ...
+# [يتبع باقي الدوال بنفس النسق مع الحفاظ على جميع الوظائف]
 
 def main():
     if not TOKEN:
@@ -342,7 +400,7 @@ def main():
     )
     
     app.add_handler(conv_handler)
-    app.add_handler(CallbackQueryHandler(product_selected, pattern=r"^[^_]+\\|[^_]+$"))
+    app.add_handler(CallbackQueryHandler(product_selected, pattern=r"^[^_]+\|[^_]+$"))
     app.add_handler(CallbackQueryHandler(handle_places_count_data, pattern=r"^places_data_.*"))
     app.add_handler(CallbackQueryHandler(edit_prices, pattern=r"^edit_prices_.*"))
     app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern=r"^start_new_order$"))
