@@ -255,6 +255,20 @@ def load_areas():
 # تحميل المناطق عند بدء البوت
 load_areas()
 
+# دالة لبدء البوت
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.message.from_user.id)
+    logger.info(f"[{update.effective_chat.id}] /start command from user {user_id}. User data before clearing: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
+    if user_id in context.user_data:
+        context.user_data[user_id].pop("order_id", None)
+        context.user_data[user_id].pop("product", None)
+        context.user_data[user_id].pop("current_active_order_id", None)
+        context.user_data[user_id].pop("messages_to_delete", None)
+        context.user_data[user_id].pop("buy_price", None)
+        logger.info(f"Cleared order-specific user_data for user {user_id} on /start command. User data after clearing: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
+    await update.message.reply_text("أهلاً بك يا أبا الأكبر! لإعداد طلبية، دز الطلبية كلها برسالة واحدة.\n*السطر الأول:* عنوان الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", parse_mode="Markdown")
+    return ConversationHandler.END
+
 # دالة لإظهار قائمة المناطق
 async def show_areas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
