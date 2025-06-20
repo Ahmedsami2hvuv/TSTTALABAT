@@ -824,22 +824,21 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         
         customer_final_text = "\n".join(customer_invoice_lines)
 
-        # حفظ فاتورة الزبون في ملف نصي
-
+# حفظ فاتورة الزبون في ملف نصي
 try:
-    # إنشاء مجلد الفواتير إذا ما موجود
     invoices_dir = "invoices"
     os.makedirs(invoices_dir, exist_ok=True)
-invoices_dir = "invoices"
-os.makedirs(invoices_dir, exist_ok=True)
-    # حفظ فاتورة الزبون
+
     customer_invoice_filename = os.path.join(invoices_dir, f"invoice_{invoice}_customer.txt")
     with open(customer_invoice_filename, "w", encoding="utf-8") as f:
         f.write("فاتورة الزبون\n")
         f.write("="*40 + "\n")
         f.write(customer_final_text)
+
     logger.info(f"[{chat_id}] Saved customer invoice to {customer_invoice_filename}")
 
+except Exception as e:
+    logger.error(f"[{chat_id}] Failed to save customer invoice to file: {e}")
     # إرسالها للزبون
     await context.bot.send_message(
         chat_id=chat_id,
