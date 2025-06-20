@@ -825,109 +825,87 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         customer_final_text = "\n".join(customer_invoice_lines)
 
         # حفظ فاتورة الزبون في ملف نصي
-customer_invoice_filename = os.path.join(invoices_dir, f"invoice_{invoice}_customer.txt")
 
 try:
+    # إنشاء مجلد الفواتير إذا ما موجود
+    invoices_dir = "invoices"
+    os.makedirs(invoices_dir, exist_ok=True)
+
+    # حفظ فاتورة الزبون
+    customer_invoice_filename = os.path.join(invoices_dir, f"invoice_{invoice}_customer.txt")
     with open(customer_invoice_filename, "w", encoding="utf-8") as f:
         f.write("فاتورة الزبون\n")
         f.write("="*40 + "\n")
         f.write(customer_final_text)
     logger.info(f"[{chat_id}] Saved customer invoice to {customer_invoice_filename}")
-except Exception as e:
-    logger.error(f"[{chat_id}] Failed to save customer invoice to file: {e}")
-    
-        try:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=customer_final_text,
-                parse_mode="Markdown"
-            )
-            logger.info(f"[{chat_id}] Customer invoice sent as a separate message for order {order_id}.")
-        except Exception as e:
-            logger.error(f"[{chat_id}] Could not send customer invoice as separate message to chat {chat_id}: {e}", exc_info=True)
-            await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من إرسال فاتورة الزبون. الرجاء المحاولة مرة أخرى.")
 
-        keyboard = [
-            [InlineKeyboardButton("1️⃣ تعديل الأسعار", callback_data=f"edit_prices_{order_id}")],
-            [InlineKeyboardButton("3️⃣ إرسال فاتورة الزبون (واتساب)", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={customer_final_text.replace(' ', '%20').replace('\n', '%0A').replace('*', '')}")],
-            [InlineKeyboardButton("4️⃣ إنشاء طلب جديد", callback_data="start_new_order")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+    # إرسالها للزبون
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=customer_final_text,
+        parse_mode="Markdown"
+    )
 
-        message_text = "افعل ما تريد من الأزرار:\n\n"
-        if message_prefix:
-            message_text = message_prefix + "\n" + message_text
-        
-        owner_invoice_details = []
-        owner_invoice_details.append(f"رقم الفاتورة: {invoice}")
-        owner_invoice_details.append(f"عنوان الزبون: {order['title']}")
-        for p in order["products"]:
-            if p in pricing.get(order_id, {}) and "buy" in pricing[order_id].get(p, {}) and "sell" in pricing[order_id].get(p, {}):
-                buy = pricing[order_id][p]["buy"]
-                sell = pricing[order_id][p]["sell"] 
-                profit_item = sell - buy
-                owner_invoice_details.append(f"{p} - شراء: {format_float(buy)}, بيع: {format_float(sell)}, ربح: {format_float(profit_item)}")
-            else:
-                owner_invoice_details.append(f"{p} - (لم يتم تسعيره بعد)")
-        owner_invoice_details.append(f"\nالمجموع شراء: {format_float(total_buy)}")
-        owner_invoice_details.append(f"المجموع بيع: {format_float(total_sell)}")
-        owner_invoice_details.append(f"الربح الكلي: {format_float(net_profit)}")
-        owner_invoice_details.append(f"عدد المحلات: {current_places} (+{format_float(extra_cost)})")
-        if delivery_fee > 0:
-            owner_invoice_details.append(f"أجرة التوصيل: {format_float(delivery_fee)}")
-        owner_invoice_details.append(f"السعر الكلي: {format_float(final_total)}")
-        
-        final_owner_invoice_text = "\n".join(owner_invoice_details)
+    # توليد تفاصيل فاتورة الإدارة
+    owner_invoice_details = []
+    owner_invoice_details.append(f"رقم الفاتورة: {invoice}")
+    owner_invoice_details.append(f"عنوان الزبون: {order['title']}")
+    for p in order["products"]:
+        if p in pricing.get(order_id, {}) and "buy" in pricing[order_id][p] and "sell" in pricing[order_id][p]:
+            buy = pricing[order_id][p]["buy"]
+            sell = pricing[order_id][p]["sell"]
+            profit_item = sell - buy
+            owner_invoice_details.append(f"{p} - شراء: {format_float(buy)}, بيع: {format_float(sell)}, ربح: {format_float(profit_item)}")
+        else:
+            owner_invoice_details.append(f"{p} - (لم يتم تسعيره بعد)")
+    owner_invoice_details.append(f"\nالمجموع شراء: {format_float(total_buy)}")
+    owner_invoice_details.append(f"المجموع بيع: {format_float(total_sell)}")
+    owner_invoice_details.append(f"الربح الكلي: {format_float(net_profit)}")
+    owner_invoice_details.append(f"عدد المحلات: {current_places} (+{format_float(extra_cost)})")
+    if delivery_fee > 0:
+        owner_invoice_details.append(f"أجرة التوصيل: {format_float(delivery_fee)}")
+    owner_invoice_details.append(f"السعر الكلي: {format_float(final_total)}")
 
-        # حفظ الفاتورة في ملف نصي
-invoices_dir = "invoices"
-os.makedirs(invoices_dir, exist_ok=True)
-invoice_filename = os.path.join(invoices_dir, f"invoice_{invoice}.txt")
+    final_owner_invoice_text = "\n".join(owner_invoice_details)
 
-try:
+    # حفظها بملف نصي
+    invoice_filename = os.path.join(invoices_dir, f"invoice_{invoice}_admin.txt")
     with open(invoice_filename, "w", encoding="utf-8") as f:
         f.write("فاتورة الإدارة\n")
         f.write("="*40 + "\n")
         f.write(final_owner_invoice_text)
     logger.info(f"[{chat_id}] Saved invoice to {invoice_filename}")
+
+    # زر إرسالها واتساب
+    encoded_owner_invoice = final_owner_invoice_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
+    whatsapp_owner_button_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("إرسال فاتورة الإدارة للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}")]
+    ])
+
+    await context.bot.send_message(
+        chat_id=OWNER_ID,
+        text=f"**فاتورة طلبية (الإدارة):**\n{final_owner_invoice_text}",
+        parse_mode="Markdown",
+        reply_markup=whatsapp_owner_button_markup
+    )
+
+    # باقي الأزرار
+    keyboard = [
+        [InlineKeyboardButton("1️⃣ تعديل الأسعار", callback_data=f"edit_prices_{order_id}")],
+        [InlineKeyboardButton("3️⃣ إرسال فاتورة الزبون (واتساب)", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={customer_final_text.replace(' ', '%20').replace('\n', '%0A').replace('*', '')}")],
+        [InlineKeyboardButton("4️⃣ إنشاء طلب جديد", callback_data="start_new_order")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    message_text = "افعل ما تريد من الأزرار:\n\n"
+    if message_prefix:
+        message_text = message_prefix + "\n" + message_text
+
+    await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup, parse_mode="Markdown")
+
 except Exception as e:
-    logger.error(f"[{chat_id}] Failed to save invoice to file: {e}")
-    
-        encoded_owner_invoice = final_owner_invoice_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
-        whatsapp_owner_button_markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton("إرسال فاتورة الإدارة للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}")]
-        ])
-
-        try:
-            await context.bot.send_message(
-                chat_id=OWNER_ID,
-                text=f"**فاتورة طلبية (الإدارة):**\n{final_owner_invoice_text}",
-                parse_mode="Markdown",
-                reply_markup=whatsapp_owner_button_markup
-            )
-            logger.info(f"[{chat_id}] Admin invoice and WhatsApp button sent to OWNER_ID: {OWNER_ID}")
-        except Exception as e:
-            logger.error(f"[{chat_id}] Could not send admin invoice to OWNER_ID {OWNER_ID}: {e}", exc_info=True)
-            await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من إرسال فاتورة الإدارة إلى خاصك. يرجى التأكد من أنني أستطيع مراسلتك في الخاص (قد تحتاج إلى بدء محادثة معي أولاً).")
-
-        await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup, parse_mode="Markdown")
-        
-        if user_id in context.user_data: 
-            if 'messages_to_delete' in context.user_data[user_id]:
-                for msg_info in context.user_data[user_id]['messages_to_delete']:
-                    context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
-                context.user_data[user_id]['messages_to_delete'].clear()
-            
-            context.user_data[user_id].pop("order_id", None)
-            context.user_data[user_id].pop("product", None)
-            context.user_data[user_id].pop("current_active_order_id", None) 
-            context.user_data[user_id].pop("buy_price", None)
-            logger.info(f"[{chat_id}] Cleaned up order-specific user_data for user {user_id} after showing final options. User data after clean: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
-    except Exception as e:
-        logger.error(f"[{chat_id}] Error in show_final_options: {e}", exc_info=True)
-        await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء عرض الفاتورة النهائية. الرجاء بدء طلبية جديدة.")
-
-
+    logger.error(f"[{chat_id}] Error in show_final_options: {e}", exc_info=True)
+    await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء عرض الفاتورة النهائية. الرجاء بدء طلبية جديدة.")
 
 async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
