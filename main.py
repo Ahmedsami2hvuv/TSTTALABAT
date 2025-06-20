@@ -1,3 +1,4 @@
+from features.delivery_zones import zone_handlers, get_delivery_price
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.ext import (
     ApplicationBuilder, ContextTypes, CommandHandler,
@@ -322,7 +323,11 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
 # تحديث الـ main function لإضافة handlers الجديدة 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
-
+    
+# إضافة الهاندلرات الخاصة بالمناطق
+for handler in zone_handlers:
+    app.add_handler(handler)
+    
     # Handlers لا تدخل في أي ConversationHandler
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^الارباح$|^ارباح$"), show_profit))
@@ -340,6 +345,9 @@ def main():
     app.add_handler(CallbackQueryHandler(process_remove_area, pattern="^remove_area_"))
 
     # ConversationHandlers
+
+app.add_handler(CommandHandler("المناطق", list_zones))
+    
     places_conv_handler = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(handle_places_count_data, pattern=r"^places_data_[a-f0-9]{8}_\d+$"),
