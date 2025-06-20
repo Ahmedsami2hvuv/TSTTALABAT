@@ -830,7 +830,8 @@ try:
     # إنشاء مجلد الفواتير إذا ما موجود
     invoices_dir = "invoices"
     os.makedirs(invoices_dir, exist_ok=True)
-
+invoices_dir = "invoices"
+os.makedirs(invoices_dir, exist_ok=True)
     # حفظ فاتورة الزبون
     customer_invoice_filename = os.path.join(invoices_dir, f"invoice_{invoice}_customer.txt")
     with open(customer_invoice_filename, "w", encoding="utf-8") as f:
