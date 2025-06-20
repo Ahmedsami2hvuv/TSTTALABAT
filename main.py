@@ -28,7 +28,7 @@ INVOICE_NUMBERS_FILE = os.path.join(DATA_DIR, "invoice_numbers.json")
 DAILY_PROFIT_FILE = os.path.join(DATA_DIR, "daily_profit.json")
 COUNTER_FILE = os.path.join(DATA_DIR, "invoice_counter.txt")
 LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
-AREAS_FILE = os.path.join(DATA_DIR, "areas.json")  # New file for areas
+AREAS_FILE = os.path.join(DATA_DIR, "areas.json")  # ملف جديد لإدارة المناطق
 
 # تهيئة المتغيرات العامة
 orders = {}
@@ -36,19 +36,42 @@ pricing = {}
 invoice_numbers = {}
 daily_profit = 0.0
 last_button_message = {}
-areas = {}  # New dictionary to store areas and their prices
+areas = {}  # قائمة المناطق وأسعار التوصيل
 
 # متغيرات الحفظ المؤجل
 save_timer = None
 save_pending = False
 save_lock = threading.Lock()
 
+# تحميل بيانات المناطق عند بدء تشغيل البوت
+def load_areas():
+    global areas
+    if os.path.exists(AREAS_FILE):
+        with open(AREAS_FILE, "r") as f:
+            try:
+                areas = json.load(f)
+                logger.info(f"Loaded areas from {AREAS_FILE} successfully.")
+            except json.JSONDecodeError:
+                logger.warning(f"{AREAS_FILE} is corrupted or empty, reinitializing areas.")
+                areas = {}
+    else:
+        logger.info("Areas file not found, initializing to default.")
+        areas = {}
+    return areas
+
+# حفظ بيانات المناطق
+def save_areas():
+    with open(AREAS_FILE + ".tmp", "w") as f:
+        json.dump(areas, f, indent=4)
+    os.replace(AREAS_FILE + ".tmp", AREAS_FILE)
+    logger.info("Areas saved to disk successfully.")
+
 # تحميل البيانات عند بدء تشغيل البوت
 def load_data():
     global orders, pricing, invoice_numbers, daily_profit, last_button_message, areas
     os.makedirs(DATA_DIR, exist_ok=True)
-    
-    # Helper function to load a JSON file safely
+
+    # دالة مساعدة لتحميل ملف JSON بأمان
     def load_json_file(filepath, default_value, var_name):
         if os.path.exists(filepath):
             with open(filepath, "r") as f:
@@ -66,28 +89,26 @@ def load_data():
     orders_temp = load_json_file(ORDERS_FILE, {}, "orders")
     orders.clear()
     orders.update({str(k): v for k, v in orders_temp.items()})
-    
+
     pricing_temp = load_json_file(PRICING_FILE, {}, "pricing")
     pricing.clear()
     pricing.update({str(pk): pv for pk, pv in pricing_temp.items()})
     for oid in pricing:
         if isinstance(pricing[oid], dict):
             pricing[oid] = {str(pk): pv for pk, pv in pricing[oid].items()}  # Ensure inner keys are strings too
-    
+
     invoice_numbers_temp = load_json_file(INVOICE_NUMBERS_FILE, {}, "invoice_numbers")
     invoice_numbers.clear()
     invoice_numbers.update({str(k): v for k, v in invoice_numbers_temp.items()})
-    
+
     daily_profit = load_json_file(DAILY_PROFIT_FILE, 0.0, "daily_profit")
-    
+
     last_button_message_temp = load_json_file(LAST_BUTTON_MESSAGE_FILE, {}, "last_button_message")
     last_button_message.clear()
     last_button_message.update({str(k): v for k, v in last_button_message_temp.items()})
-    
-    areas_temp = load_json_file(AREAS_FILE, {}, "areas")  # Load areas
-    areas.clear()
-    areas.update({str(k): v for k, v in areas_temp.items()})
-    
+
+    areas = load_json_file(AREAS_FILE, {}, "areas")
+
     logger.info(f"Initial load complete. Orders: {len(orders)}, Pricing entries: {len(pricing)}, Daily Profit: {daily_profit}, Areas: {len(areas)}")
 
 # حفظ البيانات
@@ -100,27 +121,27 @@ def _save_data_to_disk():
             with open(ORDERS_FILE + ".tmp", "w") as f:
                 json.dump(orders, f, indent=4)  # Use indent for readability in files
             os.replace(ORDERS_FILE + ".tmp", ORDERS_FILE)
-            
+
             with open(PRICING_FILE + ".tmp", "w") as f:
                 json.dump(pricing, f, indent=4)
             os.replace(PRICING_FILE + ".tmp", PRICING_FILE)
-            
+
             with open(INVOICE_NUMBERS_FILE + ".tmp", "w") as f:
                 json.dump(invoice_numbers, f, indent=4)
             os.replace(INVOICE_NUMBERS_FILE + ".tmp", INVOICE_NUMBERS_FILE)
-            
+
             with open(DAILY_PROFIT_FILE + ".tmp", "w") as f:
                 json.dump(daily_profit, f, indent=4)
             os.replace(DAILY_PROFIT_FILE + ".tmp", DAILY_PROFIT_FILE)
-            
+
             with open(LAST_BUTTON_MESSAGE_FILE + ".tmp", "w") as f:
                 json.dump(last_button_message, f, indent=4)
             os.replace(LAST_BUTTON_MESSAGE_FILE + ".tmp", LAST_BUTTON_MESSAGE_FILE)
-            
-            with open(AREAS_FILE + ".tmp", "w") as f:  # Save areas
+
+            with open(AREAS_FILE + ".tmp", "w") as f:
                 json.dump(areas, f, indent=4)
             os.replace(AREAS_FILE + ".tmp", AREAS_FILE)
-            
+
             logger.info("All data saved to disk successfully.")
         except Exception as e:
             logger.error(f"Error saving data to disk: {e}")
@@ -157,12 +178,12 @@ def get_invoice_number():
 load_data()
 
 # حالات المحادثة
-ASK_BUY, ASK_SELL, ASK_PLACES_COUNT, ADD_AREA, REMOVE_AREA = range(5)
+ASK_BUY, ASK_SELL, ASK_PLACES_COUNT = range(3)  # أضفنا حالة جديدة لعدد المحلات
 
 # جلب التوكن ومعرف المالك من متغيرات البيئة
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-OWNER_ID = int(os.getenv("OWNER_TELEGRAM_ID")) 
-OWNER_PHONE_NUMBER = "+9647733921468" 
+OWNER_ID = int(os.getenv("OWNER_TELEGRAM_ID"))
+OWNER_PHONE_NUMBER = "+9647733921468"
 
 if TOKEN is None:
     raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set.")
@@ -176,86 +197,43 @@ def format_float(value):
         return formatted[:-2]
     return formatted
 
-# قائمة المناطق والأسعار
-def load_areas():
-    global areas
-    areas = {
-        "الاسمدة": 3,
-        "جيكور حزبه1": 3,
-        "جيكور حزبه2": 3,
-        "جيكور": 3,
-        "العصفورية": 3,
-        "باب سليمان": 3,
-        "باب طويل": 3,
-        "باب العريض": 3,
-        "باب عباس": 3,
-        "كوت بازل": 3,
-        "باب دباغ": 3,
-        "باب ميدان": 3,
-        "بلد سلطان": 3,
-        "ام الصخر": 3,
-        "باب رمانه": 3,
-        "اهل عيد": 3,
-        "الباني": 3,
-        "نهر خوز": 3,
-        "ابو مغيرة": 3,
-        "مجيبرة": 3,
-        "السبيليات": 3,
-        "الصنكر": 3,
-        "محيلة قبل دورة ام زباله": 3,
-        "طريق الوسطي": 3,
-        "العاگولية": 3,
-        "الصحراء": 3,
-        "ابو كوصرة": 3,
-        "طريزاوية": 3,
-        "العوجة": 3,
-        "المقيمين": 3,
-        "الابطاح": 3,
-        "اللكطة": 3,
-        "الشجرة الطيبة": 3,
-        "شيخ ابراهيم": 3,
-        "نزيلة": 3,
-        "عميرية": 3,
-        "بلد": 3,
-        "كوت البلجاني": 3,
-        "الحوطة": 3,
-        "السوق": 3,
-        "الصنكر": 3,
-        "محيلة الوسطي": 3,
-        "محيلة قرب الجسر": 3,
-        "محيلة السوق": 3,
-        "محيلة قرب السيطرة": 3,
-        "محيلة شارع المشروع": 5,
-        "محيلة شارع سيد حامد": 5,
-        "محيلة شارع الاندلس": 5,
-        "محيلة الصكاروة": 5,
-        "المعهد الصناعي": 5,
-        "الدورة": 5,
-        "الاندلس": 5,
-        "الجديدة": 5,
-        "الرومية": 5,
-        "الصكاروة": 5,
-        "كوت الصلحي": 5,
-        "كوت الفداغ": 5,
-        "جامع الشهيد": 5,
-        "يوسفان": 5,
-        "حمدان": 5,
-        "كوت ثويني": 5,
-        "البهادرية": 5,
-        "محولة الزهير": 5,
-        "كوت الحمداني": 5,
-        "عويسيان": 5,
-        "مهيجران": 5,
-        "السراجي": 5,
-        "عبد اليان": 5,
-        "معمل الثرمستون": 3
-    }
+# دالة لحساب مبلغ الأجرة الإضافي بناءً على عدد المحلات
+def calculate_extra(places_count):
+    if places_count <= 2:
+        return 0
+    elif places_count == 3:
+        return 1
+    elif places_count == 4:
+        return 2
+    elif places_count == 5:
+        return 3
+    elif places_count == 6:
+        return 4
+    elif places_count == 7:
+        return 5
+    elif places_count == 8:
+        return 6
+    elif places_count == 9:
+        return 7
+    elif places_count >= 10:
+        return 8
+    return 0
+
+# دالة مساعدة لحذف الرسائل في الخلفية
+async def delete_message_in_background(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int):
+    try:
+        await asyncio.sleep(0.1)  # زيادة التأخير لضمان ظهور الرسالة الجديدة
+        await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+        logger.info(f"Successfully deleted message {message_id} from chat {chat_id} in background.")
+    except Exception as e:
+        logger.warning(f"Could not delete message {message_id} from chat {chat_id} in background: {e}.")
+
+# دالة مساعدة لحفظ البيانات في الخلفية
+async def save_data_in_background(context: ContextTypes.DEFAULT_TYPE):
     schedule_save()
+    logger.info("Data save scheduled in background.")
 
-# تحميل المناطق عند بدء البوت
-load_areas()
-
-# دالة لبدء البوت
+# دالة البدء
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
     logger.info(f"[{update.effective_chat.id}] /start command from user {user_id}. User data before clearing: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
@@ -264,93 +242,89 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data[user_id].pop("product", None)
         context.user_data[user_id].pop("current_active_order_id", None)
         context.user_data[user_id].pop("messages_to_delete", None)
-        context.user_data[user_id].pop("buy_price", None)
+        context.user_data[user_id].pop("buy_price", None)  # Clear buy_price too
         logger.info(f"Cleared order-specific user_data for user {user_id} on /start command. User data after clearing: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
     await update.message.reply_text("أهلاً بك يا أبا الأكبر! لإعداد طلبية، دز الطلبية كلها برسالة واحدة.\n*السطر الأول:* عنوان الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", parse_mode="Markdown")
     return ConversationHandler.END
 
-# دالة لإظهار قائمة المناطق
-async def show_areas(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# دالة لإضافة منطقة جديدة
+async def add_area(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
     if user_id != str(OWNER_ID):
         await update.message.reply_text("عذراً، هذا الأمر متاح للمالك فقط.")
-        return
-    
-    keyboard = []
-    for area, price in areas.items():
-        keyboard.append([InlineKeyboardButton(f"{area} ({price})", callback_data=f"area_{area}")])
-    
-    keyboard.append([InlineKeyboardButton("اضافة منطقة", callback_data="add_area"), InlineKeyboardButton("ازالة منطقة", callback_data="remove_area")])
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text("قائمة المناطق:", reply_markup=reply_markup)
-
-# دالة لإضافة منطقة جديدة
-async def add_area_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("ادخل اسم المنطقة الجديدة:")
-    return ADD_AREA
-
-async def add_area_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    area_name = update.message.text.strip()
-    if area_name in areas:
-        await update.message.reply_text("هذه المنطقة موجودة بالفعل.")
         return ConversationHandler.END
-    
-    context.user_data["new_area_name"] = area_name
-    await update.message.reply_text(f"ادخل سعر التوصيل للمنطقة '{area_name}':")
-    return ADD_AREA
+    await update.message.reply_text("أرسل اسم المنطقة وسعر التوصيل مفصولة بمسافة (مثال: المنطقة 5).")
+    return "ADD_AREA"
 
-async def add_area_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    area_name = context.user_data.get("new_area_name")
+# معالجة إضافة المنطقة
+async def process_add_area(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        price = float(update.message.text.strip())
-        if price < 0:
-            await update.message.reply_text("السعر يجب أن يكون موجباً.")
-            return ADD_AREA
-    except ValueError:
-        await update.message.reply_text("الرجاء إدخال رقم صحيح.")
-        return ADD_AREA
-    
-    areas[area_name] = price
-    schedule_save()
-    await update.message.reply_text(f"تمت إضافة المنطقة '{area_name}' بسعر {price}.")
-    return ConversationHandler.END
+        input_data = update.message.text.strip().split()
+        if len(input_data) != 2:
+            await update.message.reply_text("الرجاء إرسال اسم المنطقة وسعر التوصيل بشكل صحيح (مثال: المنطقة 5).")
+            return "ADD_AREA"
+        area_name, price = input_data
+        if not price.isdigit() or int(price) <= 0:
+            await update.message.reply_text("السعر يجب أن يكون رقماً موجباً.")
+            return "ADD_AREA"
+        areas[area_name] = int(price)
+        save_areas()
+        await update.message.reply_text(f"تمت إضافة المنطقة '{area_name}' بسعر توصيل {price} بنجاح.")
+        return ConversationHandler.END
+    except Exception as e:
+        logger.error(f"Error adding area: {e}")
+        await update.message.reply_text("عذراً، حدث خطأ أثناء إضافة المنطقة.")
+        return ConversationHandler.END
 
-# دالة لحذف منطقة
-async def remove_area_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
+# دالة لإزالة منطقة
+async def remove_area(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.message.from_user.id)
+    if user_id != str(OWNER_ID):
+        await update.message.reply_text("عذراً، هذا الأمر متاح للمالك فقط.")
+        return ConversationHandler.END
+    if not areas:
+        await update.message.reply_text("لا توجد مناطق مضافة حالياً.")
+        return ConversationHandler.END
     keyboard = []
     for area in areas.keys():
         keyboard.append([InlineKeyboardButton(area, callback_data=f"remove_area_{area}")])
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.edit_message_text("اختر المنطقة التي تريد حذفها:", reply_markup=reply_markup)
-    return REMOVE_AREA
+    await update.message.reply_text("اختر المنطقة التي تريد إزالتها:", reply_markup=reply_markup)
+    return "REMOVE_AREA"
 
-async def remove_area_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# معالجة إزالة المنطقة
+async def process_remove_area(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
     area_name = query.data.replace("remove_area_", "")
     if area_name in areas:
         del areas[area_name]
-        schedule_save()
-        await query.edit_message_text(f"تم حذف المنطقة '{area_name}'.")
+        save_areas()
+        await query.edit_message_text(f"تمت إزالة المنطقة '{area_name}' بنجاح.")
     else:
         await query.edit_message_text("هذه المنطقة غير موجودة.")
-    
     return ConversationHandler.END
 
-# تعديل show_final_options لتشمل سعر التوصيل
+# دالة لعرض قائمة المناطق
+async def show_areas(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not areas:
+        await update.message.reply_text("لا توجد مناطق مضافة حالياً.")
+        return
+    areas_list = "\n".join([f"{area}: {price}" for area, price in areas.items()])
+    await update.message.reply_text(f"قائمة المناطق وأسعار التوصيل:\n{areas_list}")
+
+# دالة للحصول على سعر التوصيل بناءً على العنوان
+def get_delivery_price(title):
+    for area, price in areas.items():
+        if title.startswith(area):
+            return price
+    return 0
+
+# تحديث دالة إنشاء الفاتورة لإضافة سعر التوصيل
 async def show_final_options(chat_id, context, user_id, order_id, message_prefix=None):
     try:
         global daily_profit
         logger.info(f"[{chat_id}] Showing final options for order {order_id} to user {user_id}. User data: {json.dumps(context.user_data.get(user_id), indent=2)}")
-        
         if order_id not in orders:
             logger.warning(f"[{chat_id}] Attempted to show final options for non-existent order_id: {order_id}")
             await context.bot.send_message(chat_id=chat_id, text="عذراً، الطلب الذي تحاول الوصول إليه غير موجود أو تم حذفه. الرجاء بدء طلبية جديدة.")
@@ -360,35 +334,26 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
                 context.user_data[user_id].pop("current_active_order_id", None)
                 context.user_data[user_id].pop("messages_to_delete", None)
             return
-        
         order = orders[order_id]
         invoice = invoice_numbers.get(order_id, "غير معروف")
         total_buy = 0.0
         total_sell = 0.0
-        
         for p in order["products"]:
             if p in pricing.get(order_id, {}) and "buy" in pricing[order_id].get(p, {}) and "sell" in pricing[order_id].get(p, {}):
                 total_buy += pricing[order_id][p]["buy"]
                 total_sell += pricing[order_id][p]["sell"]
-        
         net_profit = total_sell - total_buy
         current_places = orders[order_id].get("places_count", 0)
         extra_cost = calculate_extra(current_places)
-        
-        # استخراج سعر التوصيل بناءً على العنوان
-        delivery_area = order['title'].split("\n")[0].strip()
-        delivery_price = areas.get(delivery_area, 0)
+        delivery_price = get_delivery_price(order['title'])  # الحصول على سعر التوصيل بناءً على العنوان
         final_total = total_sell + extra_cost + delivery_price
-        
         daily_profit += net_profit
         context.application.create_task(save_data_in_background(context))
-        
         customer_invoice_lines = []
         customer_invoice_lines.append(f"**أبو الأكبر للتوصيل**")
         customer_invoice_lines.append(f"رقم الفاتورة: {invoice}")
         customer_invoice_lines.append(f"عنوان الزبون: {order['title']}")
         customer_invoice_lines.append(f"\n*المواد:*")
-        
         running_total_for_customer = 0.0
         for p in order["products"]:
             if p in pricing.get(order_id, {}) and "sell" in pricing[order_id].get(p, {}):
@@ -397,76 +362,26 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
                 customer_invoice_lines.append(f"{p} - {format_float(sell)} = {format_float(running_total_for_customer)}")
             else:
                 customer_invoice_lines.append(f"{p} - (لم يتم تسعيره)")
-        
         customer_invoice_lines.append(f"كلفة تجهيز من - {current_places} محلات {format_float(extra_cost)}")
-        customer_invoice_lines.append(f"سعر التوصيل: {format_float(delivery_price)}")
-        customer_invoice_lines.append(f"\n*المجموع الكلي:* {format_float(final_total)} (مع احتساب عدد المحلات وسعر التوصيل)")
-        
+        customer_invoice_lines.append(f"سعر التوصيل: {delivery_price}")
+        customer_invoice_lines.append(f"*المجموع الكلي:* {format_float(final_total)} (مع احتساب عدد المحلات وسعر التوصيل)")
         customer_final_text = "\n".join(customer_invoice_lines)
-        
-        try:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=customer_final_text,
-                parse_mode="Markdown"
-            )
-            logger.info(f"[{chat_id}] Customer invoice sent as a separate message for order {order_id}.")
-        except Exception as e:
-            logger.error(f"[{chat_id}] Could not send customer invoice as separate message to chat {chat_id}: {e}", exc_info=True)
-            await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من إرسال فاتورة الزبون. الرجاء المحاولة مرة أخرى.")
-        
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=customer_final_text,
+            parse_mode="Markdown"
+        )
+        logger.info(f"[{chat_id}] Customer invoice sent as a separate message for order {order_id}.")
         keyboard = [
             [InlineKeyboardButton("1️⃣ تعديل الأسعار", callback_data=f"edit_prices_{order_id}")],
             [InlineKeyboardButton("3️⃣ إرسال فاتورة الزبون (واتساب)", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={customer_final_text.replace(' ', '%20').replace('\n', '%0A').replace('*', '')}")],
             [InlineKeyboardButton("4️⃣ إنشاء طلب جديد", callback_data="start_new_order")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
         message_text = "افعل ما تريد من الأزرار:\n"
         if message_prefix:
             message_text = message_prefix + "\n" + message_text
-        
-        owner_invoice_details = []
-        owner_invoice_details.append(f"رقم الفاتورة: {invoice}")
-        owner_invoice_details.append(f"عنوان الزبون: {order['title']}")
-        
-        for p in order["products"]:
-            if p in pricing.get(order_id, {}) and "buy" in pricing[order_id].get(p, {}) and "sell" in pricing[order_id].get(p, {}):
-                buy = pricing[order_id][p]["buy"]
-                sell = pricing[order_id][p]["sell"]
-                profit_item = sell - buy
-                owner_invoice_details.append(f"{p} - شراء: {format_float(buy)}, بيع: {format_float(sell)}, ربح: {format_float(profit_item)}")
-            else:
-                owner_invoice_details.append(f"{p} - (لم يتم تسعيره بعد)")
-        
-        owner_invoice_details.append(f"\nالمجموع شراء: {format_float(total_buy)}")
-        owner_invoice_details.append(f"المجموع بيع: {format_float(total_sell)}")
-        owner_invoice_details.append(f"الربح الكلي: {format_float(net_profit)}")
-        owner_invoice_details.append(f"عدد المحلات: {current_places} (+{format_float(extra_cost)})")
-        owner_invoice_details.append(f"سعر التوصيل: {format_float(delivery_price)}")
-        owner_invoice_details.append(f"السعر الكلي: {format_float(final_total)}")
-        
-        final_owner_invoice_text = "\n".join(owner_invoice_details)
-        encoded_owner_invoice = final_owner_invoice_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
-        
-        whatsapp_owner_button_markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton("إرسال فاتورة الإدارة للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}")]
-        ])
-        
-        try:
-            await context.bot.send_message(
-                chat_id=OWNER_ID,
-                text=f"**فاتورة طلبية (الإدارة):**\n{final_owner_invoice_text}",
-                parse_mode="Markdown",
-                reply_markup=whatsapp_owner_button_markup
-            )
-            logger.info(f"[{chat_id}] Admin invoice and WhatsApp button sent to OWNER_ID: {OWNER_ID}")
-        except Exception as e:
-            logger.error(f"[{chat_id}] Could not send admin invoice to OWNER_ID {OWNER_ID}: {e}", exc_info=True)
-            await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من إرسال فاتورة الإدارة إلى خاصك. يرجى التأكد من أنني أستطيع مراسلتك في الخاص (قد تحتاج إلى بدء محادثة معي أولاً).")
-        
         await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup, parse_mode="Markdown")
-        
         if user_id in context.user_data:
             if 'messages_to_delete' in context.user_data[user_id]:
                 for msg_info in context.user_data[user_id]['messages_to_delete']:
@@ -481,10 +396,10 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         logger.error(f"[{chat_id}] Error in show_final_options: {e}", exc_info=True)
         await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء عرض الفاتورة النهائية. الرجاء بدء طلبية جديدة.")
 
-# تحديث main() لتشمل الأوامر الجديدة 
+# تحديث الـ main function لإضافة handlers الجديدة 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
-    
+
     # Handlers لا تدخل في أي ConversationHandler (مثل الـ /start والأوامر الإدارية)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^الارباح$|^ارباح$"), show_profit))
@@ -494,40 +409,23 @@ def main():
     app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
     app.add_handler(CallbackQueryHandler(edit_prices, pattern="^edit_prices_"))
     app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern="^start_new_order$"))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^المناطق$|^مناطق$"), show_areas))  # New handler for areas
-    
-    # ConversationHandler لإدارة المناطق
-    areas_conv_handler = ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(add_area_start, pattern="^add_area$"),
-            CallbackQueryHandler(remove_area_start, pattern="^remove_area$")
-        ],
-        states={
-            ADD_AREA: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, add_area_process),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, add_area_finish)
-            ],
-            REMOVE_AREA: [
-                CallbackQueryHandler(remove_area_process, pattern="^remove_area_")
-            ]
-        },
-        fallbacks=[
-            CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
-        ]
-    )
-    app.add_handler(areas_conv_handler)
-    
-    # ConversationHandler لعدد المحلات
+
+    # Handlers لإدارة المناطق
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^المناطق$|^مناطق$"), lambda u, c: asyncio.run(show_areas(u, c))))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^اضافة منطقة$"), add_area))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^ازالة منطقة$"), remove_area))
+    app.add_handler(CallbackQueryHandler(process_remove_area, pattern="^remove_area_"))
+
+    # ConversationHandlers
     places_conv_handler = ConversationHandler(
         entry_points=[
-            CallbackQueryHandler(handle_places_count_data, pattern=r"^places_data_[a-f0-9]{8}_\d+$")
+            CallbackQueryHandler(handle_places_count_data, pattern=r"^places_data_[a-f0-9]{8}_\d+$"),
         ],
         states={
             ASK_PLACES_COUNT: [
                 MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, handle_places_count_data),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_places_count_data)
-            ]
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_places_count_data),
+            ],
         },
         fallbacks=[
             CommandHandler("cancel", lambda u, c: ConversationHandler.END),
@@ -535,8 +433,7 @@ def main():
         ]
     )
     app.add_handler(places_conv_handler)
-    
-    # ConversationHandler لإنشاء الطلب وتسعير المنتجات
+
     order_creation_conv_handler = ConversationHandler(
         entry_points=[
             MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
@@ -545,11 +442,11 @@ def main():
         states={
             ASK_BUY: [
                 MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_buy_price),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
             ],
             ASK_SELL: [
                 MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_sell_price),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sell_price)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sell_price),
             ]
         },
         fallbacks=[
@@ -558,7 +455,7 @@ def main():
         ]
     )
     app.add_handler(order_creation_conv_handler)
-    
+
     logger.info("Bot is running...")
     app.run_polling()
 
