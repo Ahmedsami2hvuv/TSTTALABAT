@@ -208,6 +208,9 @@ def calculate_extra(places_count):
 # دالة مساعدة لحذف الرسائل في الخلفية
 async def delete_message_in_background(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int):
     try:
+        # التأكد من أن الرسالة موجودة قبل محاولة حذفها
+        # للرسائل التي تم تحريرها أو حذفها من قبل، قد يسبب هذا خطأ
+        # لذلك نستخدم try-except هنا
         await asyncio.sleep(0.1) # زيادة التأخير لضمان ظهور الرسالة الجديدة
         await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
         logger.info(f"Successfully deleted message {message_id} from chat {chat_id} in background.")
@@ -514,15 +517,6 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             })
             return ConversationHandler.END
         
-        if not filters.Regex(r"^\d+(\.\d+)?$").check_update(update):
-            logger.warning(f"[{update.effective_chat.id}] Buy price: Non-numeric input from user {user_id}: '{update.message.text}'")
-            msg_error = await update.message.reply_text("الرجاء إدخال *رقم* صحيح لسعر الشراء.")
-            context.user_data[user_id]['messages_to_delete'].append({
-                'chat_id': msg_error.chat_id, 
-                'message_id': msg_error.message_id
-            })
-            return ASK_BUY 
-
         try:
             price = float(update.message.text.strip())
             if price < 0:
@@ -533,8 +527,8 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     'message_id': msg_error.message_id
                 })
                 return ASK_BUY
-        except ValueError as e: 
-            logger.error(f"[{update.effective_chat.id}] Buy price: ValueError for user {user_id} with input '{update.message.text}': {e}", exc_info=True)
+        except ValueError: 
+            logger.error(f"[{update.effective_chat.id}] Buy price: ValueError for user {user_id} with input '{update.message.text}'", exc_info=True)
             msg_error = await update.message.reply_text("الرجاء إدخال رقم صحيح")
             context.user_data[user_id]['messages_to_delete'].append({
                     'chat_id': msg_error.chat_id, 
@@ -587,12 +581,6 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
             })
             return ConversationHandler.END
 
-        if not filters.Regex(r"^\d+(\.\d+)?$").check_update(update): 
-            logger.warning(f"[{update.effective_chat.id}] Sell price: Non-numeric input from user {user_id}: '{update.message.text}'")
-            msg_error = await update.message.reply_text("الرجاء إدخال *رقم* صحيح لسعر البيع.")
-            context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
-            return ASK_SELL 
-
         try:
             sell_price = float(update.message.text.strip())
             if sell_price < 0:
@@ -600,8 +588,8 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 msg_error = await update.message.reply_text("سعر البيع يجب أن يكون رقماً إيجابياً. بيش راح تبيع بالضبط؟")
                 context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
                 return ASK_SELL 
-        except ValueError as e:
-            logger.error(f"[{update.effective_chat.id}] Sell price: ValueError for user {user_id} with input '{update.message.text}': {e}", exc_info=True)
+        except ValueError:
+            logger.error(f"[{update.effective_chat.id}] Sell price: ValueError for user {user_id} with input '{update.message.text}'", exc_info=True)
             msg_error = await update.message.reply_text("الرجاء إدخال رقم صحيح لسعر البيع. بيش حتبيع؟")
             context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
             return ASK_SELL 
@@ -702,11 +690,9 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
                         return ConversationHandler.END 
 
                     places = int(parts[3])
+                    # Always try to delete the message with the buttons regardless of success
                     if query.message:
-                        try:
-                            await context.bot.delete_message(chat_id=query.message.chat_id, message_id=query.message.message_id)
-                        except Exception as e:
-                            logger.warning(f"[{chat_id}] Could not delete places message {query.message.message_id} directly: {e}. Proceeding.")
+                        context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
 
                 else:
                     raise ValueError(f"Unexpected callback_data format for places count: {query.data}")
@@ -729,12 +715,6 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
                      del context.user_data[user_id]["current_active_order_id"]
                  return ConversationHandler.END 
 
-            if not update.message.text.strip().isdigit(): 
-                logger.warning(f"[{chat_id}] Places count text input: Non-integer input from user {user_id}: '{update.message.text}'")
-                msg_error = await context.bot.send_message(chat_id=chat_id, text="الرجاء إدخال *رقم صحيح* لعدد المحلات.")
-                context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
-                return ASK_PLACES_COUNT 
-            
             try:
                 places = int(update.message.text.strip())
                 if places < 0:
@@ -742,8 +722,8 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
                     msg_error = await context.bot.send_message(chat_id=chat_id, text="عدد المحلات يجب أن يكون رقماً موجباً. الرجاء إدخال عدد المحلات بشكل صحيح.")
                     context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
                     return ASK_PLACES_COUNT 
-            except ValueError as e: 
-                logger.error(f"[{chat_id}] Places count text input: ValueError for user {user_id} with input '{update.message.text}': {e}", exc_info=True)
+            except ValueError: 
+                logger.error(f"[{chat_id}] Places count text input: ValueError for user {user_id} with input '{update.message.text}'", exc_info=True)
                 msg_error = await context.bot.send_message(chat_id=chat_id, text="الرجاء إدخال عدد صحيح لعدد المحلات.")
                 context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
                 return ASK_PLACES_COUNT 
@@ -755,13 +735,12 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
                 del context.user_data[user_id]["current_active_order_id"]
             return ConversationHandler.END 
 
+        # Delete the "places count message" if it exists
         if 'places_count_message' in context.user_data[user_id]:
             msg_info = context.user_data[user_id]['places_count_message']
-            try:
-                await context.bot.delete_message(chat_id=msg_info['chat_id'], message_id=msg_info['message_id'])
-            except Exception as e:
-                logger.warning(f"[{chat_id}] Could not delete places count message: {e}")
+            context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
             del context.user_data[user_id]['places_count_message']
+
 
         orders[order_id_to_process]["places_count"] = places
         context.application.create_task(save_data_in_background(context))
@@ -827,20 +806,16 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         
         # إضافة ربح المنطقة إلى الربح اليومي إذا كانت المنطقة معرّفة
         # نعتبر ان ربح المنطقة هو سعر التوصيل نفسه
-        if delivery_cost_from_region > 0 and 'profit_added' not in order:
+        if 'profit_added' not in order:
             daily_profit += net_profit + delivery_cost_from_region # إضافة ربح المنتجات + ربح المنطقة
             orders[order_id]['profit_added'] = True # لضمان عدم تكرار إضافة الربح
             context.application.create_task(save_data_in_background(context))
-        elif 'profit_added' not in order: # إذا ماكو ربح منطقة بس ربح منتجات
-             daily_profit += net_profit
-             orders[order_id]['profit_added'] = True
-             context.application.create_task(save_data_in_background(context))
-
+        
         logger.info(f"[{chat_id}] Daily profit after processing order {order_id}: {daily_profit}")
         context.application.create_task(save_data_in_background(context)) # حفظ التغييرات على الربح اليومي
 
 
-                customer_invoice_lines = []
+        customer_invoice_lines = []
         customer_invoice_lines.append(f"**أبو الأكبر للتوصيل**")
         customer_invoice_lines.append(f"رقم الفاتورة: {invoice}")
         customer_invoice_lines.append(f"عنوان الزبون: {order['title']}")
@@ -1229,11 +1204,6 @@ async def receive_region_price(update: Update, context: ContextTypes.DEFAULT_TYP
             context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
             return ConversationHandler.END
 
-        if not filters.Regex(r"^\d+(\.\d+)?$").check_update(update):
-            msg_error = await update.message.reply_text("الرجاء إدخال *رقم* صحيح لسعر التوصيل.")
-            context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
-            return ASK_REGION_PRICE
-        
         try:
             price = float(update.message.text.strip())
             if price < 0:
@@ -1340,7 +1310,8 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^صفر$|^تصفير$"), reset_all))
     app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^التقارير$|^تقرير$|^تقارير$"), show_report))
-    app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
+    # تم تغيير الفلتر هنا ليكون أكثر دقة
+    app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE & filters.TEXT, edited_message)) 
     app.add_handler(CallbackQueryHandler(edit_prices, pattern="^edit_prices_"))
     app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern="^start_new_order$"))
     
@@ -1355,12 +1326,15 @@ def main():
         ],
         states={
             ASK_PLACES_COUNT: [
-                MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, handle_places_count_data),
+                # فلتر لاستقبال الأرقام فقط (لعدد المحلات)
+                MessageHandler(filters.TEXT & filters.Regex(r"^\d+$") & ~filters.COMMAND, handle_places_count_data),
+                # فلتر للتعامل مع أي نص آخر إذا لم يكن رقمًا صحيحًا
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_places_count_data), 
             ],
         },
         fallbacks=[
             CommandHandler("cancel", lambda u, c: ConversationHandler.END),
+            # إضافة MessageHandler للـ fallbacks للتعامل مع أي رسائل غير متوقعة وإنهاء المحادثة
             MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
         ]
     )
@@ -1374,7 +1348,12 @@ def main():
         ],
         states={
             ASK_REGION_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_region_name)],
-            ASK_REGION_PRICE: [MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_region_price)],
+            ASK_REGION_PRICE: [
+                # فلتر لاستقبال الأرقام العشرية أو الصحيحة
+                MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_region_price),
+                # فلتر للتعامل مع أي نص آخر إذا لم يكن رقمًا صحيحًا
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_region_price),
+            ],
             REMOVE_REGION: [CallbackQueryHandler(process_remove_region, pattern="^remove_region_.+$|^cancel_remove_region$")]
         },
         fallbacks=[
@@ -1392,11 +1371,15 @@ def main():
         ],
         states={
             ASK_BUY: [
+                # فلتر لاستقبال الأرقام العشرية أو الصحيحة
                 MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_buy_price),
+                # فلتر للتعامل مع أي نص آخر إذا لم يكن رقمًا صحيحًا
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
             ],
             ASK_SELL: [
+                # فلتر لاستقبال الأرقام العشرية أو الصحيحة
                 MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_sell_price),
+                # فلتر للتعامل مع أي نص آخر إذا لم يكن رقمًا صحيحًا
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sell_price),
             ]
         },
