@@ -1113,7 +1113,7 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"[{update.effective_chat.id}] Error in show_report: {e}", exc_info=True)
         await update.message.reply_text("عذراً، حدث خطأ أثناء عرض التقرير.")
-
+zone_handlers = []
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
@@ -1129,6 +1129,7 @@ def main():
     app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
     app.add_handler(CallbackQueryHandler(edit_prices, pattern="^edit_prices_"))
     app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern="^start_new_order$"))
+    app.run_polling()
 
     # ConversationHandler لعدد المحلات
     # يجب أن يكون هذا الـ ConversationHandler قبل الـ ConversationHandler الخاص بإنشاء الطلب
