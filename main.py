@@ -28,6 +28,7 @@ INVOICE_NUMBERS_FILE = os.path.join(DATA_DIR, "invoice_numbers.json")
 DAILY_PROFIT_FILE = os.path.join(DATA_DIR, "daily_profit.json")
 COUNTER_FILE = os.path.join(DATA_DIR, "invoice_counter.txt")
 LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
+DELIVERY_PRICING_FILE = os.path.join(DATA_DIR, "delivery_pricing.json") # ملف جديد لأسعار التوصيل
 
 # تهيئة المتغيرات العامة
 orders = {}
@@ -35,6 +36,7 @@ pricing = {}
 invoice_numbers = {}
 daily_profit = 0.0
 last_button_message = {}
+delivery_pricing = {} # متغير جديد لأسعار التوصيل
 
 # متغيرات الحفظ المؤجل
 save_timer = None
@@ -43,7 +45,7 @@ save_lock = threading.Lock()
 
 # تحميل البيانات عند بدء تشغيل البوت
 def load_data():
-    global orders, pricing, invoice_numbers, daily_profit, last_button_message
+    global orders, pricing, invoice_numbers, daily_profit, last_button_message, delivery_pricing
 
     os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -83,7 +85,11 @@ def load_data():
     last_button_message.clear()
     last_button_message.update({str(k): v for k, v in last_button_message_temp.items()})
 
-    logger.info(f"Initial load complete. Orders: {len(orders)}, Pricing entries: {len(pricing)}, Daily Profit: {daily_profit}")
+    delivery_pricing_temp = load_json_file(DELIVERY_PRICING_FILE, {}, "delivery_pricing")
+    delivery_pricing.clear()
+    delivery_pricing.update({str(k): v for k, v in delivery_pricing_temp.items()})
+
+    logger.info(f"Initial load complete. Orders: {len(orders)}, Pricing entries: {len(pricing)}, Daily Profit: {daily_profit}, Delivery Pricing entries: {len(delivery_pricing)}")
 
 
 # حفظ البيانات
@@ -112,6 +118,10 @@ def _save_data_to_disk():
             with open(LAST_BUTTON_MESSAGE_FILE + ".tmp", "w") as f:
                 json.dump(last_button_message, f, indent=4)
             os.replace(LAST_BUTTON_MESSAGE_FILE + ".tmp", LAST_BUTTON_MESSAGE_FILE)
+
+            with open(DELIVERY_PRICING_FILE + ".tmp", "w") as f:
+                json.dump(delivery_pricing, f, indent=4)
+            os.replace(DELIVERY_PRICING_FILE + ".tmp", DELIVERY_PRICING_FILE)
 
             logger.info("All data saved to disk successfully.")
             logger.info(f"Pricing state after _save_data_to_disk(): {pricing}")
@@ -153,7 +163,8 @@ def get_invoice_number():
 load_data()
 
 # حالات المحادثة
-ASK_BUY, ASK_SELL, ASK_PLACES_COUNT = range(3) # أضفنا حالة جديدة لعدد المحلات
+ASK_BUY, ASK_SELL, ASK_PLACES_COUNT = range(3)
+ASK_REGION_NAME, ASK_REGION_PRICE, REMOVE_REGION = range(3, 6) # حالات جديدة للمناطق
 
 # جلب التوكن ومعرف المالك من متغيرات البيئة
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -219,15 +230,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data[user_id].pop("buy_price", None) # Clear buy_price too
         logger.info(f"Cleared order-specific user_data for user {user_id} on /start command. User data after clearing: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
     
-    await update.message.reply_text("أهلاً بك يا أبا الأكبر! لإعداد طلبية، دز الطلبية كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", parse_mode="Markdown")
+    await update.message.reply_text("أهلاً بك يا أبا الأكبر! لإعداد طلبية، دز الطلبية كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون (بدايه السطر يجب ان تكون اسم المنطقة).\n*الأسطر الباقية:* كل منتج بسطر واحد.", parse_mode="Markdown")
     return ConversationHandler.END
 
 async def receive_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         logger.info(f"[{update.effective_chat.id}] Processing order from: {update.effective_user.id} - Message ID: {update.message.message_id}. User data: {json.dumps(context.user_data.get(str(update.effective_user.id), {}), indent=2)}")
         await process_order(update, context, update.message)
-        # هذا ينهي المحادثة الحالية بعد معالجة الطلب كرسالة جديدة،
-        # بحيث لا يتدخل في حالة الـ "product_selected" إذا تم النقر على زر
         return ConversationHandler.END
     except Exception as e:
         logger.error(f"[{update.effective_chat.id}] Error in receive_order: {e}", exc_info=True)
@@ -243,7 +252,6 @@ async def edited_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"[{update.effective_chat.id}] Error in edited_message: {e}", exc_info=True)
         await update.edited_message.reply_text("عذراً، حدث خطأ أثناء معالجة التعديل. الرجاء المحاولة مرة أخرى.")
-        # No specific return for ConversationHandler here as it's not an entry point of a state
 
 async def process_order(update, context, message, edited=False):
     user_id = str(message.from_user.id)
@@ -255,7 +263,6 @@ async def process_order(update, context, message, edited=False):
         return
 
     title = lines[0]
-    # ***** تعديل: تنظيف أسماء المنتجات عند الاستلام *****
     products = [p.strip() for p in lines[1:] if p.strip()]
 
     if not products:
@@ -278,19 +285,53 @@ async def process_order(update, context, message, edited=False):
                     logger.warning(f"Message ID {message.message_id} found in last_button_message but order {oid} is missing. Treating as new.")
                     order_id = None 
                     
+    # تحديد سعر التوصيل للمنطقة
+    delivery_cost_for_region = 0.0
+    region_name = ""
+    # نحاول نلقى اسم المنطقة بأول كلمة من العنوان
+    first_word_of_title = title.split(' ')[0].strip().lower()
+
+    found_region = False
+    for region, price in delivery_pricing.items():
+        if first_word_of_title == region.lower():
+            delivery_cost_for_region = price
+            region_name = region
+            found_region = True
+            break
+    
+    if not found_region:
+        # إذا ما لقينا المنطقة بالضبط، نحاول ندور على كلمة داخل العنوان تطابق اسم منطقة
+        # هذا يسمح للعنوان يبدأ بأي شي ويحتوي على اسم المنطقة بعدين
+        # مثال: "طلب من ابو محمد لـ محيلة شارع المشروع"
+        for region, price in delivery_pricing.items():
+            if region.lower() in title.lower():
+                delivery_cost_for_region = price
+                region_name = region
+                found_region = True
+                break
+
     if not order_id: 
         order_id = str(uuid.uuid4())[:8]
         invoice_no = get_invoice_number()
-        orders[order_id] = {"user_id": user_id, "title": title, "products": products, "places_count": 0} 
+        orders[order_id] = {
+            "user_id": user_id, 
+            "title": title, 
+            "products": products, 
+            "places_count": 0, 
+            "delivery_cost": delivery_cost_for_region, # حفظ سعر التوصيل الخاص بالمنطقة
+            "region_name": region_name # حفظ اسم المنطقة المطابقة
+        } 
         pricing[order_id] = {p: {} for p in products}
         invoice_numbers[order_id] = invoice_no
-        logger.info(f"Created new order {order_id} for user {user_id}.")
+        logger.info(f"Created new order {order_id} for user {user_id}. Region: {region_name}, Delivery cost: {delivery_cost_for_region}.")
     else: 
         old_products = set(orders[order_id].get("products", []))
         new_products = set(products)
         
         orders[order_id]["title"] = title
         orders[order_id]["products"] = products
+        orders[order_id]["delivery_cost"] = delivery_cost_for_region # تحديث سعر التوصيل عند التعديل
+        orders[order_id]["region_name"] = region_name
 
         for p in new_products:
             if p not in pricing.get(order_id, {}):
@@ -301,7 +342,7 @@ async def process_order(update, context, message, edited=False):
                 if p in pricing[order_id]:
                     del pricing[order_id][p]
                     logger.info(f"Removed pricing for product '{p}' from order {order_id}.")
-        logger.info(f"Updated existing order {order_id}. Initiator: {user_id}.")
+        logger.info(f"Updated existing order {order_id}. Initiator: {user_id}. Region: {region_name}, Delivery cost: {delivery_cost_for_region}.")
         
     context.application.create_task(save_data_in_background(context))
     
@@ -389,7 +430,6 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         try:
             order_id, product = query.data.split("|", 1) 
-            # ***** تعديل: تنظيف اسم المنتج القادم من الـ callback_data أيضاً *****
             product = product.strip() 
         except ValueError as e:
             logger.error(f"[{query.message.chat_id}] Failed to parse callback_data for product selection: {query.data}. Error: {e}", exc_info=True)
@@ -474,7 +514,6 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             })
             return ConversationHandler.END
         
-        # Regex to accept integers or floats
         if not filters.Regex(r"^\d+(\.\d+)?$").check_update(update):
             logger.warning(f"[{update.effective_chat.id}] Buy price: Non-numeric input from user {user_id}: '{update.message.text}'")
             msg_error = await update.message.reply_text("الرجاء إدخال *رقم* صحيح لسعر الشراء.")
@@ -528,7 +567,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         context.user_data[user_id]['messages_to_delete'].append({'chat_id': update.message.chat_id, 'message_id': update.message.message_id})
 
         data = context.user_data.get(user_id)
-        if not data or "order_id" not in data or "product" not in data or "buy_price" not in data: # Added buy_price check
+        if not data or "order_id" not in data or "product" not in data or "buy_price" not in data:
             logger.error(f"[{update.effective_chat.id}] Sell price: Missing order_id, product, or buy_price in user_data for user {user_id}. User data: {json.dumps(data, indent=2)}")
             msg_error = await update.message.reply_text("عذراً، لم أتمكن من تحديد الطلبية أو المنتج لتسعيره. الرجاء اضغط على المنتج من القائمة أولاً لتحديد سعره، أو ابدأ طلبية جديدة.", parse_mode="Markdown")
             context.user_data[user_id]['messages_to_delete'].append({
@@ -548,7 +587,6 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
             })
             return ConversationHandler.END
 
-        # Regex to accept integers or floats
         if not filters.Regex(r"^\d+(\.\d+)?$").check_update(update): 
             logger.warning(f"[{update.effective_chat.id}] Sell price: Non-numeric input from user {user_id}: '{update.message.text}'")
             msg_error = await update.message.reply_text("الرجاء إدخال *رقم* صحيح لسعر البيع.")
@@ -583,12 +621,10 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 break
                 
         if all_priced:
-            # هنا ننهي ConversationHandler الخاص بالأسعار
-            # وننتقل إلى ConversationHandler الخاص بعدد المحلات
             context.user_data[user_id]["current_active_order_id"] = order_id
             logger.info(f"[{update.effective_chat.id}] All products priced for order {order_id}. Requesting places count. Transitioning to ASK_PLACES_COUNT.")
             await request_places_count_standalone(update.effective_chat.id, context, user_id, order_id)
-            return ConversationHandler.END # ننهي محادثة تسعير المنتجات
+            return ConversationHandler.END 
         else:
             confirmation_msg = f"تم حفظ السعر لـ *'{product}'*."
             logger.info(f"[{update.effective_chat.id}] Price saved for '{product}' in order {order_id}. Showing updated buttons with confirmation. User {user_id} can select next product. Staying in conversation.")
@@ -618,7 +654,6 @@ async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT
             reply_markup=reply_markup
         )
         
-        # تخزين معرف الرسالة في user_data للرجوع إليها لاحقاً
         context.user_data[user_id]['places_count_message'] = {
             'chat_id': msg_places.chat_id,
             'message_id': msg_places.message_id
@@ -630,9 +665,6 @@ async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT
                 context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
             context.user_data[user_id]['messages_to_delete'].clear()
         
-        # مهم جداً: هنا لا نرجع ASK_PLACES_COUNT. هذا يتم التعامل معه بواسطة ConversationHandler الخاص به.
-        # هذه الدالة فقط تطلب من المستخدم إدخال عدد المحلات.
-        # الإدخال الفعلي (نص أو زر) سيتم التقاطه بواسطة ConversationHandler المناسب.
     except Exception as e:
         logger.error(f"[{chat_id}] Error in request_places_count_standalone: {e}", exc_info=True)
         await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء طلب عدد المحلات. الرجاء بدء طلبية جديدة.")
@@ -672,7 +704,6 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
                     places = int(parts[3])
                     if query.message:
                         try:
-                            # حذف رسالة الأزرار بعد الاختيار
                             await context.bot.delete_message(chat_id=query.message.chat_id, message_id=query.message.message_id)
                         except Exception as e:
                             logger.warning(f"[{chat_id}] Could not delete places message {query.message.message_id} directly: {e}. Proceeding.")
@@ -724,7 +755,6 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
                 del context.user_data[user_id]["current_active_order_id"]
             return ConversationHandler.END 
 
-        # حذف رسالة الأزرار الخاصة بعدد المحلات إذا كانت موجودة ولم يتم حذفها عن طريق الـ callback
         if 'places_count_message' in context.user_data[user_id]:
             msg_info = context.user_data[user_id]['places_count_message']
             try:
@@ -784,16 +814,31 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         
         current_places = orders[order_id].get("places_count", 0) 
         extra_cost = calculate_extra(current_places)
-        final_total = total_sell + extra_cost
+        
+        delivery_cost_from_region = order.get("delivery_cost", 0.0) # سعر التوصيل من المنطقة
+        region_name = order.get("region_name", "غير محددة")
 
+        final_total = total_sell + extra_cost + delivery_cost_from_region # إضافة سعر التوصيل الإجمالي
+        
         # الأرباح لا تضاف إلا مرة واحدة عند اكتمال الطلب لأول مرة.
-        # يجب أن نتأكد أننا لا نضيف الربح إذا تم تعديل الطلب فقط.
         # حاليا، إذا تم استدعاء هذه الدالة أكثر من مرة لنفس الطلب، سيتم إضافة الربح في كل مرة.
         # للتبسيط، لن نغير سلوك إضافة الربح حالياً، لكن يجب ملاحظة ذلك.
-        logger.info(f"[{chat_id}] Daily profit before addition for order {order_id}: {daily_profit}")
-        daily_profit += net_profit
-        logger.info(f"[{chat_id}] Daily profit after adding {net_profit} for order {order_id}: {daily_profit}")
-        context.application.create_task(save_data_in_background(context))
+        # يمكن إضافة flag مثل 'profit_added' في الطلب لتجنب الإضافة المتكررة.
+        
+        # إضافة ربح المنطقة إلى الربح اليومي إذا كانت المنطقة معرّفة
+        # نعتبر ان ربح المنطقة هو سعر التوصيل نفسه
+        if delivery_cost_from_region > 0 and 'profit_added' not in order:
+            daily_profit += net_profit + delivery_cost_from_region # إضافة ربح المنتجات + ربح المنطقة
+            orders[order_id]['profit_added'] = True # لضمان عدم تكرار إضافة الربح
+            context.application.create_task(save_data_in_background(context))
+        elif 'profit_added' not in order: # إذا ماكو ربح منطقة بس ربح منتجات
+             daily_profit += net_profit
+             orders[order_id]['profit_added'] = True
+             context.application.create_task(save_data_in_background(context))
+
+        logger.info(f"[{chat_id}] Daily profit after processing order {order_id}: {daily_profit}")
+        context.application.create_task(save_data_in_background(context)) # حفظ التغييرات على الربح اليومي
+
 
         customer_invoice_lines = []
         customer_invoice_lines.append(f"**أبو الأكبر للتوصيل**") 
@@ -806,12 +851,14 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             if p in pricing.get(order_id, {}) and "sell" in pricing[order_id].get(p, {}):
                 sell = pricing[order_id][p]["sell"]
                 running_total_for_customer += sell
-                customer_invoice_lines.append(f"{p} - {format_float(sell)} = {format_float(running_total_for_customer)}")
+                customer_invoice_lines.append(f"{p} - {format_float(sell)}")
             else:
                 customer_invoice_lines.append(f"{p} - (لم يتم تسعيره)")
         
-        customer_invoice_lines.append(f"كلفة تجهيز من - {current_places} محلات {format_float(extra_cost)} = {format_float(final_total)}")
-        customer_invoice_lines.append(f"\n*المجموع الكلي:* {format_float(final_total)} (مع احتساب عدد المحلات)") 
+        customer_invoice_lines.append(f"\n*المجموع الفرعي (مواد فقط):* {format_float(running_total_for_customer)}")
+        customer_invoice_lines.append(f"كلفة توصيل المنطقة ({region_name}): {format_float(delivery_cost_from_region)}")
+        customer_invoice_lines.append(f"كلفة تجهيز من - {current_places} محلات: {format_float(extra_cost)}")
+        customer_invoice_lines.append(f"\n*المجموع الكلي:* {format_float(final_total)}") 
         
         customer_final_text = "\n".join(customer_invoice_lines)
 
@@ -840,6 +887,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         owner_invoice_details = []
         owner_invoice_details.append(f"رقم الفاتورة: {invoice}")
         owner_invoice_details.append(f"عنوان الزبون: {order['title']}")
+        owner_invoice_details.append(f"اسم المنطقة: {region_name} | سعر التوصيل: {format_float(delivery_cost_from_region)}") # تفاصيل المنطقة
         for p in order["products"]:
             if p in pricing.get(order_id, {}) and "buy" in pricing[order_id].get(p, {}) and "sell" in pricing[order_id].get(p, {}):
                 buy = pricing[order_id][p]["buy"]
@@ -850,9 +898,10 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
                 owner_invoice_details.append(f"{p} - (لم يتم تسعيره بعد)")
         owner_invoice_details.append(f"\nالمجموع شراء: {format_float(total_buy)}")
         owner_invoice_details.append(f"المجموع بيع: {format_float(total_sell)}")
-        owner_invoice_details.append(f"الربح الكلي: {format_float(net_profit)}")
-        owner_invoice_details.append(f"عدد المحلات: {current_places} (+{format_float(extra_cost)})")
-        owner_invoice_details.append(f"السعر الكلي: {format_float(final_total)}")
+        owner_invoice_details.append(f"الربح الكلي للمنتجات: {format_float(net_profit)}")
+        owner_invoice_details.append(f"كلفة تجهيز من: {current_places} محلات (+{format_float(extra_cost)})")
+        owner_invoice_details.append(f"السعر الكلي للزبون: {format_float(final_total)}")
+        owner_invoice_details.append(f"الربح الصافي النهائي (منتجات + توصيل): {format_float(net_profit + delivery_cost_from_region)}")
         
         final_owner_invoice_text = "\n".join(owner_invoice_details)
         
@@ -950,7 +999,7 @@ async def start_new_order_callback(update: Update, context: ContextTypes.DEFAULT
         if query.message:
             context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
 
-        await query.message.reply_text("تمام، دز الطلبية الجديدة كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", parse_mode="Markdown")
+        await query.message.reply_text("تمام، دز الطلبية الجديدة كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون (بدايه السطر يجب ان تكون اسم المنطقة).\n*الأسطر الباقية:* كل منتج بسطر واحد.", parse_mode="Markdown")
         
         return ConversationHandler.END
     except Exception as e:
@@ -996,13 +1045,14 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if query.data == "confirm_reset":
-            global daily_profit, orders, pricing, invoice_numbers, last_button_message
+            global daily_profit, orders, pricing, invoice_numbers, last_button_message, delivery_pricing
             logger.info(f"Daily profit before reset: {daily_profit}")
             daily_profit = 0.0
             orders.clear()
             pricing.clear()
             invoice_numbers.clear()
             last_button_message.clear()
+            delivery_pricing.clear() # مسح بيانات المناطق أيضاً
             
             try:
                 with open(COUNTER_FILE, "w") as f:
@@ -1012,7 +1062,7 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             _save_data_to_disk()
             logger.info(f"Daily profit after reset: {daily_profit}")
-            await query.edit_message_text("تم تصفير الأرباح ومسح كل الطلبات بنجاح.")
+            await query.edit_message_text("تم تصفير الأرباح ومسح كل الطلبات وبيانات المناطق بنجاح.")
         elif query.data == "cancel_reset":
             await query.edit_message_text("تم إلغاء عملية التصفير.")
     except Exception as e:
@@ -1029,6 +1079,7 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_products = 0
         total_buy_all_orders = 0.0 
         total_sell_all_orders = 0.0 
+        total_delivery_cost_all_orders = 0.0 # مجموع كلفة التوصيل
         product_counter = Counter()
         details = []
 
@@ -1036,6 +1087,8 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             invoice = invoice_numbers.get(order_id, "غير معروف")
             details.append(f"\n**فاتورة رقم:** {invoice}")
             details.append(f"**عنوان الزبون:** {order['title']}")
+            details.append(f"**المنطقة:** {order.get('region_name', 'غير محددة')} | **كلفة التوصيل:** {format_float(order.get('delivery_cost', 0.0))}") # تفاصيل المنطقة
+            total_delivery_cost_all_orders += order.get('delivery_cost', 0.0)
             
             order_buy = 0.0
             order_sell = 0.0
@@ -1059,7 +1112,8 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             total_buy_all_orders += order_buy
             total_sell_all_orders += order_sell
-            details.append(f"  *ربح هذه الطلبية:* {format_float(order_sell - order_buy)}")
+            details.append(f"  *ربح هذه الطلبية (منتجات فقط):* {format_float(order_sell - order_buy)}")
+            details.append(f"  *ربح الطلبية الكلي (منتجات + توصيل):* {format_float((order_sell - order_buy) + order.get('delivery_cost', 0.0))}")
 
         top_product_str = "لا يوجد"
         if product_counter:
@@ -1071,9 +1125,10 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"**إجمالي عدد الطلبات المعالجة:** {total_orders}\n"
             f"**إجمالي عدد المنتجات المباعة (في الطلبات المعالجة):** {total_products}\n"
             f"**أكثر منتج تم طلبه:** {top_product_str}\n\n"
-            f"**مجموع الشراء الكلي (للطلبات المعالجة):** {format_float(total_buy_all_orders)}\n"
-            f"**مجموع البيع الكلي (للطلبات المعالجة):** {format_float(total_sell_all_orders)}\n"
-            f"**صافي الربح الكلي (للطلبات المعالجة):** {format_float(total_sell_all_orders - total_buy_all_orders)}\n" 
+            f"**مجموع الشراء الكلي (للمنتجات):** {format_float(total_buy_all_orders)}\n"
+            f"**مجموع البيع الكلي (للمنتجات):** {format_float(total_sell_all_orders)}\n"
+            f"**مجموع كلفة التوصيل الكلي:** {format_float(total_delivery_cost_all_orders)}\n"
+            f"**صافي الربح الكلي (للمنتجات):** {format_float(total_sell_all_orders - total_buy_all_orders)}\n" 
             f"**الربح التراكمي في البوت (منذ آخر تصفير):** {format_float(daily_profit)} دينار\n\n"
             f"**--- تفاصيل الطلبات ---**\n" + "\n".join(details)
         )
@@ -1082,10 +1137,202 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"[{update.effective_chat.id}] Error in show_report: {e}", exc_info=True)
         await update.message.reply_text("عذراً، حدث خطأ أثناء عرض التقرير.")
 
+# دوال إدارة المناطق
+async def show_regions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        user_id = str(update.message.from_user.id)
+        if user_id != str(OWNER_ID):
+            await update.message.reply_text("عذراً، هذا الأمر متاح للمالك فقط.")
+            return
+
+        regions_list = ["*قائمة المناطق وأسعار التوصيل:*\n"]
+        if delivery_pricing:
+            for region, price in delivery_pricing.items():
+                regions_list.append(f"- {region}: {format_float(price)} دينار")
+        else:
+            regions_list.append("لا توجد مناطق محفوظة حالياً.")
+        
+        keyboard = [
+            [InlineKeyboardButton("➕ إضافة منطقة جديدة", callback_data="add_region")],
+            [InlineKeyboardButton("➖ إزالة منطقة", callback_data="remove_region")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text("\n".join(regions_list), reply_markup=reply_markup, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"[{update.effective_chat.id}] Error in show_regions: {e}", exc_info=True)
+        await update.message.reply_text("عذراً، حدث خطأ أثناء عرض قائمة المناطق.")
+
+async def add_region_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        query = update.callback_query
+        await query.answer()
+        user_id = str(query.from_user.id)
+        if user_id != str(OWNER_ID):
+            await query.edit_message_text("عذراً، لا تملك صلاحية لتنفيذ هذا الأمر.")
+            return
+
+        context.user_data.setdefault(user_id, {})['messages_to_delete'] = []
+        if query.message:
+            context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
+
+        msg = await query.message.reply_text("زين، دزلي اسم المنطقة الجديدة:")
+        context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg.chat_id, 'message_id': msg.message_id})
+        return ASK_REGION_NAME
+    except Exception as e:
+        logger.error(f"[{update.effective_chat.id}] Error in add_region_callback: {e}", exc_info=True)
+        await update.callback_query.message.reply_text("عذراً، حدث خطأ أثناء محاولة إضافة منطقة.")
+        return ConversationHandler.END
+
+async def receive_region_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        user_id = str(update.message.from_user.id)
+        if user_id != str(OWNER_ID):
+            await update.message.reply_text("عذراً، لا تملك صلاحية لتنفيذ هذا الأمر.")
+            return
+
+        context.user_data.setdefault(user_id, {})
+        context.user_data[user_id]['messages_to_delete'].append({'chat_id': update.message.chat_id, 'message_id': update.message.message_id})
+
+        region_name = update.message.text.strip()
+        if not region_name:
+            msg_error = await update.message.reply_text("اسم المنطقة ما يصير فارغ. دزلي اسم المنطقة الصحيح:")
+            context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
+            return ASK_REGION_NAME
+        
+        context.user_data[user_id]["new_region_name"] = region_name
+        
+        msg = await update.message.reply_text(f"تمام، بيش سعر توصيل *'{region_name}'*؟ (مثلاً: 3 أو 5)", parse_mode="Markdown")
+        context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg.chat_id, 'message_id': msg.message_id})
+        return ASK_REGION_PRICE
+    except Exception as e:
+        logger.error(f"[{update.effective_chat.id}] Error in receive_region_name: {e}", exc_info=True)
+        await update.message.reply_text("عذراً، حدث خطأ أثناء إدخال اسم المنطقة.")
+        return ConversationHandler.END
+
+async def receive_region_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        user_id = str(update.message.from_user.id)
+        if user_id != str(OWNER_ID):
+            await update.message.reply_text("عذراً، لا تملك صلاحية لتنفيذ هذا الأمر.")
+            return
+
+        context.user_data.setdefault(user_id, {})
+        context.user_data[user_id]['messages_to_delete'].append({'chat_id': update.message.chat_id, 'message_id': update.message.message_id})
+
+        region_name = context.user_data.get(user_id, {}).get("new_region_name")
+        if not region_name:
+            logger.error(f"[{update.effective_chat.id}] Missing region name in user_data for user {user_id} when receiving price.")
+            msg_error = await update.message.reply_text("عذراً، اسم المنطقة مفقود. الرجاء البدء من جديد باستخدام /مناطق.")
+            context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
+            return ConversationHandler.END
+
+        if not filters.Regex(r"^\d+(\.\d+)?$").check_update(update):
+            msg_error = await update.message.reply_text("الرجاء إدخال *رقم* صحيح لسعر التوصيل.")
+            context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
+            return ASK_REGION_PRICE
+        
+        try:
+            price = float(update.message.text.strip())
+            if price < 0:
+                msg_error = await update.message.reply_text("السعر يجب أن يكون موجباً. دزلي سعر التوصيل الصحيح:")
+                context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
+                return ASK_REGION_PRICE
+        except ValueError:
+            msg_error = await update.message.reply_text("الرجاء إدخال رقم صحيح لسعر التوصيل.")
+            context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
+            return ASK_REGION_PRICE
+        
+        delivery_pricing[region_name] = price
+        context.application.create_task(save_data_in_background(context))
+
+        if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
+            for msg_info in context.user_data[user_id]['messages_to_delete']:
+                context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
+            context.user_data[user_id]['messages_to_delete'].clear()
+        
+        await update.message.reply_text(f"تمت إضافة منطقة *'{region_name}'* بسعر توصيل *{format_float(price)}* دينار بنجاح.", parse_mode="Markdown")
+        del context.user_data[user_id]["new_region_name"]
+        return ConversationHandler.END
+    except Exception as e:
+        logger.error(f"[{update.effective_chat.id}] Error in receive_region_price: {e}", exc_info=True)
+        await update.message.reply_text("عذراً، حدث خطأ أثناء إدخال سعر المنطقة.")
+        return ConversationHandler.END
+
+async def remove_region_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        query = update.callback_query
+        await query.answer()
+        user_id = str(query.from_user.id)
+        if user_id != str(OWNER_ID):
+            await query.edit_message_text("عذراً، لا تملك صلاحية لتنفيذ هذا الأمر.")
+            return
+
+        context.user_data.setdefault(user_id, {})['messages_to_delete'] = []
+        if query.message:
+            context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
+
+        if not delivery_pricing:
+            await query.message.reply_text("ماكو مناطق حالياً حتى تحذفها.")
+            return ConversationHandler.END
+
+        buttons = []
+        for region in delivery_pricing.keys():
+            buttons.append([InlineKeyboardButton(region, callback_data=f"remove_region_{region}")])
+        buttons.append([InlineKeyboardButton("إلغاء", callback_data="cancel_remove_region")])
+        
+        reply_markup = InlineKeyboardMarkup(buttons)
+        msg = await query.message.reply_text("اختار المنطقة اللي تريد تحذفها:", reply_markup=reply_markup)
+        context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg.chat_id, 'message_id': msg.message_id})
+        return REMOVE_REGION
+    except Exception as e:
+        logger.error(f"[{update.effective_chat.id}] Error in remove_region_callback: {e}", exc_info=True)
+        await update.callback_query.message.reply_text("عذراً، حدث خطأ أثناء محاولة إزالة منطقة.")
+        return ConversationHandler.END
+
+async def process_remove_region(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        query = update.callback_query
+        await query.answer()
+        user_id = str(query.from_user.id)
+        if user_id != str(OWNER_ID):
+            await query.edit_message_text("عذراً، لا تملك صلاحية لتنفيذ هذا الأمر.")
+            return
+
+        context.user_data.setdefault(user_id, {})
+        if 'messages_to_delete' not in context.user_data[user_id]:
+            context.user_data[user_id]['messages_to_delete'] = []
+        
+        if query.data.startswith("remove_region_"):
+            region_to_remove = query.data.replace("remove_region_", "")
+            if region_to_remove in delivery_pricing:
+                del delivery_pricing[region_to_remove]
+                context.application.create_task(save_data_in_background(context))
+                if query.message:
+                    context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
+                await query.message.reply_text(f"تم حذف منطقة *'{region_to_remove}'* بنجاح.", parse_mode="Markdown")
+            else:
+                await query.message.reply_text(f"المنطقة *'{region_to_remove}'* غير موجودة.", parse_mode="Markdown")
+        elif query.data == "cancel_remove_region":
+            if query.message:
+                context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
+            await query.message.reply_text("تم إلغاء عملية الحذف.")
+        
+        if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
+            for msg_info in context.user_data[user_id]['messages_to_delete']:
+                context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
+            context.user_data[user_id]['messages_to_delete'].clear()
+
+        return ConversationHandler.END
+    except Exception as e:
+        logger.error(f"[{update.effective_chat.id}] Error in process_remove_region: {e}", exc_info=True)
+        await update.callback_query.message.reply_text("عذراً، حدث خطأ أثناء حذف المنطقة.")
+        return ConversationHandler.END
+
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # Handlers لا تدخل في أي ConversationHandler (مثل الـ /start والأوامر الإدارية)
+    # Handlers لا تدخل في أي ConversationHandler
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^الارباح$|^ارباح$"), show_profit))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^صفر$|^تصفير$"), reset_all))
@@ -1094,59 +1341,66 @@ def main():
     app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
     app.add_handler(CallbackQueryHandler(edit_prices, pattern="^edit_prices_"))
     app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern="^start_new_order$"))
+    
+    # أمر جديد لعرض وإدارة المناطق
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^المناطق$|^مناطق$"), show_regions))
 
-    # ConversationHandler لعدد المحلات
-    # يجب أن يكون هذا الـ ConversationHandler قبل الـ ConversationHandler الخاص بإنشاء الطلب
-    # لضمان التقاط الكولباكات والنصوص المتعلقة بعدد المحلات أولاً.
+
+    # ConversationHandler لعدد المحلات (بقي كما هو)
     places_conv_handler = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(handle_places_count_data, pattern=r"^places_data_[a-f0-9]{8}_\d+$"),
-            # هذا يستقبل الإدخال النصي لعدد المحلات فقط إذا كان البوت يطلب ذلك.
-            # ولا يمكن أن يكون entry point وحده بدون سياق واضح.
-            # سيتم تشغيل هذه الحالة فقط إذا كان المستخدم في حالة ASK_PLACES_COUNT من conv_handler آخر.
-            # لذلك لا يمكن أن يكون هنا كـ entry_point بالمعنى التقليدي إذا كان الهدف هو الانتقال إليه.
-            # للتبسيط، دالة request_places_count_standalone هي من تدعو handle_places_count_data بشكل مباشر
-            # بدلاً من محاولة "دخول" إلى هذا ConversationHandler.
         ],
         states={
             ASK_PLACES_COUNT: [
-                # هذا النمط يستقبل الأرقام العشرية والصحيحة لعدد المحلات
                 MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, handle_places_count_data),
-                # إذا دز شي مو رقمي في هذه الحالة، ننهي المحادثة أو نعطيه رسالة خطأ
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_places_count_data), # لإعادة الطلب برقم صحيح
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_places_count_data), 
             ],
         },
         fallbacks=[
             CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-            # Fallback عام إذا المستخدم دز شي غير متوقع وهو في محادثة عدد المحلات
-            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END) # ينهي المحادثة
+            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
         ]
     )
     app.add_handler(places_conv_handler)
     
-    # ConversationHandler لإنشاء الطلب وتسعير المنتجات
-    # هذا يجب أن يكون بعد الـ places_conv_handler لأن أزرار places_conv_handler هي جزء من العملية النهائية.
-    # بما إن الـ `handle_places_count_data` يتم استدعاؤها مباشرةً بعد تسعير كل المنتجات
-    # و `request_places_count_standalone` هي اللي ترسلك أزرار عدد المحلات،
-    # فالمفروض ماكو تداخل بين الاثنين لأن كل ConversationHandler ينهي نفسه عند الانتهاء.
+    # ConversationHandler لإدارة المناطق (إضافة وحذف)
+    regions_conv_handler = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(add_region_callback, pattern="^add_region$"),
+            CallbackQueryHandler(remove_region_callback, pattern="^remove_region$")
+        ],
+        states={
+            ASK_REGION_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_region_name)],
+            ASK_REGION_PRICE: [MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_region_price)],
+            REMOVE_REGION: [CallbackQueryHandler(process_remove_region, pattern="^remove_region_.+$|^cancel_remove_region$")]
+        },
+        fallbacks=[
+            CommandHandler("cancel", lambda u, c: ConversationHandler.END),
+            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
+        ]
+    )
+    app.add_handler(regions_conv_handler)
+
+    # ConversationHandler لإنشاء الطلب وتسعير المنتجات (بقي كما هو)
     order_creation_conv_handler = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order), # يستلم أول رسالة للطلب
-            CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$") # يستلم كولباك اختيار المنتج
+            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
+            CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$")
         ],
         states={
             ASK_BUY: [
                 MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_buy_price),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price), # لإعادة الطلب برقم صحيح
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
             ],
             ASK_SELL: [
                 MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_sell_price),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sell_price), # لإعادة الطلب برقم صحيح
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sell_price),
             ]
         },
         fallbacks=[
             CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END) # ينهي المحادثة
+            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
         ]
     )
     app.add_handler(order_creation_conv_handler)
