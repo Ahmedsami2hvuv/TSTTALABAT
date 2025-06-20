@@ -1118,7 +1118,7 @@ def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     for handler in zone_handlers:
-    app.add_handler(handler)
+        app.add_handler(handler)
     
     # Handlers لا تدخل في أي ConversationHandler (مثل الـ /start والأوامر الإدارية)
     app.add_handler(CommandHandler("start", start))
