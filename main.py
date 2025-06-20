@@ -840,27 +840,29 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         context.application.create_task(save_data_in_background(context)) # حفظ التغييرات على الربح اليومي
 
 
-        customer_invoice_lines = []
-        customer_invoice_lines.append(f"**أبو الأكبر للتوصيل**") 
+                customer_invoice_lines = []
+        customer_invoice_lines.append(f"**أبو الأكبر للتوصيل**")
         customer_invoice_lines.append(f"رقم الفاتورة: {invoice}")
         customer_invoice_lines.append(f"عنوان الزبون: {order['title']}")
-        customer_invoice_lines.append(f"\n*المواد:*") 
-        
+        customer_invoice_lines.append(f"\n*المواد:*")
+
         running_total_for_customer = 0.0
         for p in order["products"]:
             if p in pricing.get(order_id, {}) and "sell" in pricing[order_id].get(p, {}):
                 sell = pricing[order_id][p]["sell"]
                 running_total_for_customer += sell
-                customer_invoice_lines.append(f"{p} - {format_float(sell)}")
+                customer_invoice_lines.append(f"• {p} - {format_float(sell)} = {format_float(running_total_for_customer)}")
             else:
-                customer_invoice_lines.append(f"{p} - (لم يتم تسعيره)")
-        
-        customer_invoice_lines.append(f"\n*المجموع الفرعي (مواد فقط):* {format_float(running_total_for_customer)}")
-        customer_invoice_lines.append(f"كلفة توصيل المنطقة ({region_name}): {format_float(delivery_cost_from_region)}")
-        customer_invoice_lines.append(f"كلفة تجهيز من - {current_places} محلات: {format_float(extra_cost)}")
-        customer_invoice_lines.append(f"\n*المجموع الكلي:* {format_float(final_total)}") 
-        
+                customer_invoice_lines.append(f"• {p} - (لم يتم تسعيره)")
+
+        customer_invoice_lines.append(f"* كل المنتجات ({format_float(running_total_for_customer)})")
+        customer_invoice_lines.append(f"• كلفة تجهيز من - {current_places} محلات {format_float(extra_cost)} = {format_float(running_total_for_customer + extra_cost)}")
+        customer_invoice_lines.append(f"• توصيل ({region_name}) {format_float(delivery_cost_from_region)} = {format_float(running_total_for_customer + extra_cost + delivery_cost_from_region)}")
+
+        customer_invoice_lines.append(f"\n*المجموع الكلي:* {format_float(final_total)} (مع احتساب التجهيز والتوصيل)")
+
         customer_final_text = "\n".join(customer_invoice_lines)
+
 
         try:
             await context.bot.send_message(
