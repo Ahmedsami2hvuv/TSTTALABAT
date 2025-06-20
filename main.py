@@ -923,7 +923,7 @@ def main():
     app.run_polling()
 
 if __name__ == "__main__":
-    main()python
+    main()
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.ext import (
     ApplicationBuilder, ContextTypes, CommandHandler,
