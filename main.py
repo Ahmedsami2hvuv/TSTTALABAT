@@ -911,6 +911,13 @@ if message_prefix:
 
 await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup, parse_mode="Markdown")
 
+# 👇 تنظيف البيانات المؤقتة
+if user_id in context.user_data:
+    context.user_data[user_id].pop("order_id", None)
+    context.user_data[user_id].pop("product", None)
+    context.user_data[user_id].pop("current_active_order_id", None)
+    context.user_data[user_id].pop("messages_to_delete", None)
+    
 async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         query = update.callback_query
