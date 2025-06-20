@@ -10,7 +10,6 @@ import json
 import logging
 import asyncio
 import threading
-import time
 
 # تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
 logging.basicConfig(
@@ -28,7 +27,7 @@ INVOICE_NUMBERS_FILE = os.path.join(DATA_DIR, "invoice_numbers.json")
 DAILY_PROFIT_FILE = os.path.join(DATA_DIR, "daily_profit.json")
 COUNTER_FILE = os.path.join(DATA_DIR, "invoice_counter.txt")
 LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
-AREAS_FILE = os.path.join(DATA_DIR, "areas.json")  # ملف جديد لإدارة المناطق
+AREAS_FILE = os.path.join(DATA_DIR, "areas.json")
 
 # تهيئة المتغيرات العامة
 orders = {}
@@ -36,42 +35,19 @@ pricing = {}
 invoice_numbers = {}
 daily_profit = 0.0
 last_button_message = {}
-areas = {}  # قائمة المناطق وأسعار التوصيل
+areas = {}
 
 # متغيرات الحفظ المؤجل
 save_timer = None
 save_pending = False
 save_lock = threading.Lock()
 
-# تحميل بيانات المناطق عند بدء تشغيل البوت
-def load_areas():
-    global areas
-    if os.path.exists(AREAS_FILE):
-        with open(AREAS_FILE, "r") as f:
-            try:
-                areas = json.load(f)
-                logger.info(f"Loaded areas from {AREAS_FILE} successfully.")
-            except json.JSONDecodeError:
-                logger.warning(f"{AREAS_FILE} is corrupted or empty, reinitializing areas.")
-                areas = {}
-    else:
-        logger.info("Areas file not found, initializing to default.")
-        areas = {}
-    return areas
-
-# حفظ بيانات المناطق
-def save_areas():
-    with open(AREAS_FILE + ".tmp", "w") as f:
-        json.dump(areas, f, indent=4)
-    os.replace(AREAS_FILE + ".tmp", AREAS_FILE)
-    logger.info("Areas saved to disk successfully.")
-
 # تحميل البيانات عند بدء تشغيل البوت
 def load_data():
     global orders, pricing, invoice_numbers, daily_profit, last_button_message, areas
     os.makedirs(DATA_DIR, exist_ok=True)
 
-    # دالة مساعدة لتحميل ملف JSON بأمان
+    # Helper function to load a JSON file safely
     def load_json_file(filepath, default_value, var_name):
         if os.path.exists(filepath):
             with open(filepath, "r") as f:
@@ -89,26 +65,20 @@ def load_data():
     orders_temp = load_json_file(ORDERS_FILE, {}, "orders")
     orders.clear()
     orders.update({str(k): v for k, v in orders_temp.items()})
-
     pricing_temp = load_json_file(PRICING_FILE, {}, "pricing")
     pricing.clear()
     pricing.update({str(pk): pv for pk, pv in pricing_temp.items()})
     for oid in pricing:
         if isinstance(pricing[oid], dict):
             pricing[oid] = {str(pk): pv for pk, pv in pricing[oid].items()}  # Ensure inner keys are strings too
-
     invoice_numbers_temp = load_json_file(INVOICE_NUMBERS_FILE, {}, "invoice_numbers")
     invoice_numbers.clear()
     invoice_numbers.update({str(k): v for k, v in invoice_numbers_temp.items()})
-
     daily_profit = load_json_file(DAILY_PROFIT_FILE, 0.0, "daily_profit")
-
     last_button_message_temp = load_json_file(LAST_BUTTON_MESSAGE_FILE, {}, "last_button_message")
     last_button_message.clear()
     last_button_message.update({str(k): v for k, v in last_button_message_temp.items()})
-
     areas = load_json_file(AREAS_FILE, {}, "areas")
-
     logger.info(f"Initial load complete. Orders: {len(orders)}, Pricing entries: {len(pricing)}, Daily Profit: {daily_profit}, Areas: {len(areas)}")
 
 # حفظ البيانات
@@ -121,27 +91,21 @@ def _save_data_to_disk():
             with open(ORDERS_FILE + ".tmp", "w") as f:
                 json.dump(orders, f, indent=4)  # Use indent for readability in files
             os.replace(ORDERS_FILE + ".tmp", ORDERS_FILE)
-
             with open(PRICING_FILE + ".tmp", "w") as f:
                 json.dump(pricing, f, indent=4)
             os.replace(PRICING_FILE + ".tmp", PRICING_FILE)
-
             with open(INVOICE_NUMBERS_FILE + ".tmp", "w") as f:
                 json.dump(invoice_numbers, f, indent=4)
             os.replace(INVOICE_NUMBERS_FILE + ".tmp", INVOICE_NUMBERS_FILE)
-
             with open(DAILY_PROFIT_FILE + ".tmp", "w") as f:
                 json.dump(daily_profit, f, indent=4)
             os.replace(DAILY_PROFIT_FILE + ".tmp", DAILY_PROFIT_FILE)
-
             with open(LAST_BUTTON_MESSAGE_FILE + ".tmp", "w") as f:
                 json.dump(last_button_message, f, indent=4)
             os.replace(LAST_BUTTON_MESSAGE_FILE + ".tmp", LAST_BUTTON_MESSAGE_FILE)
-
             with open(AREAS_FILE + ".tmp", "w") as f:
                 json.dump(areas, f, indent=4)
             os.replace(AREAS_FILE + ".tmp", AREAS_FILE)
-
             logger.info("All data saved to disk successfully.")
         except Exception as e:
             logger.error(f"Error saving data to disk: {e}")
@@ -161,24 +125,11 @@ def schedule_save():
     save_timer.start()
     logger.info("Data save scheduled with 0.5 sec delay.")
 
-# تهيئة ملف عداد الفواتير
-os.makedirs(DATA_DIR, exist_ok=True)
-if not os.path.exists(COUNTER_FILE):
-    with open(COUNTER_FILE, "w") as f:
-        f.write("1")
-
-def get_invoice_number():
-    with open(COUNTER_FILE, "r") as f:
-        current = int(f.read().strip())
-    with open(COUNTER_FILE, "w") as f:
-        f.write(str(current + 1))
-    return current
-
 # تحميل البيانات عند بدء البوت
 load_data()
 
 # حالات المحادثة
-ASK_BUY, ASK_SELL, ASK_PLACES_COUNT = range(3)  # أضفنا حالة جديدة لعدد المحلات
+ASK_BUY, ASK_SELL, ASK_PLACES_COUNT, ADD_AREA, REMOVE_AREA = range(5)
 
 # جلب التوكن ومعرف المالك من متغيرات البيئة
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -219,33 +170,13 @@ def calculate_extra(places_count):
         return 8
     return 0
 
-# دالة مساعدة لحذف الرسائل في الخلفية
-async def delete_message_in_background(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int):
-    try:
-        await asyncio.sleep(0.1)  # زيادة التأخير لضمان ظهور الرسالة الجديدة
-        await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
-        logger.info(f"Successfully deleted message {message_id} from chat {chat_id} in background.")
-    except Exception as e:
-        logger.warning(f"Could not delete message {message_id} from chat {chat_id} in background: {e}.")
-
-# دالة مساعدة لحفظ البيانات في الخلفية
-async def save_data_in_background(context: ContextTypes.DEFAULT_TYPE):
-    schedule_save()
-    logger.info("Data save scheduled in background.")
-
-# دالة البدء
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.message.from_user.id)
-    logger.info(f"[{update.effective_chat.id}] /start command from user {user_id}. User data before clearing: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
-    if user_id in context.user_data:
-        context.user_data[user_id].pop("order_id", None)
-        context.user_data[user_id].pop("product", None)
-        context.user_data[user_id].pop("current_active_order_id", None)
-        context.user_data[user_id].pop("messages_to_delete", None)
-        context.user_data[user_id].pop("buy_price", None)  # Clear buy_price too
-        logger.info(f"Cleared order-specific user_data for user {user_id} on /start command. User data after clearing: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
-    await update.message.reply_text("أهلاً بك يا أبا الأكبر! لإعداد طلبية، دز الطلبية كلها برسالة واحدة.\n*السطر الأول:* عنوان الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", parse_mode="Markdown")
-    return ConversationHandler.END
+# دالة لعرض قائمة المناطق
+async def show_areas(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not areas:
+        await update.message.reply_text("لا توجد مناطق مضافة حالياً.")
+        return
+    areas_list = "\n".join([f"{area}: {price}" for area, price in areas.items()])
+    await update.message.reply_text(f"قائمة المناطق وأسعار التوصيل:\n{areas_list}")
 
 # دالة لإضافة منطقة جديدة
 async def add_area(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -254,7 +185,7 @@ async def add_area(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("عذراً، هذا الأمر متاح للمالك فقط.")
         return ConversationHandler.END
     await update.message.reply_text("أرسل اسم المنطقة وسعر التوصيل مفصولة بمسافة (مثال: المنطقة 5).")
-    return "ADD_AREA"
+    return ADD_AREA
 
 # معالجة إضافة المنطقة
 async def process_add_area(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -262,13 +193,13 @@ async def process_add_area(update: Update, context: ContextTypes.DEFAULT_TYPE):
         input_data = update.message.text.strip().split()
         if len(input_data) != 2:
             await update.message.reply_text("الرجاء إرسال اسم المنطقة وسعر التوصيل بشكل صحيح (مثال: المنطقة 5).")
-            return "ADD_AREA"
+            return ADD_AREA
         area_name, price = input_data
         if not price.isdigit() or int(price) <= 0:
             await update.message.reply_text("السعر يجب أن يكون رقماً موجباً.")
-            return "ADD_AREA"
+            return ADD_AREA
         areas[area_name] = int(price)
-        save_areas()
+        _save_data_to_disk()
         await update.message.reply_text(f"تمت إضافة المنطقة '{area_name}' بسعر توصيل {price} بنجاح.")
         return ConversationHandler.END
     except Exception as e:
@@ -290,7 +221,7 @@ async def remove_area(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton(area, callback_data=f"remove_area_{area}")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("اختر المنطقة التي تريد إزالتها:", reply_markup=reply_markup)
-    return "REMOVE_AREA"
+    return REMOVE_AREA
 
 # معالجة إزالة المنطقة
 async def process_remove_area(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -299,19 +230,11 @@ async def process_remove_area(update: Update, context: ContextTypes.DEFAULT_TYPE
     area_name = query.data.replace("remove_area_", "")
     if area_name in areas:
         del areas[area_name]
-        save_areas()
+        _save_data_to_disk()
         await query.edit_message_text(f"تمت إزالة المنطقة '{area_name}' بنجاح.")
     else:
         await query.edit_message_text("هذه المنطقة غير موجودة.")
     return ConversationHandler.END
-
-# دالة لعرض قائمة المناطق
-async def show_areas(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not areas:
-        await update.message.reply_text("لا توجد مناطق مضافة حالياً.")
-        return
-    areas_list = "\n".join([f"{area}: {price}" for area, price in areas.items()])
-    await update.message.reply_text(f"قائمة المناطق وأسعار التوصيل:\n{areas_list}")
 
 # دالة للحصول على سعر التوصيل بناءً على العنوان
 def get_delivery_price(title):
@@ -348,12 +271,12 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         delivery_price = get_delivery_price(order['title'])  # الحصول على سعر التوصيل بناءً على العنوان
         final_total = total_sell + extra_cost + delivery_price
         daily_profit += net_profit
-        context.application.create_task(save_data_in_background(context))
+        context.application.create_task(schedule_save())
         customer_invoice_lines = []
         customer_invoice_lines.append(f"**أبو الأكبر للتوصيل**")
         customer_invoice_lines.append(f"رقم الفاتورة: {invoice}")
         customer_invoice_lines.append(f"عنوان الزبون: {order['title']}")
-        customer_invoice_lines.append(f"\n*المواد:*")
+        customer_invoice_lines.append("\n*المواد:*")
         running_total_for_customer = 0.0
         for p in order["products"]:
             if p in pricing.get(order_id, {}) and "sell" in pricing[order_id].get(p, {}):
@@ -400,7 +323,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # Handlers لا تدخل في أي ConversationHandler (مثل الـ /start والأوامر الإدارية)
+    # Handlers لا تدخل في أي ConversationHandler
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^الارباح$|^ارباح$"), show_profit))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^صفر$|^تصفير$"), reset_all))
@@ -434,6 +357,28 @@ def main():
     )
     app.add_handler(places_conv_handler)
 
+    # ConversationHandler لإضافة وإزالة المناطق
+    areas_conv_handler = ConversationHandler(
+        entry_points=[
+            MessageHandler(filters.TEXT & filters.Regex("^اضافة منطقة$"), add_area),
+            MessageHandler(filters.TEXT & filters.Regex("^ازالة منطقة$"), remove_area),
+        ],
+        states={
+            ADD_AREA: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, process_add_area),
+            ],
+            REMOVE_AREA: [
+                CallbackQueryHandler(process_remove_area, pattern="^remove_area_"),
+            ],
+        },
+        fallbacks=[
+            CommandHandler("cancel", lambda u, c: ConversationHandler.END),
+            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
+        ]
+    )
+    app.add_handler(areas_conv_handler)
+
+    # ConversationHandler لإنشاء الطلب وتسعير المنتجات
     order_creation_conv_handler = ConversationHandler(
         entry_points=[
             MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
