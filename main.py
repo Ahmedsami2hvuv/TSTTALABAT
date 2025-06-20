@@ -298,7 +298,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def ask_places_count(chat_id, context, user_id, order_id):
     buttons = [
         [InlineKeyboardButton(str(i), callback_data=f"places_{order_id}_{i}") 
-        for i in range(1, 6)
+        for i in range(1, 6)]
     ]
     markup = InlineKeyboardMarkup(buttons)
     await context.bot.send_message(
