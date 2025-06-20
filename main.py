@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 
 # المسارات والملفات
 DATA_DIR = "/mnt/data/"
+# **** هذا السطر هو الإضافة الجديدة والمهمة لحل المشكلة ****
+os.makedirs(DATA_DIR, exist_ok=True) # تأكيد إنشاء المجلد عند بدء التشغيل
+# **********************************************************
+
 ORDERS_FILE = os.path.join(DATA_DIR, "orders.json")
 PRICING_FILE = os.path.join(DATA_DIR, "pricing.json")
 INVOICE_NUMBERS_FILE = os.path.join(DATA_DIR, "invoice_numbers.json")
@@ -49,8 +53,8 @@ OWNER_PHONE_NUMBER = "+9647733921468"
 # تحميل البيانات
 def load_data():
     global orders, pricing, invoice_numbers, daily_profit, last_button_message, delivery_pricing
-    os.makedirs(DATA_DIR, exist_ok=True)
-
+    # os.makedirs(DATA_DIR, exist_ok=True) # هذا السطر نقلته للأعلى
+    
     def load_json_file(filepath, default_value):
         if os.path.exists(filepath):
             try:
@@ -69,7 +73,7 @@ def load_data():
 
 # حفظ البيانات
 def save_data():
-    os.makedirs(DATA_DIR, exist_ok=True)
+    # os.makedirs(DATA_DIR, exist_ok=True) # هذا السطر نقلته للأعلى
     with open(ORDERS_FILE, "w") as f:
         json.dump(orders, f, indent=4)
     with open(PRICING_FILE, "w") as f:
@@ -84,17 +88,10 @@ def save_data():
         json.dump(delivery_pricing, f, indent=4)
 
 # تهيئة عداد الفواتير
+# هذا الجزء هو اللي كان بي المشكلة لأنه ما كان يتأكد من وجود المجلد قبل ما يحاول يكتب
 if not os.path.exists(COUNTER_FILE):
     with open(COUNTER_FILE, "w") as f:
         f.write("1")
-
-def get_invoice_number():
-    with open(COUNTER_FILE, "r+") as f:
-        current = int(f.read().strip())
-        f.seek(0)
-        f.write(str(current + 1))
-        f.truncate() # لضمان عدم وجود بيانات زائدة
-        return current
 
 # تحميل البيانات الأولية عند بدء تشغيل البوت
 load_data()
