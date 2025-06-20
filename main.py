@@ -755,7 +755,9 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
         logger.error(f"[{chat_id}] Error in handle_places_count_data: {e}", exc_info=True)
         await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء معالجة عدد المحلات. الرجاء بدء طلبية جديدة.")
         return ConversationHandler.END
-        
+
+from urllib.parse import quote
+
 async def show_final_options(chat_id, context, user_id, order_id, message_prefix=None):
     try:
         global daily_profit
@@ -783,12 +785,12 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
 
         net_profit = total_sell - total_buy
         
-        current_places = orders[order_id].get("places_count", 0) 
+        current_places = orders[order_id].get("places_count", 0)
         extra_cost = calculate_extra(current_places)
 
-        # استخراج أجرة التوصيل من العنوان إن وُجدت
-        delivery_fee = 0.0
+        # أجرة التوصيل
         import re
+        delivery_fee = 0.0
         title = order.get('title', '')
         match = re.search(r"(\d{3,5})", title)
         if match:
@@ -801,122 +803,125 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         logger.info(f"[{chat_id}] Daily profit after adding {net_profit} for order {order_id}: {daily_profit}")
         context.application.create_task(save_data_in_background(context))
 
-        customer_invoice_lines = []
-        customer_invoice_lines.append(f"**أبو الأكبر للتوصيل**") 
-        customer_invoice_lines.append(f"رقم الفاتورة: {invoice}")
-        customer_invoice_lines.append(f"عنوان الزبون: {order['title']}")
-        customer_invoice_lines.append(f"\n*المواد:*") 
-        
+        # فاتورة الزبون
+        customer_invoice_lines = [
+            "**أبو الأكبر للتوصيل**",
+            f"رقم الفاتورة: {invoice}",
+            f"عنوان الزبون: {order['title']}",
+            "\n*المواد:*"
+        ]
         running_total_for_customer = 0.0
         for p in order["products"]:
-            if p in pricing.get(order_id, {}) and "sell" in pricing[order_id].get(p, {}):
+            if p in pricing.get(order_id, {}) and "sell" in pricing[order_id][p]:
                 sell = pricing[order_id][p]["sell"]
                 running_total_for_customer += sell
                 customer_invoice_lines.append(f"{p} - {format_float(sell)} = {format_float(running_total_for_customer)}")
             else:
                 customer_invoice_lines.append(f"{p} - (لم يتم تسعيره)")
-        
+
         customer_invoice_lines.append(f"كلفة تجهيز من - {current_places} محلات {format_float(extra_cost)}")
         if delivery_fee > 0:
             customer_invoice_lines.append(f"أجرة التوصيل: {format_float(delivery_fee)}")
-
-        customer_invoice_lines.append(f"\n*المجموع الكلي:* {format_float(final_total)} (مع احتساب عدد المحلات والتوصيل)") 
-        
+        customer_invoice_lines.append(f"\n*المجموع الكلي:* {format_float(final_total)} (مع احتساب عدد المحلات والتوصيل)")
         customer_final_text = "\n".join(customer_invoice_lines)
-invoices_dir = "invoices"
-os.makedirs(invoices_dir, exist_ok=True)
 
-# حفظ فاتورة الزبون
-try:
-    customer_invoice_filename = os.path.join(invoices_dir, f"invoice_{invoice}_customer.txt")
-    with open(customer_invoice_filename, "w", encoding="utf-8") as f:
-        f.write("فاتورة الزبون\n")
-        f.write("="*40 + "\n")
-        f.write(customer_final_text)
-    logger.info(f"[{chat_id}] Saved customer invoice to {customer_invoice_filename}")
-except Exception as e:
-    logger.error(f"[{chat_id}] Failed to save customer invoice to file: {e}")
+        # حفظ فاتورة الزبون
+        invoices_dir = "invoices"
+        os.makedirs(invoices_dir, exist_ok=True)
+        try:
+            customer_invoice_filename = os.path.join(invoices_dir, f"invoice_{invoice}_customer.txt")
+            with open(customer_invoice_filename, "w", encoding="utf-8") as f:
+                f.write("فاتورة الزبون\n" + "="*40 + "\n" + customer_final_text)
+            logger.info(f"[{chat_id}] Saved customer invoice to {customer_invoice_filename}")
+        except Exception as e:
+            logger.error(f"[{chat_id}] Failed to save customer invoice to file: {e}")
 
-# إرسال الفاتورة للزبون
-try:
-    await context.bot.send_message(
-        chat_id=chat_id,
-        text=customer_final_text,
-        parse_mode="Markdown"
-    )
-except Exception as e:
-    logger.error(f"[{chat_id}] Could not send customer invoice as message: {e}")
+        # إرسال الفاتورة للزبون
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=customer_final_text,
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.error(f"[{chat_id}] Could not send customer invoice as message: {e}")
 
-# إعداد فاتورة الإدارة
-owner_invoice_details = []
-owner_invoice_details.append(f"رقم الفاتورة: {invoice}")
-owner_invoice_details.append(f"عنوان الزبون: {order['title']}")
-for p in order["products"]:
-    if p in pricing.get(order_id, {}) and "buy" in pricing[order_id][p] and "sell" in pricing[order_id][p]:
-        buy = pricing[order_id][p]["buy"]
-        sell = pricing[order_id][p]["sell"]
-        profit_item = sell - buy
-        owner_invoice_details.append(f"{p} - شراء: {format_float(buy)}, بيع: {format_float(sell)}, ربح: {format_float(profit_item)}")
-    else:
-        owner_invoice_details.append(f"{p} - (لم يتم تسعيره بعد)")
-owner_invoice_details.append(f"\nالمجموع شراء: {format_float(total_buy)}")
-owner_invoice_details.append(f"المجموع بيع: {format_float(total_sell)}")
-owner_invoice_details.append(f"الربح الكلي: {format_float(net_profit)}")
-owner_invoice_details.append(f"عدد المحلات: {current_places} (+{format_float(extra_cost)})")
-if delivery_fee > 0:
-    owner_invoice_details.append(f"أجرة التوصيل: {format_float(delivery_fee)}")
-owner_invoice_details.append(f"السعر الكلي: {format_float(final_total)}")
+        # فاتورة الإدارة
+        owner_invoice_details = [
+            f"رقم الفاتورة: {invoice}",
+            f"عنوان الزبون: {order['title']}"
+        ]
+        for p in order["products"]:
+            if p in pricing.get(order_id, {}) and "buy" in pricing[order_id][p] and "sell" in pricing[order_id][p]:
+                buy = pricing[order_id][p]["buy"]
+                sell = pricing[order_id][p]["sell"]
+                profit_item = sell - buy
+                owner_invoice_details.append(f"{p} - شراء: {format_float(buy)}, بيع: {format_float(sell)}, ربح: {format_float(profit_item)}")
+            else:
+                owner_invoice_details.append(f"{p} - (لم يتم تسعيره بعد)")
 
-final_owner_invoice_text = "\n".join(owner_invoice_details)
+        owner_invoice_details.extend([
+            f"\nالمجموع شراء: {format_float(total_buy)}",
+            f"المجموع بيع: {format_float(total_sell)}",
+            f"الربح الكلي: {format_float(net_profit)}",
+            f"عدد المحلات: {current_places} (+{format_float(extra_cost)})"
+        ])
+        if delivery_fee > 0:
+            owner_invoice_details.append(f"أجرة التوصيل: {format_float(delivery_fee)}")
+        owner_invoice_details.append(f"السعر الكلي: {format_float(final_total)}")
 
-# حفظ فاتورة الإدارة
-try:
-    invoice_filename = os.path.join(invoices_dir, f"invoice_{invoice}_admin.txt")
-    with open(invoice_filename, "w", encoding="utf-8") as f:
-        f.write("فاتورة الإدارة\n")
-        f.write("="*40 + "\n")
-        f.write(final_owner_invoice_text)
-    logger.info(f"[{chat_id}] Saved invoice to {invoice_filename}")
-except Exception as e:
-    logger.error(f"[{chat_id}] Failed to save admin invoice to file: {e}")
+        final_owner_invoice_text = "\n".join(owner_invoice_details)
 
-# إرسال فاتورة الإدارة إلى الواتساب
-encoded_owner_invoice = final_owner_invoice_text.replace(" ", "%20").replace("\n", "%0A").replace("*", "")
-whatsapp_owner_button_markup = InlineKeyboardMarkup([
-    [InlineKeyboardButton("إرسال فاتورة الإدارة للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}")]
-])
+        try:
+            invoice_filename = os.path.join(invoices_dir, f"invoice_{invoice}_admin.txt")
+            with open(invoice_filename, "w", encoding="utf-8") as f:
+                f.write("فاتورة الإدارة\n" + "="*40 + "\n" + final_owner_invoice_text)
+            logger.info(f"[{chat_id}] Saved invoice to {invoice_filename}")
+        except Exception as e:
+            logger.error(f"[{chat_id}] Failed to save admin invoice to file: {e}")
 
-try:
-    await context.bot.send_message(
-        chat_id=OWNER_ID,
-        text=f"**فاتورة طلبية (الإدارة):**\n{final_owner_invoice_text}",
-        parse_mode="Markdown",
-        reply_markup=whatsapp_owner_button_markup
-    )
-except Exception as e:
-    logger.error(f"[{chat_id}] Could not send admin invoice to OWNER_ID {OWNER_ID}: {e}")
-    await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من إرسال فاتورة الإدارة إلى خاصك.")
+        # إرسال على واتساب
+        encoded_owner_invoice = quote(final_owner_invoice_text, safe='')
+        encoded_customer_text = quote(customer_final_text, safe='')
 
-# إرسال أزرار للخيارات
-keyboard = [
-    [InlineKeyboardButton("1️⃣ تعديل الأسعار", callback_data=f"edit_prices_{order_id}")],
-    [InlineKeyboardButton("3️⃣ إرسال فاتورة الزبون (واتساب)", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={customer_final_text.replace(' ', '%20').replace('\n', '%0A').replace('*', '')}")],
-    [InlineKeyboardButton("4️⃣ إنشاء طلب جديد", callback_data="start_new_order")]
-]
-reply_markup = InlineKeyboardMarkup(keyboard)
+        whatsapp_owner_button_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("إرسال فاتورة الإدارة للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}")]
+        ])
+        try:
+            await context.bot.send_message(
+                chat_id=OWNER_ID,
+                text=f"**فاتورة طلبية (الإدارة):**\n{final_owner_invoice_text}",
+                parse_mode="Markdown",
+                reply_markup=whatsapp_owner_button_markup
+            )
+        except Exception as e:
+            logger.error(f"[{chat_id}] Could not send admin invoice to OWNER_ID {OWNER_ID}: {e}")
+            await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من إرسال فاتورة الإدارة إلى خاصك.")
 
-message_text = "افعل ما تريد من الأزرار:\n\n"
-if message_prefix:
-    message_text = message_prefix + "\n" + message_text
+        # أزرار التحكم
+        keyboard = [
+            [InlineKeyboardButton("1️⃣ تعديل الأسعار", callback_data=f"edit_prices_{order_id}")],
+            [InlineKeyboardButton("3️⃣ إرسال فاتورة الزبون (واتساب)", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_customer_text}")],
+            [InlineKeyboardButton("4️⃣ إنشاء طلب جديد", callback_data="start_new_order")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
 
-await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup, parse_mode="Markdown")
+        message_text = "افعل ما تريد من الأزرار:\n\n"
+        if message_prefix:
+            message_text = message_prefix + "\n" + message_text
 
-# 👇 تنظيف البيانات المؤقتة
-if user_id in context.user_data:
-    context.user_data[user_id].pop("order_id", None)
-    context.user_data[user_id].pop("product", None)
-    context.user_data[user_id].pop("current_active_order_id", None)
-    context.user_data[user_id].pop("messages_to_delete", None)
+        await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup, parse_mode="Markdown")
+
+        # تنظيف بيانات المستخدم
+        if user_id in context.user_data:
+            context.user_data[user_id].pop("order_id", None)
+            context.user_data[user_id].pop("product", None)
+            context.user_data[user_id].pop("current_active_order_id", None)
+            context.user_data[user_id].pop("messages_to_delete", None)
+
+    except Exception as e:
+        logger.error(f"[{chat_id}] Error in show_final_options: {e}", exc_info=True)
+        await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء عرض الفاتورة النهائية. الرجاء بدء طلبية جديدة.")
     
 async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
