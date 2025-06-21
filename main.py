@@ -16,11 +16,6 @@ from telegram.ext import (
 # ✅ استيراد الدوال الخاصة بالمناطق من الملف الجديد
 from features.delivery_zones import (
     list_zones, ask_zone_name, handle_zone_edit, get_delivery_price
-    # تم حذف الدوال الأخرى المتعلقة بإدارة المناطق الأكثر تفصيلاً مثل show_zone_options
-    # و start_add_zone, receive_zone_name, receive_zone_price,
-    # start_remove_zone, receive_remove_name,
-    # start_edit_zone, select_zone_to_edit, apply_zone_edit
-    # لأنها لم تعد موجودة في ملف features/delivery_zones.py بعد التعديل الأخير
 )
 
 # ✅ تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
@@ -39,7 +34,6 @@ INVOICE_NUMBERS_FILE = os.path.join(DATA_DIR, "invoice_numbers.json")
 DAILY_PROFIT_FILE = os.path.join(DATA_DIR, "daily_profit.json")
 COUNTER_FILE = os.path.join(DATA_DIR, "invoice_counter.txt")
 LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
-# ZONES_FILE = os.path.join(DATA_DIR, "zones.json") # هذا المسار صار يتم إدارته من ملف delivery_zones.py الداخلي
 
 # ✅ قراءة التوكن من المتغيرات البيئية (يفترض أنك ضايفه بـ Railway)
 TOKEN = os.getenv("TOKEN")
@@ -50,7 +44,7 @@ pricing = {}
 invoice_numbers = {}
 daily_profit = 0.0
 last_button_message = {}
-zones = {}  # ← هذا المتغير كان يستخدم للواجهة مال المناطق، ممكن بعد ما نحتاجه أو نستخدمه لغرض آخر
+zones = {}  # هذا المتغير كان يستخدم للواجهة مال المناطق، ممكن بعد ما نحتاجه أو نستخدمه لغرض آخر
 
 # تهيئة القفل لعمليات الحفظ
 save_lock = threading.Lock()
@@ -494,7 +488,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return ConversationHandler.END
         
         # Regex to accept integers or floats
-        if not filters.Regex(r"^\d+(\.\d+)?$").check_update(update):
+        if not filters.Regex(r"^\d+(\.\d+)?$").check_update(update): 
             logger.warning(f"[{update.effective_chat.id}] Buy price: Non-numeric input from user {user_id}: '{update.message.text}'")
             msg_error = await update.message.reply_text("الرجاء إدخال *رقم* صحيح لسعر الشراء.")
             context.user_data[user_id]['messages_to_delete'].append({
@@ -1155,10 +1149,14 @@ def main():
 
     # ✅ Handlers خارج المحادثة
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^الارباح$|^ارباح$"), show_profit))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^صفر$|^تصفير$"), reset_all))
+    app.add_handler(CommandHandler("profit", show_profit)) # أمر جديد للأرباح
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^الارباح$|^ارباح$"), show_profit)) # استجابة نصية للأرباح
+    app.add_handler(CommandHandler("reset", reset_all)) # أمر جديد للتصفير
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^صفر$|^تصفير$"), reset_all)) # استجابة نصية للتصفير
     app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^التقارير$|^تقرير$|^تقارير$"), show_report))
+    app.add_handler(CommandHandler("report", show_report)) # أمر جديد للتقارير
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^التقارير$|^تقرير$|^تقارير$"), show_report)) # استجابة نصية للتقارير
+    
     app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
     app.add_handler(CallbackQueryHandler(edit_prices, pattern="^edit_prices_"))
     app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern="^start_new_order$"))
@@ -1167,16 +1165,6 @@ def main():
     app.add_handler(CommandHandler("zones", list_zones))
     # هذا السطر للتعامل مع الرسائل النصية التي تحتوي على "مناطق" أو "المناطق"
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(مناطق|المناطق)$"), list_zones))
-
-
-    # ✅ Handlers أزرار المناطق - تم دمجها في zone_management_conv_handler
-    # تم إزالة الـ ConversationHandlers القديمة لأنها لم تعد موجودة بالملف الجديد
-    # remove_zone_conv_handler = ConversationHandler(...)
-    # add_zone_conv_handler = ConversationHandler(...)
-    # edit_zone_conv_handler = ConversationHandler(...)
-    # app.add_handler(add_zone_conv_handler)
-    # app.add_handler(remove_zone_conv_handler)
-    # app.add_handler(edit_zone_conv_handler) 
 
 
     # ✅ ConversationHandler لعدد المحلات
