@@ -1250,6 +1250,72 @@ async def receive_remove_name(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(f"🗑️ تم حذف المنطقة: {area_to_remove}")
     return ConversationHandler.END
 
+# ✅ بدء تعديل منطقة
+async def start_edit_zone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
+    try:
+        with open(ZONES_FILE, "r", encoding="utf-8") as f:
+            zones = json.load(f)
+    except:
+        zones = {}
+
+    if not zones:
+        await query.edit_message_text("⚠️ لا توجد مناطق حالياً.")
+        return
+
+    keyboard = []
+    for zone_name in zones:
+        keyboard.append([InlineKeyboardButton(zone_name, callback_data=f"edit_{zone_name}")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text("🛠️ اختر المنطقة التي تريد تعديلها:", reply_markup=reply_markup)
+
+# ✅ اختيار المنطقة لتعديلها
+async def select_zone_to_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    selected_zone = query.data.replace("edit_", "")
+    context.user_data["zone_to_edit"] = selected_zone
+
+    await query.edit_message_text(
+        f"✏️ أرسل الاسم الجديد أو السعر الجديد لمنطقة **{selected_zone}**.\n"
+        "مثال:\n`الزبير`\nأو:\n`الزبير - 4000`", parse_mode="Markdown"
+    )
+    return "WAITING_FOR_EDIT_INPUT"
+
+# ✅ تطبيق تعديل المنطقة
+async def apply_zone_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    zone_name = context.user_data.get("zone_to_edit")
+
+    try:
+        with open(ZONES_FILE, "r", encoding="utf-8") as f:
+            zones = json.load(f)
+    except:
+        zones = {}
+
+    if "-" in text:
+        parts = text.split("-")
+        new_name = parts[0].strip()
+        try:
+            new_price = int(parts[1].strip())
+        except:
+            await update.message.reply_text("❌ السعر غير صحيح.")
+            return "WAITING_FOR_EDIT_INPUT"
+    else:
+        new_name = text
+        new_price = zones.get(zone_name, 0)
+
+    zones.pop(zone_name, None)
+    zones[new_name] = new_price
+
+    with open(ZONES_FILE, "w", encoding="utf-8") as f:
+        json.dump(zones, f, ensure_ascii=False, indent=2)
+
+    await update.message.reply_text(f"✅ تم تعديل المنطقة بنجاح:\n📍 الاسم: {new_name}\n💰 السعر: {new_price} د.ع")
+    return ConversationHandler.END
+    
 if __name__ == "__main__":
     main()
