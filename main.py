@@ -1163,8 +1163,9 @@ def main():
     app.add_handler(CallbackQueryHandler(edit_prices, pattern="^edit_prices_"))
     app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern="^start_new_order$"))
     # هنا استدعاء list_zones لعرض المناطق (لأن show_zone_options انحذفت)
-    app.add_handler(CommandHandler("المناطق", list_zones))
-    # Optional: If you want to handle "مناطق" text message as well
+    # تم تغيير CommandHandler إلى أمر لا يحتوي على أحرف عربية
+    app.add_handler(CommandHandler("zones", list_zones))
+    # هذا السطر للتعامل مع الرسائل النصية التي تحتوي على "مناطق" أو "المناطق"
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(مناطق|المناطق)$"), list_zones))
 
 
