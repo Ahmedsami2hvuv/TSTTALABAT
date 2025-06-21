@@ -275,7 +275,14 @@ async def process_order(update, context, message, edited=False):
         return
 
     title = lines[0]
-    phone_number = lines[1].replace(" ", "").replace("+", "") # ✅ استخراج رقم الهاتف وإزالة المسافات وعلامة +
+    
+    # ✅ منطق جديد لمعالجة رقم الهاتف
+    phone_number_raw = lines[1].strip().replace(" ", "") # إزالة المسافات
+    if phone_number_raw.startswith("+964"):
+        phone_number = "0" + phone_number_raw[4:] # استبدال +964 بـ 0
+    else:
+        phone_number = phone_number_raw.replace("+", "") # إذا ماكو +964، بس نضمن إزالة أي علامة +
+    
     products = [p.strip() for p in lines[2:] if p.strip()] # ✅ المنتجات تبدأ من السطر الثالث
 
     if not products:
@@ -1074,7 +1081,6 @@ async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("عذراً، حدث خطأ أثناء محاولة التصفير.")
 
 async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # الوصول إلى المتغيرات العالمية لتصفيرها
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
     invoice_numbers = context.application.bot_data['invoice_numbers']
