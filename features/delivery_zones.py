@@ -1,5 +1,3 @@
-📁 الملف: features/delivery_zones.py
-
 import json import os from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 
 ZONES_FILE = "zones.json"
