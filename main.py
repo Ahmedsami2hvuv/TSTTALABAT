@@ -380,65 +380,7 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
         await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء عرض الأزرار. الرجاء بدء طلبية جديدة.")
 
 
-async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        query = update.callback_query
-        await query.answer()
 
-        logger.info(f"[{query.message.chat_id}] Callback query received: {query.data} from user {query.from_user.id}. User data: {json.dumps(context.user_data.get(str(query.from_user.id), {}), indent=2)}")
-
-        user_id = str(query.from_user.id)
-        
-        try:
-            order_id, product = query.data.split("|", 1) 
-            # ***** تعديل: تنظيف اسم المنتج القادم من الـ callback_data أيضاً *****
-            product = product.strip() 
-        except ValueError as e:
-            logger.error(f"[{query.message.chat_id}] Failed to parse callback_data for product selection: {query.data}. Error: {e}", exc_info=True)
-            await query.message.reply_text("عذراً، حدث خطأ في بيانات الزر. الرجاء بدء طلبية جديدة.")
-            return ConversationHandler.END
-
-        if order_id not in orders or product not in orders[order_id].get("products", []):
-            logger.warning(f"[{query.message.chat_id}] Order ID '{order_id}' not found or Product '{product}' not in products for order '{order_id}'.")
-            await query.message.reply_text("عذراً، الطلب أو المنتج غير موجود. الرجاء بدء طلبية جديدة أو التحقق من المنتجات.")
-            if user_id in context.user_data:
-                context.user_data[user_id].pop("order_id", None)
-                context.user_data[user_id].pop("product", None)
-                context.user_data[user_id].pop("current_active_order_id", None)
-                context.user_data[user_id].pop("messages_to_delete", None)
-            return ConversationHandler.END
-        
-        context.user_data.setdefault(user_id, {}).update({"order_id": order_id, "product": product})
-        logger.info(f"[{query.message.chat_id}] User {user_id} selected product '{product}' for order '{order_id}'. User data updated: {json.dumps(context.user_data.get(user_id), indent=2)}")
-        
-        if 'messages_to_delete' not in context.user_data[user_id]:
-            context.user_data[user_id]['messages_to_delete'] = [] 
-
-        if query.message:
-            context.user_data[user_id]['messages_to_delete'].append({
-                'chat_id': query.message.chat_id,
-                'message_id': query.message.message_id
-            })
-            logger.info(f"[{query.message.chat_id}] Added button message {query.message.message_id} to delete queue for order {order_id}.")
-            try:
-                await context.bot.edit_message_reply_markup(
-                    chat_id=query.message.chat_id,
-                    message_id=query.message.message_id,
-                    reply_markup=None 
-                )
-            except Exception as e:
-                logger.warning(f"[{query.message.chat_id}] Could not clear buttons from message {query.message.message_id} directly: {e}. Proceeding.")
-
-
-        msg = await query.message.reply_text(f"تمام، كم سعر شراء *'{product}'*؟", parse_mode="Markdown")
-        context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg.chat_id, 'message_id': msg.message_id})
-        logger.info(f"[{query.message.chat_id}] Asking for buy price for '{product}'. Next state: ASK_BUY. Current user_data: {json.dumps(context.user_data.get(user_id), indent=2)}")
-        
-        return ASK_BUY
-    except Exception as e:
-        logger.error(f"[{update.effective_chat.id}] Error in product_selected: {e}", exc_info=True)
-        await update.callback_query.message.reply_text("عذراً، حدث خطأ أثناء اختيار المنتج. الرجاء بدء طلبية جديدة.")
-        return ConversationHandler.END
     
 async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -1120,18 +1062,43 @@ def main():
 
     for handler in zone_handlers:
         app.add_handler(handler)
-    
     # Handlers لا تدخل في أي ConversationHandler (مثل الـ /start والأوامر الإدارية)
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^الارباح$|^ارباح$"), show_profit))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^صفر$|^تصفير$"), reset_all))
-    app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^التقارير$|^تقرير$|^تقارير$"), show_report))
-    app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
-    app.add_handler(CallbackQueryHandler(edit_prices, pattern="^edit_prices_"))
-    app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern="^start_new_order$"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order))
-    app.run_polling()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^الارباح$|^ارباح$"), show_profit))
+app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^صفر$|^تصفير$"), reset_all))
+app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
+app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^التقارير$|^تقرير$|^تقارير$"), show_report))
+app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
+app.add_handler(CallbackQueryHandler(edit_prices, pattern="^edit_prices_"))
+app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern="^start_new_order$"))
+
+# ✅ ConversationHandler لتسعير المنتجات
+order_creation_conv_handler = ConversationHandler(
+    entry_points=[
+        MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
+        CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$")
+    ],
+    states={
+        ASK_BUY: [
+            MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_buy_price),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price)
+        ],
+        ASK_SELL: [
+            MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_sell_price),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sell_price)
+        ]
+    },
+    fallbacks=[
+        CommandHandler("cancel", lambda update, context: ConversationHandler.END),
+        MessageHandler(filters.ALL, lambda update, context: ConversationHandler.END)
+    ]
+)
+
+# ✅ أضف الـ ConversationHandler إلى التطبيق
+app.add_handler(order_creation_conv_handler)
+
+# ✅ بدء التشغيل
+app.run_polling()
 
     # ConversationHandler لعدد المحلات
     # يجب أن يكون هذا الـ ConversationHandler قبل الـ ConversationHandler الخاص بإنشاء الطلب
