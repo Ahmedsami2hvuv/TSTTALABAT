@@ -37,8 +37,8 @@ COUNTER_FILE = os.path.join(DATA_DIR, "invoice_counter.txt")
 LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
 
 # ✅ قراءة التوكن من المتغيرات البيئية (يفترض أنك ضايفه بـ Railway)
-# تم نقل هذا السطر إلى هنا ليتم تعريفه قبل استخدامه في دالة main()
-TOKEN = os.getenv("TOKEN") 
+# تم تصحيح اسم المتغير ليطابق ما هو معرف في Railway: TELEGRAM_BOT_TOKEN
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") 
 
 # ✅ متغيرات التخزين المؤقت في الذاكرة
 orders = {}
@@ -168,12 +168,12 @@ load_data()
 ASK_BUY, ASK_SELL, ASK_PLACES_COUNT = range(3) 
 
 # جلب التوكن ومعرف المالك من متغيرات البيئة
-# هذا السطر كان يسبب المشكلة، تم حذفه
-# TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") 
+# هذا السطر كان يسبب المشكلة وتم تصحيح اسم المتغير ليتطابق مع TELEGRAM_BOT_TOKEN
+# OWNER_ID و OWNER_PHONE_NUMBER تم نقل تعريفهم إلى هنا ليكونوا في مكان واحد مع TOKEN
 OWNER_ID = int(os.getenv("OWNER_TELEGRAM_ID")) 
 OWNER_PHONE_NUMBER = "+9647733921468" 
 
-# هذا التحقق من TOKEN تم حذفه لأنه كان يبحث عن TELEGRAM_BOT_TOKEN
+# تم حذف هذا التحقق من TOKEN لأنه كان يستخدم اسماً خاطئاً للمتغير
 # if TOKEN is None:
 #     raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set.")
 
@@ -735,8 +735,8 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
             logger.warning(f"[{chat_id}] handle_places_count_data: No valid places count or order ID to process.")
             await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من فهم عدد المحلات أو الطلبية. الرجاء إدخال رقم صحيح أو البدء بطلبية جديدة.")
             if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
-                del context.user_data[user_id]["current_active_order_id"]
-            return ConversationHandler.END 
+                     del context.user_data[user_id]["current_active_order_id"]
+                 return ConversationHandler.END 
 
         if 'places_count_message' in context.user_data[user_id]:
             msg_info = context.user_data[user_id]['places_count_message']
@@ -860,8 +860,8 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             if p in pricing.get(order_id, {}) and "buy" in pricing[order_id][p] and "sell" in pricing[order_id][p]:
                 buy = pricing[order_id][p]["buy"]
                 sell = pricing[order_id][p]["sell"]
-                profit_item = sell - buy
-                owner_invoice_details.append(f"{p} - شراء: {format_float(buy)}, بيع: {format_float(sell)}, ربح: {format_float(profit_item)}")
+                profit = sell - buy
+                owner_invoice_details.append(f"{p} - شراء: {format_float(buy)}, بيع: {format_float(sell)}, ربح: {format_float(profit)}")
             else:
                 owner_invoice_details.append(f"{p} - (لم يتم تسعيره بعد)")
 
