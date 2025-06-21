@@ -50,7 +50,7 @@ save_lock = threading.Lock()
 save_timer = None
 save_pending = False
 
-# دالة تحميل JSON بشكل آمن
+# دالة تحميل JSON بشكل آمن (يمكن نقلها إلى ملف utils/data_manager لاحقاً)
 def load_json_file(filepath, default_value, var_name):
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     if os.path.exists(filepath):
@@ -66,8 +66,9 @@ def load_json_file(filepath, default_value, var_name):
     logger.info(f"{var_name} file not found or corrupted, initializing to default.")
     return default_value
 
-# دالة حفظ البيانات إلى القرص
+# دالة حفظ البيانات إلى القرص (يجب أن تكون عامة ويمكن الوصول إليها)
 def _save_data_to_disk_global():
+    # الوصول إلى المتغيرات العالمية مباشرةً
     global orders, pricing, invoice_numbers, daily_profit, last_button_message
     with save_lock:
         os.makedirs(DATA_DIR, exist_ok=True)
@@ -111,8 +112,34 @@ def schedule_save_global():
     save_timer.start()
     logger.info("Global data save scheduled with 0.5 sec delay.")
 
-# تحميل البيانات عند بدء تشغيل البوت
-load_data()
+# ✅ دالة تحميل البيانات عند بدء تشغيل البوت (تم تغيير موقعها)
+def load_data():
+    global orders, pricing, invoice_numbers, daily_profit, last_button_message
+
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+    orders_temp = load_json_file(ORDERS_FILE, {}, "orders")
+    orders.clear()
+    orders.update({str(k): v for k, v in orders_temp.items()})
+
+    pricing_temp = load_json_file(PRICING_FILE, {}, "pricing")
+    pricing.clear()
+    pricing.update({str(pk): pv for pk, pv in pricing_temp.items()})
+    for oid in pricing:
+        if isinstance(pricing[oid], dict):
+            pricing[oid] = {str(pk): pv for pk, pv in pricing[oid].items()} # Ensure inner keys are strings too
+
+    invoice_numbers_temp = load_json_file(INVOICE_NUMBERS_FILE, {}, "invoice_numbers")
+    invoice_numbers.clear()
+    invoice_numbers.update({str(k): v for k, v in invoice_numbers_temp.items()})
+
+    daily_profit = load_json_file(DAILY_PROFIT_FILE, 0.0, "daily_profit")
+    
+    last_button_message_temp = load_json_file(LAST_BUTTON_MESSAGE_FILE, {}, "last_button_message")
+    last_button_message.clear()
+    last_button_message.update({str(k): v for k, v in last_button_message_temp.items()})
+
+    logger.info(f"Initial load complete. Orders: {len(orders)}, Pricing entries: {len(pricing)}, Daily Profit: {daily_profit}")
 
 # تهيئة ملف عداد الفواتير
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -126,6 +153,9 @@ def get_invoice_number():
     with open(COUNTER_FILE, "w") as f:
         f.write(str(current + 1))
     return current
+
+# ✅ استدعاء دالة load_data() هنا، بعد تعريفها
+load_data()
 
 # حالات المحادثة
 ASK_BUY, ASK_SELL, ASK_PLACES_COUNT = range(3)
@@ -762,7 +792,6 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
 from urllib.parse import quote
 
 async def show_final_options(chat_id, context, user_id, order_id, message_prefix=None):
-    # الوصول إلى المتغيرات من context.application.bot_data
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
     invoice_numbers = context.application.bot_data['invoice_numbers']
@@ -1005,7 +1034,7 @@ async def start_new_order_callback(update: Update, context: ContextTypes.DEFAULT
         if query.message:
             context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
 
-        await query.message.reply_text("تمام، دز الطلبية الجديدة كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", parse_mode="Markdown")
+        await query.message.reply_text("تمام، دز الطلبية الجديدة كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون.\n*السطر الثاني:* رقم هاتف الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", parse_mode="Markdown")
         
         return ConversationHandler.END
     except Exception as e:
