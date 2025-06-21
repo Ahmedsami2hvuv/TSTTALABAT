@@ -1060,106 +1060,65 @@ zone_handlers = []
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
+    # إضافة أي handlers مخصصة للـ zones
     for handler in zone_handlers:
         app.add_handler(handler)
-    # Handlers لا تدخل في أي ConversationHandler (مثل الـ /start والأوامر الإدارية)
-app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^الارباح$|^ارباح$"), show_profit))
-app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^صفر$|^تصفير$"), reset_all))
-app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
-app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^التقارير$|^تقرير$|^تقارير$"), show_report))
-app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
-app.add_handler(CallbackQueryHandler(edit_prices, pattern="^edit_prices_"))
-app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern="^start_new_order$"))
 
-# ✅ ConversationHandler لتسعير المنتجات
-order_creation_conv_handler = ConversationHandler(
-    entry_points=[
-        MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
-        CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$")
-    ],
-    states={
-        ASK_BUY: [
-            MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_buy_price),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price)
-        ],
-        ASK_SELL: [
-            MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_sell_price),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sell_price)
-        ]
-    },
-    fallbacks=[
-        CommandHandler("cancel", lambda update, context: ConversationHandler.END),
-        MessageHandler(filters.ALL, lambda update, context: ConversationHandler.END)
-    ]
-)
+    # Handlers خارج المحادثة
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^الارباح$|^ارباح$"), show_profit))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^صفر$|^تصفير$"), reset_all))
+    app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^التقارير$|^تقرير$|^تقارير$"), show_report))
+    app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
+    app.add_handler(CallbackQueryHandler(edit_prices, pattern="^edit_prices_"))
+    app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern="^start_new_order$"))
+    app.add_handler(CommandHandler("المناطق", list_zones))
 
-# ✅ أضف الـ ConversationHandler إلى التطبيق
-app.add_handler(order_creation_conv_handler)
-
-# ✅ بدء التشغيل
-app.run_polling()
-
-    # ConversationHandler لعدد المحلات
-    # يجب أن يكون هذا الـ ConversationHandler قبل الـ ConversationHandler الخاص بإنشاء الطلب
-    # لضمان التقاط الكولباكات والنصوص المتعلقة بعدد المحلات أولاً.
+    # ✅ ConversationHandler لعدد المحلات
     places_conv_handler = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(handle_places_count_data, pattern=r"^places_data_[a-f0-9]{8}_\d+$"),
-            # هذا يستقبل الإدخال النصي لعدد المحلات فقط إذا كان البوت يطلب ذلك.
-            # ولا يمكن أن يكون entry point وحده بدون سياق واضح.
-            # سيتم تشغيل هذه الحالة فقط إذا كان المستخدم في حالة ASK_PLACES_COUNT من conv_handler آخر.
-            # لذلك لا يمكن أن يكون هنا كـ entry_point بالمعنى التقليدي إذا كان الهدف هو الانتقال إليه.
-            # للتبسيط، دالة request_places_count_standalone هي من تدعو handle_places_count_data بشكل مباشر
-            # بدلاً من محاولة "دخول" إلى هذا ConversationHandler.
         ],
         states={
             ASK_PLACES_COUNT: [
-                # هذا النمط يستقبل الأرقام العشرية والصحيحة لعدد المحلات
                 MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, handle_places_count_data),
-                # إذا دز شي مو رقمي في هذه الحالة، ننهي المحادثة أو نعطيه رسالة خطأ
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_places_count_data), # لإعادة الطلب برقم صحيح
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_places_count_data),
             ],
         },
         fallbacks=[
             CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-            # Fallback عام إذا المستخدم دز شي غير متوقع وهو في محادثة عدد المحلات
-            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END) # ينهي المحادثة
+            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
         ]
     )
-    app.add_handler(CommandHandler("المناطق", list_zones))
     app.add_handler(places_conv_handler)
 
-    
-    # ConversationHandler لإنشاء الطلب وتسعير المنتجات
-    # هذا يجب أن يكون بعد الـ places_conv_handler لأن أزرار places_conv_handler هي جزء من العملية النهائية.
-    # بما إن الـ `handle_places_count_data` يتم استدعاؤها مباشرةً بعد تسعير كل المنتجات
-    # و `request_places_count_standalone` هي اللي ترسلك أزرار عدد المحلات،
-    # فالمفروض ماكو تداخل بين الاثنين لأن كل ConversationHandler ينهي نفسه عند الانتهاء.
+    # ✅ ConversationHandler لإنشاء وتسعير الطلبات
     order_creation_conv_handler = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order), # يستلم أول رسالة للطلب
-            CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$") # يستلم كولباك اختيار المنتج
+            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
+            CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$")
         ],
         states={
             ASK_BUY: [
                 MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_buy_price),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price), # لإعادة الطلب برقم صحيح
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
             ],
             ASK_SELL: [
                 MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_sell_price),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sell_price), # لإعادة الطلب برقم صحيح
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sell_price),
             ]
         },
         fallbacks=[
             CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END) # ينهي المحادثة
+            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
         ]
     )
     app.add_handler(order_creation_conv_handler)
-    
+
     logger.info("Bot is running...")
     app.run_polling()
+
 from telegram import Update
 from telegram.ext import ContextTypes
 import json
