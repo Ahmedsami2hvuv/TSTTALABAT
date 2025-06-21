@@ -37,7 +37,6 @@ COUNTER_FILE = os.path.join(DATA_DIR, "invoice_counter.txt")
 LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
 
 # ✅ قراءة التوكن من المتغيرات البيئية (يفترض أنك ضايفه بـ Railway)
-# تم تصحيح اسم المتغير ليطابق ما هو معرف في Railway: TELEGRAM_BOT_TOKEN
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") 
 
 # ✅ متغيرات التخزين المؤقت في الذاكرة
@@ -168,14 +167,8 @@ load_data()
 ASK_BUY, ASK_SELL, ASK_PLACES_COUNT = range(3) 
 
 # جلب التوكن ومعرف المالك من متغيرات البيئة
-# هذا السطر كان يسبب المشكلة وتم تصحيح اسم المتغير ليتطابق مع TELEGRAM_BOT_TOKEN
-# OWNER_ID و OWNER_PHONE_NUMBER تم نقل تعريفهم إلى هنا ليكونوا في مكان واحد مع TOKEN
 OWNER_ID = int(os.getenv("OWNER_TELEGRAM_ID")) 
 OWNER_PHONE_NUMBER = "+9647733921468" 
-
-# تم حذف هذا التحقق من TOKEN لأنه كان يستخدم اسماً خاطئاً للمتغير
-# if TOKEN is None:
-#     raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set.")
 
 # هذا التحقق من OWNER_ID يبقى كما هو
 if OWNER_ID is None:
@@ -457,7 +450,7 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     
 async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global orders, pricing # تأكيد الوصول كـ global
+    global orders, pricing 
     try:
         user_id = str(update.message.from_user.id)
         logger.info(f"[{update.effective_chat.id}] Received message for buy price from user {user_id}: '{update.message.text}'. User data at start of receive_buy_price: {json.dumps(context.user_data.get(user_id), indent=2)}")
@@ -536,7 +529,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global orders, pricing # تأكيد الوصول كـ global
+    global orders, pricing 
     try:
         user_id = str(update.message.from_user.id)
         logger.info(f"[{update.effective_chat.id}] Received message for sell price from user {user_id}: '{update.message.text}'. User data at start of receive_sell_price: {json.dumps(context.user_data.get(user_id), indent=2)}")
@@ -616,7 +609,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ConversationHandler.END
 
 async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT_TYPE, user_id: str, order_id: str):
-    global orders # تأكيد الوصول كـ global
+    global orders 
     try:
         logger.info(f"[{chat_id}] request_places_count_standalone called for order {order_id} from user {user_id}. User data: {json.dumps(context.user_data.get(user_id), indent=2)}")
         context.user_data.setdefault(user_id, {})["current_active_order_id"] = order_id
@@ -653,7 +646,7 @@ async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT
         return ConversationHandler.END
         
 async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global daily_profit, orders # تأكيد الوصول كـ global
+    global daily_profit, orders 
     try:
         
         places = None
@@ -709,7 +702,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
                  msg_error = await context.bot.send_message(chat_id=chat_id, text="عذراً، ماكو طلبية حالية منتظر عدد محلاتها أو الطلبية قديمة جداً. الرجاء استخدم الأزرار لتحديد عدد المحلات، أو بدء طلبية جديدة.", parse_mode="Markdown")
                  context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
                  if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
-                     del context.user_data[user_id]["current_active_order_id"]
+                            del context.user_data[user_id]["current_active_order_id"]
                  return ConversationHandler.END 
 
             if not update.message.text.strip().isdigit(): 
@@ -735,7 +728,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
             logger.warning(f"[{chat_id}] handle_places_count_data: No valid places count or order ID to process.")
             await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من فهم عدد المحلات أو الطلبية. الرجاء إدخال رقم صحيح أو البدء بطلبية جديدة.")
             if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
-                     del context.user_data[user_id]["current_active_order_id"]
+                            del context.user_data[user_id]["current_active_order_id"]
                  return ConversationHandler.END 
 
         if 'places_count_message' in context.user_data[user_id]:
@@ -860,8 +853,8 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             if p in pricing.get(order_id, {}) and "buy" in pricing[order_id][p] and "sell" in pricing[order_id][p]:
                 buy = pricing[order_id][p]["buy"]
                 sell = pricing[order_id][p]["sell"]
-                profit = sell - buy
-                owner_invoice_details.append(f"{p} - شراء: {format_float(buy)}, بيع: {format_float(sell)}, ربح: {format_float(profit)}")
+                profit_item = sell - buy
+                owner_invoice_details.append(f"{p} - شراء: {format_float(buy)}, بيع: {format_float(sell)}, ربح: {format_float(profit_item)}")
             else:
                 owner_invoice_details.append(f"{p} - (لم يتم تسعيره بعد)")
 
