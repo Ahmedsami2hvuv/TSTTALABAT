@@ -13,6 +13,15 @@ from telegram.ext import (
     MessageHandler, CallbackQueryHandler, ConversationHandler, filters
 )
 
+# ✅ استيراد الدوال الخاصة بالمناطق من الملف الجديد
+from features.delivery_zones import (
+    list_zones, show_zone_options,
+    start_add_zone, receive_zone_name, receive_zone_price,
+    start_remove_zone, receive_remove_name,
+    start_edit_zone, select_zone_to_edit, apply_zone_edit,
+    get_delivery_price # دالة جلب سعر التوصيل
+)
+
 # ✅ تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -29,7 +38,7 @@ INVOICE_NUMBERS_FILE = os.path.join(DATA_DIR, "invoice_numbers.json")
 DAILY_PROFIT_FILE = os.path.join(DATA_DIR, "daily_profit.json")
 COUNTER_FILE = os.path.join(DATA_DIR, "invoice_counter.txt")
 LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
-ZONES_FILE = os.path.join(DATA_DIR, "zones.json")  # ⚠️ مهم جداً
+# ZONES_FILE = os.path.join(DATA_DIR, "zones.json") # هذا المسار صار يتم إدارته من ملف delivery_zones.py
 
 # ✅ قراءة التوكن من المتغيرات البيئية (يفترض أنك ضايفه بـ Railway)
 TOKEN = os.getenv("TOKEN")
@@ -40,7 +49,7 @@ pricing = {}
 invoice_numbers = {}
 daily_profit = 0.0
 last_button_message = {}
-zones = {}  # ← أيضاً مهم للواجهة مال المناطق
+zones = {}  # ← هذا المتغير كان يستخدم للواجهة مال المناطق، ممكن بعد ما نحتاجه أو نستخدمه لغرض آخر
 
 # تهيئة القفل لعمليات الحفظ
 save_lock = threading.Lock()
@@ -800,9 +809,8 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         import re
         delivery_fee = 0.0
         title = order.get('title', '')
-        match = re.search(r"(\d{3,5})", title)
-        if match:
-            delivery_fee = float(match.group(1))
+        # هنا استدعاء دالة جلب سعر التوصيل من ملف delivery_zones
+        delivery_fee = get_delivery_price(title) 
 
         final_total = total_sell + extra_cost + delivery_fee
 
@@ -1121,7 +1129,7 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"[{update.effective_chat.id}] Error in show_report: {e}", exc_info=True)
         await update.message.reply_text("عذراً، حدث خطأ أثناء عرض التقرير.")
-zone_handlers = []
+
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
@@ -1176,14 +1184,15 @@ def main():
     app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
     app.add_handler(CallbackQueryHandler(edit_prices, pattern="^edit_prices_"))
     app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern="^start_new_order$"))
+    # هنا استدعاء show_zone_options من الملف الجديد
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(مناطق|المناطق)$"), show_zone_options))
 
-    # ✅ Handlers أزرار المناطق
+    # ✅ Handlers أزرار المناطق (باستخدام الدوال المستوردة)
     app.add_handler(CallbackQueryHandler(start_add_zone, pattern="^add_zone$"))
     app.add_handler(CallbackQueryHandler(start_remove_zone, pattern="^remove_zone$"))
     app.add_handler(CallbackQueryHandler(start_edit_zone, pattern="^edit_zone$"))
 
-    # ✅ ConversationHandlers للمناطق
+    # ✅ ConversationHandlers للمناطق (باستخدام الدوال المستوردة)
     app.add_handler(add_zone_conv_handler)
     app.add_handler(remove_zone_conv_handler)
     app.add_handler(edit_zone_conv_handler) # إضافة محادثة تعديل المناطق
@@ -1232,178 +1241,5 @@ def main():
     # ✅ تشغيل البوت
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-# 🔁 المسار إلى ملف المناطق
-ZONES_FILE = "data/delivery_zones.json"
-
-# ✅ عرض المناطق الحالية
-async def list_zones(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        with open(ZONES_FILE, "r", encoding="utf-8") as f:
-            zones = json.load(f)
-        if not zones:
-            await update.message.reply_text("لا توجد مناطق مسجلة حاليًا.")
-        else:
-            reply = "📍 المناطق الحالية وسعر التوصيل:\n\n"
-            for area, price in zones.items():
-                reply += f"▫️ {area} — {price} دينار\n"
-            await update.message.reply_text(reply)
-    except FileNotFoundError:
-        await update.message.reply_text("⚠️ ملف المناطق غير موجود!")
-
-# ✅ عرض واجهة أزرار المناطق
-async def show_zone_options(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        with open(ZONES_FILE, "r", encoding="utf-8") as f:
-            zones = json.load(f)
-    except FileNotFoundError:
-        zones = {}
-
-    if not zones:
-        reply = "⚠️ لا توجد مناطق مسجلة حالياً."
-    else:
-        reply = "📍 المناطق الحالية وسعر التوصيل:\n\n"
-        for area, price in zones.items():
-            reply += f"▫️ {area} — {price} دينار\n"
-
-    keyboard = [
-        [InlineKeyboardButton("➕ إضافة منطقة", callback_data="add_zone")],
-        [InlineKeyboardButton("🗑️ إزالة منطقة", callback_data="remove_zone")],
-        [InlineKeyboardButton("📝 تعديل منطقة", callback_data="edit_zone")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await update.message.reply_text(reply, reply_markup=reply_markup)
-
-# ✅ بدء إضافة منطقة
-async def start_add_zone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    await update.callback_query.message.reply_text("📝 اكتب اسم المنطقة الجديدة:")
-    return "WAITING_FOR_ZONE_NAME"
-
-# ✅ استقبال اسم المنطقة
-async def receive_zone_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["new_zone_name"] = update.message.text.strip()
-    await update.message.reply_text("💰 اكتب سعر التوصيل لها:")
-    return "WAITING_FOR_ZONE_PRICE"
-
-# ✅ استقبال سعر المنطقة
-async def receive_zone_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    zone_name = context.user_data.get("new_zone_name")
-    try:
-        price = int(update.message.text.strip())
-    except ValueError:
-        return await update.message.reply_text("❌ السعر يجب أن يكون رقمًا صحيحًا.")
-
-    try:
-        with open(ZONES_FILE, "r", encoding="utf-8") as f:
-            zones = json.load(f)
-    except FileNotFoundError:
-        zones = {}
-
-    zones[zone_name] = price
-    with open(ZONES_FILE, "w", encoding="utf-8") as f:
-        json.dump(zones, f, ensure_ascii=False, indent=2)
-
-    await update.message.reply_text(f"✅ تم حفظ المنطقة: {zone_name} بسعر {price} دينار.")
-    return ConversationHandler.END
-
-# ✅ بدء حذف منطقة
-async def start_remove_zone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.callback_query.answer()
-    await update.callback_query.message.reply_text("✂️ اكتب اسم المنطقة التي تريد حذفها:")
-    return "WAITING_FOR_REMOVE_NAME"
-
-# ✅ استقبال اسم المنطقة للحذف
-async def receive_remove_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    area_to_remove = update.message.text.strip()
-
-    try:
-        with open(ZONES_FILE, "r", encoding="utf-8") as f:
-            zones = json.load(f)
-    except FileNotFoundError:
-        zones = {}
-
-    if area_to_remove not in zones:
-        await update.message.reply_text("❌ هذه المنطقة غير موجودة.")
-        return ConversationHandler.END
-
-    del zones[area_to_remove]
-    with open(ZONES_FILE, "w", encoding="utf-8") as f:
-        json.dump(zones, f, ensure_ascii=False, indent=2)
-
-    await update.message.reply_text(f"🗑️ تم حذف المنطقة: {area_to_remove}")
-    return ConversationHandler.END
-
-# ✅ بدء تعديل منطقة
-async def start_edit_zone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    try:
-        with open(ZONES_FILE, "r", encoding="utf-8") as f:
-            zones = json.load(f)
-    except:
-        zones = {}
-
-    if not zones:
-        await query.edit_message_text("⚠️ لا توجد مناطق حالياً.")
-        return ConversationHandler.END # Added return here
-
-    keyboard = []
-    for zone_name in zones:
-        keyboard.append([InlineKeyboardButton(zone_name, callback_data=f"edit_{zone_name}")])
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text("🛠️ اختر المنطقة التي تريد تعديلها:", reply_markup=reply_markup)
-    return ConversationHandler.WAITING # Return a state to keep conversation active
-
-# ✅ اختيار المنطقة لتعديلها
-async def select_zone_to_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    selected_zone = query.data.replace("edit_", "")
-    context.user_data["zone_to_edit"] = selected_zone
-
-    await query.edit_message_text(
-        f"✏️ أرسل الاسم الجديد أو السعر الجديد لمنطقة **{selected_zone}**.\n"
-        "مثال:\n`الزبير`\nأو:\n`الزبير - 4000`", parse_mode="Markdown"
-    )
-    return "WAITING_FOR_EDIT_INPUT"
-
-# ✅ تطبيق تعديل المنطقة
-async def apply_zone_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    zone_name = context.user_data.get("zone_to_edit")
-
-    try:
-        with open(ZONES_FILE, "r", encoding="utf-8") as f:
-            zones = json.load(f)
-    except:
-        zones = {}
-
-    if "-" in text:
-        parts = text.split("-")
-        new_name = parts[0].strip()
-        try:
-            new_price = int(parts[1].strip())
-        except ValueError: # Changed 'except' to 'except ValueError'
-            await update.message.reply_text("❌ السعر غير صحيح. الرجاء إدخال رقم صحيح.")
-            return "WAITING_FOR_EDIT_INPUT"
-    else:
-        new_name = text
-        new_price = zones.get(zone_name, 0)
-
-    # Handle cases where the old zone_name might not exist if it was just renamed
-    if zone_name in zones:
-        zones.pop(zone_name, None)
-    
-    zones[new_name] = new_price
-
-    with open(ZONES_FILE, "w", encoding="utf-8") as f:
-        json.dump(zones, f, ensure_ascii=False, indent=2)
-
-    await update.message.reply_text(f"✅ تم تعديل المنطقة بنجاح:\n📍 الاسم: {new_name}\n💰 السعر: {new_price} د.ع")
-    return ConversationHandler.END
-    
 if __name__ == "__main__":
     main()
