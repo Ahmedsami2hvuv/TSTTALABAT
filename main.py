@@ -42,6 +42,11 @@ daily_profit = 0.0
 last_button_message = {}
 zones = {}  # ← أيضاً مهم للواجهة مال المناطق
 
+# تهيئة القفل لعمليات الحفظ
+save_lock = threading.Lock()
+save_timer = None
+save_pending = False
+
 # تحميل البيانات عند بدء تشغيل البوت
 def load_data():
     global orders, pricing, invoice_numbers, daily_profit, last_button_message
@@ -380,7 +385,67 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
         await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء عرض الأزرار. الرجاء بدء طلبية جديدة.")
 
 
+async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        query = update.callback_query
+        await query.answer()
+        
+        user_id = str(query.from_user.id)
+        logger.info(f"[{query.message.chat_id}] Product selected callback from user {user_id}: {query.data}. User data at product_selected start: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
 
+        # Add message to delete list
+        context.user_data.setdefault(user_id, {}).setdefault('messages_to_delete', []).append({
+            'chat_id': query.message.chat_id,
+            'message_id': query.message.message_id
+        })
+        logger.info(f"[{query.message.chat_id}] Added product selection button message {query.message.message_id} to delete queue.")
+        
+        order_id, product = query.data.split('|', 1)
+        
+        if order_id not in orders:
+            logger.warning(f"[{query.message.chat_id}] Product selected: Order ID '{order_id}' not found.")
+            msg_error = await query.edit_message_text("عذراً، الطلبية لم تعد موجودة. الرجاء بدء طلبية جديدة.")
+            context.user_data[user_id]['messages_to_delete'].append({
+                'chat_id': msg_error.chat_id,
+                'message_id': msg_error.message_id
+            })
+            return ConversationHandler.END
+
+        # Store selected product and order_id in user_data
+        context.user_data[user_id]["order_id"] = order_id
+        context.user_data[user_id]["product"] = product
+        
+        # Clear buy_price from previous product if any
+        context.user_data[user_id].pop("buy_price", None)
+
+        logger.info(f"[{query.message.chat_id}] Product '{product}' selected for order '{order_id}'. User data after product selection: {json.dumps(context.user_data.get(user_id), indent=2)}")
+        
+        # Check if prices already exist and suggest editing
+        current_buy = pricing.get(order_id, {}).get(product, {}).get("buy")
+        current_sell = pricing.get(order_id, {}).get(product, {}).get("sell")
+
+        if current_buy is not None and current_sell is not None:
+            msg_edit = await query.message.reply_text(
+                f"سعر *'{product}'* حالياً هو شراء: {format_float(current_buy)}، بيع: {format_float(current_sell)}.\n"
+                "شنو سعر الشراء الجديد؟ (أو دز نفس السعر إذا ماكو تغيير)", parse_mode="Markdown"
+            )
+            context.user_data[user_id]['messages_to_delete'].append({
+                'chat_id': msg_edit.chat_id, 
+                'message_id': msg_edit.message_id
+            })
+            return ASK_BUY # Go to ASK_BUY state
+        else:
+            msg_new = await query.message.reply_text(f"تمام، بيش اشتريت *'{product}'*؟", parse_mode="Markdown")
+            context.user_data[user_id]['messages_to_delete'].append({
+                'chat_id': msg_new.chat_id, 
+                'message_id': msg_new.message_id
+            })
+            return ASK_BUY # Go to ASK_BUY state
+
+    except Exception as e:
+        logger.error(f"[{update.effective_chat.id}] Error in product_selected: {e}", exc_info=True)
+        await update.callback_query.message.reply_text("عذراً، حدث خطأ أثناء اختيار المنتج. الرجاء بدء طلبية جديدة.")
+        return ConversationHandler.END
     
 async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -1085,6 +1150,23 @@ def main():
         fallbacks=[]
     )
 
+    # ✅ ConversationHandler لتعديل المناطق
+    edit_zone_conv_handler = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(start_edit_zone, pattern="^edit_zone$"),
+            CallbackQueryHandler(select_zone_to_edit, pattern=r"^edit_.+$")
+        ],
+        states={
+            "WAITING_FOR_EDIT_INPUT": [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, apply_zone_edit)
+            ],
+        },
+        fallbacks=[
+            CommandHandler("cancel", lambda u, c: ConversationHandler.END),
+            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
+        ]
+    )
+
     # ✅ Handlers خارج المحادثة
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^الارباح$|^ارباح$"), show_profit))
@@ -1104,6 +1186,7 @@ def main():
     # ✅ ConversationHandlers للمناطق
     app.add_handler(add_zone_conv_handler)
     app.add_handler(remove_zone_conv_handler)
+    app.add_handler(edit_zone_conv_handler) # إضافة محادثة تعديل المناطق
 
     # ✅ ConversationHandler لعدد المحلات
     places_conv_handler = ConversationHandler(
@@ -1147,6 +1230,7 @@ def main():
     app.add_handler(order_creation_conv_handler)
 
     # ✅ تشغيل البوت
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 # 🔁 المسار إلى ملف المناطق
 ZONES_FILE = "data/delivery_zones.json"
@@ -1263,7 +1347,7 @@ async def start_edit_zone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not zones:
         await query.edit_message_text("⚠️ لا توجد مناطق حالياً.")
-        return
+        return ConversationHandler.END # Added return here
 
     keyboard = []
     for zone_name in zones:
@@ -1271,6 +1355,7 @@ async def start_edit_zone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text("🛠️ اختر المنطقة التي تريد تعديلها:", reply_markup=reply_markup)
+    return ConversationHandler.WAITING # Return a state to keep conversation active
 
 # ✅ اختيار المنطقة لتعديلها
 async def select_zone_to_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1301,14 +1386,17 @@ async def apply_zone_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         new_name = parts[0].strip()
         try:
             new_price = int(parts[1].strip())
-        except:
-            await update.message.reply_text("❌ السعر غير صحيح.")
+        except ValueError: # Changed 'except' to 'except ValueError'
+            await update.message.reply_text("❌ السعر غير صحيح. الرجاء إدخال رقم صحيح.")
             return "WAITING_FOR_EDIT_INPUT"
     else:
         new_name = text
         new_price = zones.get(zone_name, 0)
 
-    zones.pop(zone_name, None)
+    # Handle cases where the old zone_name might not exist if it was just renamed
+    if zone_name in zones:
+        zones.pop(zone_name, None)
+    
     zones[new_name] = new_price
 
     with open(ZONES_FILE, "w", encoding="utf-8") as f:
