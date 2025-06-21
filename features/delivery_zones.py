@@ -1,65 +1,46 @@
 import json
 import os
-import requests # تم إضافة المكتبة لعمل طلبات HTTP
-import time     # تم إضافة المكتبة لاستخدام الوقت في الـ Cache
-import logging  # تم استخدامها لتسجيل رسائل التتبع والأخطاء
+import logging
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes 
+from telegram.ext import ContextTypes
 
-# تم تعريف مسار GitHub Raw URL للملف
-GITHUB_ZONES_RAW_URL = "https://raw.githubusercontent.com/Ahmedsami2hvuv/TSTTALABAT/refs/heads/main/data/delivery_zones.json"
-
-# إعداد الـ logging لهذا الملف (للتتبع)
+# ✅ إعداد الـ logging لهذا الملف (للتتبع)
 logger = logging.getLogger(__name__)
 
-# ذاكرة تخزين مؤقتة للمناطق
-_zones_cache = None
-_last_load_time = 0
-_CACHE_LIFETIME_SECONDS = 300 # صلاحية الذاكرة المؤقتة: 5 دقائق (300 ثانية)
+# ✅ تعريف مسار الملف المحلي للمناطق
+# بما أن الملف هو data/delivery_zones.json، سنبني المسار إليه
+# os.path.dirname(__file__) يعطي مسار الملف الحالي (features)
+# os.path.join() يجمع المسارات بشكل صحيح
+CURRENT_DIR = os.path.dirname(__file__)
+PARENT_DIR = os.path.dirname(CURRENT_DIR) # هذا يرجع للمجلد الرئيسي (اللي بيه data folder)
+DELIVERY_ZONES_FILE_PATH = os.path.join(PARENT_DIR, "data", "delivery_zones.json")
 
-# دالة لتحميل بيانات المناطق. ستحاول التحميل من GitHub، وتستخدم ذاكرة مؤقتة.
+
+# دالة لتحميل بيانات المناطق من الملف المحلي.
 def load_zones():
-    global _zones_cache, _last_load_time
-
-    # التحقق من صلاحية الذاكرة المؤقتة: إذا كانت البيانات موجودة وصالحة، ارجعها مباشرة.
-    if _zones_cache is not None and (time.time() - _last_load_time) < _CACHE_LIFETIME_SECONDS:
-        logger.info("Using cached zones data.")
-        return _zones_cache
-
-    logger.info("Attempting to load zones from GitHub.")
+    logger.info(f"Attempting to load zones from local file: {DELIVERY_ZONES_FILE_PATH}")
     try:
-        response = requests.get(GITHUB_ZONES_RAW_URL)
-        response.raise_for_status() # تثير خطأ إذا كان الرد HTTP غير ناجح (مثل 404 أو 500)
-        zones_data = response.json() # تحويل الرد إلى JSON
+        # ✅ التأكد من وجود الملف قبل محاولة فتحه
+        if not os.path.exists(DELIVERY_ZONES_FILE_PATH):
+            logger.error(f"Zones file not found at: {DELIVERY_ZONES_FILE_PATH}")
+            return {} # ارجع قاموس فارغ إذا الملف ما موجود
+
+        with open(DELIVERY_ZONES_FILE_PATH, "r", encoding="utf-8") as f:
+            zones_data = json.load(f) # قراءة الملف JSON
         
-        # تحديث الذاكرة المؤقتة بالبيانات الجديدة
-        _zones_cache = zones_data
-        _last_load_time = time.time()
-        logger.info(f"Successfully loaded zones from GitHub. Cache updated at {time.time()}")
+        logger.info(f"Successfully loaded zones from local file. Found {len(zones_data)} zones.")
         return zones_data
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error fetching zones from GitHub URL: {e}")
-        # إذا فشل جلب البيانات من GitHub، ارجع البيانات من الذاكرة المؤقتة إذا كانت موجودة (كخيار احتياطي).
-        if _zones_cache is not None:
-            logger.warning("Failed to fetch new zones, returning cached data.")
-            return _zones_cache
-        logger.error("No cached zones data available. Returning empty zones.")
-        return {} # ارجع قاموس فارغ إذا فشل الجلب ولا توجد بيانات مخزنة مؤقتًا.
     except json.JSONDecodeError as e:
-        # في حالة أن الرد من GitHub لم يكن بصيغة JSON صحيحة.
-        logger.error(f"Error decoding JSON from GitHub response: {e}. Response text (partial): {response.text[:200]}...")
-        if _zones_cache is not None:
-            logger.warning("Failed to decode new zones, returning cached data.")
-            return _zones_cache
-        logger.error("No cached zones data available. Returning empty zones.")
-        return {}
+        logger.error(f"Error decoding JSON from local zones file: {e}. File path: {DELIVERY_ZONES_FILE_PATH}")
+        return {} # ارجع قاموس فارغ إذا كان الملف JSON فيه خطأ
+    except Exception as e:
+        logger.error(f"An unexpected error occurred while loading zones from local file: {e}", exc_info=True)
+        return {} # ارجع قاموس فارغ لأي خطأ آخر
 
-# دالة save_zones تم حذفها لأن التعديل سيكون يدوياً على GitHub.
-
-# دالة لعرض قائمة المناطق الحالية فقط (بدون أزرار إدارة بما أن التعديل يدوياً).
+# دالة لعرض قائمة المناطق الحالية.
 async def list_zones(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    zones = load_zones() # تحميل المناطق الحالية من GitHub أو الذاكرة المؤقتة
+    zones = load_zones() # تحميل المناطق الحالية من الملف المحلي
 
     if not zones:
         text = "لا توجد مناطق مسجلة حالياً."
@@ -71,22 +52,36 @@ async def list_zones(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # لا توجد أزرار إدارة (إضافة/حذف) هنا، لأن التعديل سيكون يدوياً على GitHub.
     reply_markup = None 
 
-    # محاولة تعديل الرسالة السابقة إذا كانت موجودة (خاصة بالكولباك)، وإلا إرسال رسالة جديدة.
     if update.callback_query and update.callback_query.message:
         try:
             await update.callback_query.message.edit_text(text, reply_markup=reply_markup)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to edit message in list_zones (callback query), sending new one. Error: {e}")
             await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=reply_markup)
     elif update.message:
         await update.message.reply_text(text, reply_markup=reply_markup)
 
-# دوال ask_zone_name, handle_zone_edit, و add_zones_bulk
-# تم حذفها من هذا الملف لأن التعديل سيكون يدوياً على GitHub، ولن تتم هذه العمليات من خلال البوت.
-
 # دالة لاستخراج سعر التوصيل من سطر عنوان الطلب.
 def get_delivery_price(order_title_line):
-    zones = load_zones() # تحميل المناطق الحالية من GitHub
-    for zone_name, price in zones.items():
+    zones = load_zones() # تحميل المناطق الحالية من الملف المحلي
+    # هنا لازم نتأكد من مطابقة المنطقة، الأفضل نسويها بأكثر دقة
+    # ممكن يكون اكو جزء من اسم منطقة موجود بمنطقة ثانية (مثلاً: "بغداد الجديدة" و "الجديدة")
+    # لازم ندور على الأطول أول
+    
+    # تحويل مفاتيح القاموس إلى قائمة وترتيبها تنازلياً حسب الطول
+    sorted_zone_names = sorted(zones.keys(), key=len, reverse=True)
+
+    for zone_name in sorted_zone_names:
+        # التأكد إن المنطقة موجودة ككلمة كاملة أو جزء من العنوان بشكل منطقي
+        # يعني "الاسمدة" لازم تكون "الاسمدة" مو "الاسمدة والمستلزمات"
+        # أبسط طريقة هي التأكد إن الكلمة موجودة
         if zone_name in order_title_line:
-            return price
+            logger.info(f"Found delivery zone '{zone_name}' in title '{order_title_line}' with price {zones[zone_name]}.")
+            return zones[zone_name]
+    
+    logger.info(f"No matching delivery zone found in title '{order_title_line}'. Returning 0.")
     return 0
+
+# الدوال الخاصة بإدارة المناطق من البوت (ask_zone_name, handle_zone_edit, add_zones_bulk)
+# لا داعي لوجودها بما أن التعديل سيتم يدويا على GitHub.
+# يفضل حذفها من main.py أيضاً.
