@@ -38,7 +38,7 @@ LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
 
 # ✅ قراءة التوكن من المتغيرات البيئية (يفترض أنك ضايفه بـ Railway)
 # تم نقل هذا السطر إلى هنا ليتم تعريفه قبل استخدامه في دالة main()
-TOKEN = os.getenv("TOKEN") # هذا هو السطر الصحيح اللي بيه اسم المتغير اللي أنت ضايفه بالريلواي
+TOKEN = os.getenv("TOKEN") 
 
 # ✅ متغيرات التخزين المؤقت في الذاكرة
 orders = {}
@@ -173,8 +173,11 @@ ASK_BUY, ASK_SELL, ASK_PLACES_COUNT = range(3)
 OWNER_ID = int(os.getenv("OWNER_TELEGRAM_ID")) 
 OWNER_PHONE_NUMBER = "+9647733921468" 
 
-if TOKEN is None:
-    raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set.")
+# هذا التحقق من TOKEN تم حذفه لأنه كان يبحث عن TELEGRAM_BOT_TOKEN
+# if TOKEN is None:
+#     raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set.")
+
+# هذا التحقق من OWNER_ID يبقى كما هو
 if OWNER_ID is None:
     raise ValueError("OWNER_TELEGRAM_ID environment variable not set.")
 
@@ -923,7 +926,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء عرض الفاتورة النهائية. الرجاء بدء طلبية جديدة.")
     
 async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global orders, pricing # تأكيد الوصول كـ global
+    global orders, pricing 
     try:
         query = update.callback_query
         await query.answer()
@@ -1107,7 +1110,7 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"**إجمالي عدد المنتجات المباعة (في الطلبات المعالجة):** {total_products}\n"
             f"**أكثر منتج تم طلبه:** {top_product_str}\n\n"
             f"**مجموع الشراء الكلي (للطلبات المعالجة):** {format_float(total_buy_all_orders)}\n"
-            f"**مجموع البيع الكلي (للطلبات المعالجة):** {format_float(total_sell_all_orders)}\n"
+            f"**مجموع البيع الكلي (للطلبات المعالجة):** {format_float(total_sell_all_orders)}\n" 
             f"**صافي الربح الكلي (للطلبات المعالجة):** {format_float(total_sell_all_orders - total_buy_all_orders)}\n" 
             f"**الربح التراكمي في البوت (منذ آخر تصفير):** {format_float(daily_profit)} دينار\n\n"
             f"**--- تفاصيل الطلبات ---**\n" + "\n".join(details)
