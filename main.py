@@ -224,6 +224,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def receive_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print("📩 تم استقبال رسالة جديدة داخل receive_order")
     try:
         logger.info(f"[{update.effective_chat.id}] Processing order from: {update.effective_user.id} - Message ID: {update.message.message_id}. User data: {json.dumps(context.user_data.get(str(update.effective_user.id), {}), indent=2)}")
         await process_order(update, context, update.message)
@@ -1129,6 +1130,7 @@ def main():
     app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
     app.add_handler(CallbackQueryHandler(edit_prices, pattern="^edit_prices_"))
     app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern="^start_new_order$"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order))
     app.run_polling()
 
     # ConversationHandler لعدد المحلات
