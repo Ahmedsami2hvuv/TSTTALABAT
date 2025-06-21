@@ -917,6 +917,8 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             f"رقم الفاتورة: {invoice}",
             f"عنوان الزبون: {order['title']}"
         ]
+        # هنا ممكن نضيف سطر رقم الزبون لاحقاً، إذا تم توفير آلية لإدخاله
+
         for p in order["products"]:
             if p in pricing.get(order_id, {}) and "buy" in pricing[order_id][p] and "sell" in pricing[order_id][p]:
                 buy = pricing[order_id][p]["buy"]
@@ -931,7 +933,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             f"\nالمجموع شراء: {format_float(total_buy)}",
             f"الــربـــح الكلي: {format_float(net_profit)}", # تم تغيير التسمية
             f"التــجـهيز ({current_places}) : {format_float(extra_cost)}", # تم تغيير التسمية والشكل
-            f"مـــــجموع بيع: {format_float(total_sell)}" # تم تغيير التسمية والموقع
+            f"مـــــجموع بيع: {format_float(total_sell + extra_cost)}" # تم تغيير التسمية والموقع، واحتساب المجموع المطلوب
         ])
         if delivery_fee > 0:
             owner_invoice_details.append(f"أجرة التوصيل: {format_float(delivery_fee)}")
@@ -965,9 +967,10 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             logger.error(f"[{chat_id}] Could not send admin invoice to OWNER_ID {OWNER_ID}: {e}")
             await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من إرسال فاتورة الإدارة إلى خاصك.")
 
-        # أزرار التحكم
+        # أزرار التحكم - تم إضافة زر "رفع الطلبية" الجديد هنا
         keyboard = [
             [InlineKeyboardButton("1️⃣ تعديل الأسعار", callback_data=f"edit_prices_{order_id}")],
+            [InlineKeyboardButton("2️⃣ رفع الطلبية", url="https://d.ksebstor.site/client/96f743f604a4baf145939298")], # الزر الجديد
             [InlineKeyboardButton("3️⃣ إرسال فاتورة الزبون (واتساب)", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_customer_text}")],
             [InlineKeyboardButton("4️⃣ إنشاء طلب جديد", callback_data="start_new_order")]
         ]
