@@ -859,7 +859,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         logger.info(f"[{chat_id}] Daily profit after adding {net_profit} for order {order_id}: {context.application.bot_data['daily_profit']}")
         context.application.create_task(save_data_in_background(context))
 
-        # فاتورة الزبون - تم تعديل هذا القسم بالكامل ليتوافق مع طلبك الجديد
+        # فاتورة الزبون - هذا الجزء تم تعديله مسبقاً
         customer_invoice_lines = [
             "**أبو الأكبر للتوصيل**",
             f"رقم الفاتورة: {invoice}",
@@ -912,7 +912,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         except Exception as e:
             logger.error(f"[{chat_id}] Could not send customer invoice as message: {e}")
 
-        # فاتورة الإدارة (لم يتم تعديلها بناءً على طلبك، ستبقى كما هي)
+        # فاتورة الإدارة - تم تعديل هذا الجزء ليتوافق مع طلبك الجديد
         owner_invoice_details = [
             f"رقم الفاتورة: {invoice}",
             f"عنوان الزبون: {order['title']}"
@@ -926,15 +926,16 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             else:
                 owner_invoice_details.append(f"{p} - (لم يتم تسعيره بعد)")
 
+        # هنا تم تعديل ترتيب وتسميات الأسطر
         owner_invoice_details.extend([
             f"\nالمجموع شراء: {format_float(total_buy)}",
-            f"المجموع بيع: {format_float(total_sell)}",
-            f"الربح الكلي: {format_float(net_profit)}",
-            f"عدد المحلات: {current_places} (+{format_float(extra_cost)})"
+            f"الــربـــح الكلي: {format_float(net_profit)}", # تم تغيير التسمية
+            f"التــجـهيز ({current_places}) : {format_float(extra_cost)}", # تم تغيير التسمية والشكل
+            f"مـــــجموع بيع: {format_float(total_sell)}" # تم تغيير التسمية والموقع
         ])
         if delivery_fee > 0:
             owner_invoice_details.append(f"أجرة التوصيل: {format_float(delivery_fee)}")
-        owner_invoice_details.append(f"السعر الكلي: {format_float(final_total)}")
+        owner_invoice_details.append(f"الــســعر الكلي: {format_float(final_total)}") # تم تغيير التسمية
 
         final_owner_invoice_text = "\n".join(owner_invoice_details)
 
