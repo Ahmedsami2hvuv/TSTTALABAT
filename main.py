@@ -38,7 +38,7 @@ LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
 
 # ✅ قراءة التوكن من المتغيرات البيئية (يفترض أنك ضايفه بـ Railway)
 # تم نقل هذا السطر إلى هنا ليتم تعريفه قبل استخدامه في دالة main()
-TOKEN = os.getenv("TOKEN")
+TOKEN = os.getenv("TOKEN") # هذا هو السطر الصحيح اللي بيه اسم المتغير اللي أنت ضايفه بالريلواي
 
 # ✅ متغيرات التخزين المؤقت في الذاكرة
 orders = {}
@@ -168,7 +168,8 @@ load_data()
 ASK_BUY, ASK_SELL, ASK_PLACES_COUNT = range(3) 
 
 # جلب التوكن ومعرف المالك من متغيرات البيئة
-# هذا السطر أيضا كان مكانه غلط، تم نقله إلى بداية الملف مع TOKEN
+# هذا السطر كان يسبب المشكلة، تم حذفه
+# TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") 
 OWNER_ID = int(os.getenv("OWNER_TELEGRAM_ID")) 
 OWNER_PHONE_NUMBER = "+9647733921468" 
 
@@ -293,7 +294,7 @@ async def process_order(update, context, message, edited=False):
                     
     if not order_id: 
         order_id = str(uuid.uuid4())[:8]
-        invoice_no = get_invoice_number() # هذه الدالة معرفة في main.py
+        invoice_no = get_invoice_number() 
         
         orders[order_id] = {"user_id": user_id, "title": title, "products": products, "places_count": 0} 
         pricing[order_id] = {p: {} for p in products}
@@ -394,7 +395,7 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
 
 
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global orders, pricing
+    global orders, pricing 
     try: 
         query = update.callback_query
         await query.answer()
