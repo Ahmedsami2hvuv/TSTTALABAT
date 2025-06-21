@@ -15,11 +15,12 @@ from telegram.ext import (
 
 # ✅ استيراد الدوال الخاصة بالمناطق من الملف الجديد
 from features.delivery_zones import (
-    list_zones, show_zone_options,
-    start_add_zone, receive_zone_name, receive_zone_price,
-    start_remove_zone, receive_remove_name,
-    start_edit_zone, select_zone_to_edit, apply_zone_edit,
-    get_delivery_price # دالة جلب سعر التوصيل
+    list_zones, ask_zone_name, handle_zone_edit, get_delivery_price
+    # تم حذف الدوال الأخرى المتعلقة بإدارة المناطق الأكثر تفصيلاً مثل show_zone_options
+    # و start_add_zone, receive_zone_name, receive_zone_price,
+    # start_remove_zone, receive_remove_name,
+    # start_edit_zone, select_zone_to_edit, apply_zone_edit
+    # لأنها لم تعد موجودة في ملف features/delivery_zones.py بعد التعديل الأخير
 )
 
 # ✅ تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
@@ -38,7 +39,7 @@ INVOICE_NUMBERS_FILE = os.path.join(DATA_DIR, "invoice_numbers.json")
 DAILY_PROFIT_FILE = os.path.join(DATA_DIR, "daily_profit.json")
 COUNTER_FILE = os.path.join(DATA_DIR, "invoice_counter.txt")
 LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
-# ZONES_FILE = os.path.join(DATA_DIR, "zones.json") # هذا المسار صار يتم إدارته من ملف delivery_zones.py
+# ZONES_FILE = os.path.join(DATA_DIR, "zones.json") # هذا المسار صار يتم إدارته من ملف delivery_zones.py الداخلي
 
 # ✅ قراءة التوكن من المتغيرات البيئية (يفترض أنك ضايفه بـ Railway)
 TOKEN = os.getenv("TOKEN")
@@ -1133,40 +1134,15 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # ✅ ConversationHandler لحذف المناطق
-    remove_zone_conv_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(start_remove_zone, pattern="^remove_zone$")],
-        states={
-            "WAITING_FOR_REMOVE_NAME": [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_remove_name)
-            ],
-        },
-        fallbacks=[]
-    )
-
-    # ✅ ConversationHandler لإضافة المناطق
-    add_zone_conv_handler = ConversationHandler(
-        entry_points=[CallbackQueryHandler(start_add_zone, pattern="^add_zone$")],
-        states={
-            "WAITING_FOR_ZONE_NAME": [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_zone_name)
-            ],
-            "WAITING_FOR_ZONE_PRICE": [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_zone_price)
-            ],
-        },
-        fallbacks=[]
-    )
-
-    # ✅ ConversationHandler لتعديل المناطق
-    edit_zone_conv_handler = ConversationHandler(
+    # ✅ ConversationHandler لإدارة المناطق (إضافة وحذف باستخدام الدوال الجديدة)
+    zone_management_conv_handler = ConversationHandler(
         entry_points=[
-            CallbackQueryHandler(start_edit_zone, pattern="^edit_zone$"),
-            CallbackQueryHandler(select_zone_to_edit, pattern=r"^edit_.+$")
+            CallbackQueryHandler(ask_zone_name, pattern="^add_zone$"),
+            CallbackQueryHandler(ask_zone_name, pattern="^remove_zone$"),
         ],
         states={
-            "WAITING_FOR_EDIT_INPUT": [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, apply_zone_edit)
+            "WAITING_FOR_ZONE_ACTION_INPUT": [ # هذا اسم الحالة اللي عرفناها بـ delivery_zones.py
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_zone_edit)
             ],
         },
         fallbacks=[
@@ -1174,6 +1150,8 @@ def main():
             MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
         ]
     )
+    app.add_handler(zone_management_conv_handler)
+
 
     # ✅ Handlers خارج المحادثة
     app.add_handler(CommandHandler("start", start))
@@ -1184,18 +1162,21 @@ def main():
     app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
     app.add_handler(CallbackQueryHandler(edit_prices, pattern="^edit_prices_"))
     app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern="^start_new_order$"))
-    # هنا استدعاء show_zone_options من الملف الجديد
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(مناطق|المناطق)$"), show_zone_options))
+    # هنا استدعاء list_zones لعرض المناطق (لأن show_zone_options انحذفت)
+    app.add_handler(CommandHandler("المناطق", list_zones))
+    # Optional: If you want to handle "مناطق" text message as well
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(مناطق|المناطق)$"), list_zones))
 
-    # ✅ Handlers أزرار المناطق (باستخدام الدوال المستوردة)
-    app.add_handler(CallbackQueryHandler(start_add_zone, pattern="^add_zone$"))
-    app.add_handler(CallbackQueryHandler(start_remove_zone, pattern="^remove_zone$"))
-    app.add_handler(CallbackQueryHandler(start_edit_zone, pattern="^edit_zone$"))
 
-    # ✅ ConversationHandlers للمناطق (باستخدام الدوال المستوردة)
-    app.add_handler(add_zone_conv_handler)
-    app.add_handler(remove_zone_conv_handler)
-    app.add_handler(edit_zone_conv_handler) # إضافة محادثة تعديل المناطق
+    # ✅ Handlers أزرار المناطق - تم دمجها في zone_management_conv_handler
+    # تم إزالة الـ ConversationHandlers القديمة لأنها لم تعد موجودة بالملف الجديد
+    # remove_zone_conv_handler = ConversationHandler(...)
+    # add_zone_conv_handler = ConversationHandler(...)
+    # edit_zone_conv_handler = ConversationHandler(...)
+    # app.add_handler(add_zone_conv_handler)
+    # app.add_handler(remove_zone_conv_handler)
+    # app.add_handler(edit_zone_conv_handler) 
+
 
     # ✅ ConversationHandler لعدد المحلات
     places_conv_handler = ConversationHandler(
