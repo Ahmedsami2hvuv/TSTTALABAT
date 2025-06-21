@@ -22,17 +22,16 @@ from features.delivery_zones import (
 
 # ✅ استيراد الدوال الخاصة بإدارة الطلبات من الملف الجديد
 # (هذا الجزء كان سيتجزأ في خطوة لاحقة، ولكن الآن نضمن استيراد الدوال اللازمة)
-# بما أننا لم نقم بتجزئة هذا الجزء بعد بشكل كامل في ملف features/orders.py
+# بما أننا لم نقم بتجزئة هذا الجزء بعد بشكل كامل في ملف main.py
 # سنفترض أنها لا تزال موجودة في هذا الملف (main.py)
-# هذا السطر هو لغرض التوضيح فقط، إذا كانت هذه الدوال موجودة فعلاً في main.py
 # If we were to fully modularize orders, this block would look like:
 # from features.orders import (
-#     receive_order, edited_message, process_order, show_buttons,
-#     product_selected, receive_buy_price, receive_sell_price,
-#     request_places_count_standalone, handle_places_count_data,
-#     show_final_options, edit_prices, start_new_order_callback,
-#     format_float, calculate_extra, delete_message_in_background,
-#     save_data_in_background, get_invoice_number
+#       receive_order, edited_message, process_order, show_buttons,
+#       product_selected, receive_buy_price, receive_sell_price,
+#       request_places_count_standalone, handle_places_count_data,
+#       show_final_options, edit_prices, start_new_order_callback,
+#       format_float, calculate_extra, delete_message_in_background,
+#       save_data_in_background, get_invoice_number
 # )
 
 # ✅ تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
@@ -320,7 +319,7 @@ async def process_order(update, context, message, edited=False):
                     
     if not order_id: 
         order_id = str(uuid.uuid4())[:8]
-        invoice_no = get_invoice_number()
+        invoice_no = get_invoice_number() 
         orders[order_id] = {"user_id": user_id, "title": title, "products": products, "places_count": 0} 
         pricing[order_id] = {p: {} for p in products}
         invoice_numbers[order_id] = invoice_no
@@ -411,7 +410,7 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
         )
         logger.info(f"[{chat_id}] Sent new button message {msg.message_id} for order {order_id}")
         last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
-        context.application.create_task(save_data_in_background(context))
+        context.application.create_task(save_data_in_background(context)) 
 
         if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
             logger.info(f"[{chat_id}] Scheduling deletion of {len(context.user_data[user_id].get('messages_to_delete', []))} old messages after showing new buttons for user {user_id}.")
@@ -429,7 +428,7 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pricing = context.application.bot_data['pricing']
     last_button_message = context.application.bot_data['last_button_message']
 
-    try:
+    try: 
         query = update.callback_query
         await query.answer()
         
@@ -472,16 +471,16 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'chat_id': msg_edit.chat_id, 
                 'message_id': msg_edit.message_id
             })
-            return ASK_BUY
+            return ASK_BUY 
         else:
             msg_new = await query.message.reply_text(f"تمام، بيش اشتريت *'{product}'*؟", parse_mode="Markdown")
             context.user_data[user_id]['messages_to_delete'].append({
                 'chat_id': msg_new.chat_id, 
                 'message_id': msg_new.message_id
             })
-            return ASK_BUY
+            return ASK_BUY 
 
-    except Exception as e:
+    except Exception as e: 
         logger.error(f"[{update.effective_chat.id}] Error in product_selected: {e}", exc_info=True)
         await update.callback_query.message.reply_text("عذراً، حدث خطأ أثناء اختيار المنتج. الرجاء بدء طلبية جديدة.")
         return ConversationHandler.END
@@ -583,7 +582,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         context.user_data[user_id]['messages_to_delete'].append({'chat_id': update.message.chat_id, 'message_id': update.message.message_id})
 
         data = context.user_data.get(user_id)
-        if not data or "order_id" not in data or "product" not in data or "buy_price" not in data:
+        if not data or "order_id" not in data or "product" not in data or "buy_price" not in data: 
             logger.error(f"[{update.effective_chat.id}] Sell price: Missing order_id, product, or buy_price in user_data for user {user_id}. User data: {json.dumps(data, indent=2)}")
             msg_error = await update.message.reply_text("عذراً، لم أتمكن من تحديد الطلبية أو المنتج لتسعيره. الرجاء اضغط على المنتج من القائمة أولاً لتحديد سعره، أو ابدأ طلبية جديدة.", parse_mode="Markdown")
             context.user_data[user_id]['messages_to_delete'].append({
@@ -626,7 +625,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         pricing[order_id][product]["sell"] = sell_price
         
         logger.info(f"[{update.effective_chat.id}] Pricing for order '{order_id}' and product '{product}' AFTER SAVE: {json.dumps(pricing.get(order_id, {}).get(product), indent=2)}")
-        context.application.create_task(save_data_in_background(context))
+        context.application.create_task(save_data_in_background(context)) 
         logger.info(f"[{update.effective_chat.id}] Sell price for '{product}' in order '{order_id}' saved. Current user_data: {json.dumps(context.user_data.get(user_id), indent=2)}. Updated pricing for order {order_id}: {json.dumps(pricing.get(order_id), indent=2)}")
 
         order = orders[order_id]
@@ -640,7 +639,7 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
             context.user_data[user_id]["current_active_order_id"] = order_id
             logger.info(f"[{update.effective_chat.id}] All products priced for order {order_id}. Requesting places count. Transitioning to ASK_PLACES_COUNT.")
             await request_places_count_standalone(update.effective_chat.id, context, user_id, order_id)
-            return ConversationHandler.END
+            return ConversationHandler.END 
         else:
             confirmation_msg = f"تم حفظ السعر لـ *'{product}'*."
             logger.info(f"[{update.effective_chat.id}] Price saved for '{product}' in order {order_id}. Showing updated buttons with confirmation. User {user_id} can select next product. Staying in conversation.")
@@ -749,7 +748,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
                  msg_error = await context.bot.send_message(chat_id=chat_id, text="عذراً، ماكو طلبية حالية منتظر عدد محلاتها أو الطلبية قديمة جداً. الرجاء استخدم الأزرار لتحديد عدد المحلات، أو بدء طلبية جديدة.", parse_mode="Markdown")
                  context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
                  if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
-                     del context.user_data[user_id]["current_active_order_id"]
+                            del context.user_data[user_id]["current_active_order_id"]
                  return ConversationHandler.END 
 
             if not update.message.text.strip().isdigit(): 
@@ -775,7 +774,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
             logger.warning(f"[{chat_id}] handle_places_count_data: No valid places count or order ID to process.")
             await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من فهم عدد المحلات أو الطلبية. الرجاء إدخال رقم صحيح أو البدء بطلبية جديدة.")
             if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
-                del context.user_data[user_id]["current_active_order_id"]
+                            del context.user_data[user_id]["current_active_order_id"]
             return ConversationHandler.END 
 
         if 'places_count_message' in context.user_data[user_id]:
@@ -851,32 +850,45 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
 
         delivery_fee = get_delivery_price(order.get('title', ''))
 
-        final_total = total_sell + extra_cost + delivery_fee
+        # total_before_delivery_fee هو المجموع قبل إضافة أجرة التوصيل
+        total_before_delivery_fee = total_sell + extra_cost
+        
+        final_total = total_before_delivery_fee + delivery_fee
 
         context.application.bot_data['daily_profit'] = daily_profit_current + net_profit
         logger.info(f"[{chat_id}] Daily profit after adding {net_profit} for order {order_id}: {context.application.bot_data['daily_profit']}")
         context.application.create_task(save_data_in_background(context))
 
-        # فاتورة الزبون
+        # فاتورة الزبون - تم تعديل هذا القسم بالكامل ليتوافق مع طلبك الجديد
         customer_invoice_lines = [
             "**أبو الأكبر للتوصيل**",
             f"رقم الفاتورة: {invoice}",
             f"عنوان الزبون: {order['title']}",
             "\n*المواد:*"
         ]
-        running_total_for_customer = 0.0
+        
+        current_display_total = 0.0 # هذا المتغير لتتبع المجموع اللي ينعرض بالسطور
         for p in order["products"]:
             if p in pricing.get(order_id, {}) and "sell" in pricing[order_id][p]:
                 sell = pricing[order_id][p]["sell"]
-                running_total_for_customer += sell
-                customer_invoice_lines.append(f"{p} - {format_float(sell)} = {format_float(running_total_for_customer)}")
+                current_display_total += sell
+                customer_invoice_lines.append(f"{p} - {format_float(sell)} = {format_float(current_display_total)}")
             else:
                 customer_invoice_lines.append(f"{p} - (لم يتم تسعيره)")
 
-        customer_invoice_lines.append(f"كلفة تجهيز من - {current_places} محلات {format_float(extra_cost)}")
+        # سطر كلفة تجهيز المحلات يتم إضافته هنا، ويتم جمعها مع الـ current_display_total
+        current_display_total += extra_cost
+        customer_invoice_lines.append(f"كلفة تجهيز من - {current_places} محلات {format_float(extra_cost)} = {format_float(current_display_total)}")
+
+        # سطر أجرة التوصيل (إذا كانت موجودة)
         if delivery_fee > 0:
             customer_invoice_lines.append(f"أجرة التوصيل: {format_float(delivery_fee)}")
-        customer_invoice_lines.append(f"\n*المجموع الكلي:* {format_float(final_total)} (مع احتساب عدد المحلات والتوصيل)")
+
+        # سطور المجموع الكلي الجديدة
+        customer_invoice_lines.append(f"\n*المجموع الكلي:*")
+        customer_invoice_lines.append(f"بدون التوصيل = {format_float(total_before_delivery_fee)}")
+        customer_invoice_lines.append(f"مــــع التوصيل = {format_float(final_total)}")
+        
         customer_final_text = "\n".join(customer_invoice_lines)
 
         # حفظ فاتورة الزبون
@@ -900,7 +912,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         except Exception as e:
             logger.error(f"[{chat_id}] Could not send customer invoice as message: {e}")
 
-        # فاتورة الإدارة
+        # فاتورة الإدارة (لم يتم تعديلها بناءً على طلبك، ستبقى كما هي)
         owner_invoice_details = [
             f"رقم الفاتورة: {invoice}",
             f"عنوان الزبون: {order['title']}"
@@ -1193,7 +1205,7 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"**إجمالي عدد المنتجات المباعة (في الطلبات المعالجة):** {total_products}\n"
             f"**أكثر منتج تم طلبه:** {top_product_str}\n\n"
             f"**مجموع الشراء الكلي (للطلبات المعالجة):** {format_float(total_buy_all_orders)}\n"
-            f"**مجموع البيع الكلي (للطلبات المعالجة):** {format_float(total_sell_all_orders)}\n"
+            f"**مجموع البيع الكلي (للطلبات المعالجة):** {format_float(total_sell_all_orders)}\n" 
             f"**صافي الربح الكلي (للطلبات المعالجة):** {format_float(total_sell_all_orders - total_buy_all_orders)}\n" 
             f"**الربح التراكمي في البوت (منذ آخر تصفير):** {format_float(daily_profit)} دينار\n\n"
             f"**--- تفاصيل الطلبات ---**\n" + "\n".join(details)
