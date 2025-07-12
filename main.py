@@ -1340,7 +1340,7 @@ async def show_supplier_report(update: Update, context: ContextTypes.DEFAULT_TYP
     supplier_report_timestamps = context.application.bot_data['supplier_report_timestamps']
 
     user_id = str(update.message.from_user.id)
-    report_text = f"**تقرير الطلبيات اللي جهزتها يا {update.message.from_user.first_name}:**\n\n"
+    report_text = f"**تقرير الطلبيات اللي جهزتها يا بطل:**\n\n"
     has_orders = False
 
     # جلب آخر وقت تصفير لهذا المجهز (إذا موجود)
