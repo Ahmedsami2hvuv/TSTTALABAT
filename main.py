@@ -610,7 +610,9 @@ async def receive_sell_price(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = buy_price_from_user_data
         pricing[order_id][product]["sell"] = sell_price
-        
+        # ✅ إضافة سطر جديد هنا لتسجيل معرف المجهز (user_id) للطلبية بالكامل
+        orders[order_id]["supplier_id"] = user_id # هذا هو السطر الجديد
+
         logger.info(f"[{update.effective_chat.id}] Pricing for order '{order_id}' and product '{product}' AFTER SAVE: {json.dumps(pricing.get(order_id, {}).get(product), indent=2)}")
         context.application.create_task(save_data_in_background(context)) 
         logger.info(f"[{update.effective_chat.id}] Sell price for '{product}' in order '{order_id}' saved. Current user_data: {json.dumps(context.user_data.get(user_id), indent=2)}. Updated pricing for order {order_id}: {json.dumps(pricing.get(order_id), indent=2)}")
