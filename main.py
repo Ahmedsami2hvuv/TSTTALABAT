@@ -1227,6 +1227,8 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^صفر$|^تصفير$"), reset_all))
     app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
     app.add_handler(CommandHandler("report", show_report))
+    app.add_handler(CommandHandler("myreport", show_supplier_report))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^تقاريري$|^تقريري$"), show_supplier_report))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex("^التقارير$|^تقرير$|^تقارير$"), show_report))
     
     app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
@@ -1281,6 +1283,39 @@ def main():
 
     # ✅ تشغيل البوت
     app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+async def show_supplier_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    orders = context.application.bot_data['orders']
+    pricing = context.application.bot_data['pricing']
+
+    user_id = str(update.message.from_user.id)
+    report_text = f"**تقرير الطلبيات اللي جهزتها يا {update.message.from_user.first_name}:**\n\n"
+    has_orders = False
+
+    for order_id, order in orders.items():
+        # نتحقق إذا الـ supplier_id موجود بالطلبية ويطابق الـ user_id الحالي
+        if order.get("supplier_id") == user_id:
+            has_orders = True
+            report_text += f"▪️ *عنوان الزبون:* {order['title']}\n"
+            report_text += f"   *رقم الزبون:* `{order.get('phone_number', 'لا يوجد رقم')}`\n"
+            
+            order_buy_total = 0.0
+            
+            report_text += "   *المنتجات (سعر الشراء فقط):*\n"
+            for p_name in order["products"]:
+                if p_name in pricing.get(order_id, {}) and "buy" in pricing[order_id].get(p_name, {}):
+                    buy_price = pricing[order_id][p_name]["buy"]
+                    order_buy_total += buy_price
+                    report_text += f"     - {p_name}: {format_float(buy_price)}\n"
+                else:
+                    report_text += f"     - {p_name}: (لم يتم تسعيره)\n"
+            
+            report_text += f"   *مجموع الشراء لهذه الطلبية:* {format_float(order_buy_total)}\n\n"
+    
+    if not has_orders:
+        report_text = "ماكو أي طلبية مسجلة باسمك لحد الآن."
+    
+    await update.message.reply_text(report_text, parse_mode="Markdown")
 
 if __name__ == "__main__":
     main()
