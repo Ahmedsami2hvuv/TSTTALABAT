@@ -19,8 +19,6 @@ from features.delivery_zones import (
     list_zones, get_delivery_price
 )
 
-from urllib.parse import quote
-
 # ✅ تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -820,7 +818,6 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
         await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء معالجة عدد المحلات. الرجاء بدء طلبية جديدة.")
         return ConversationHandler.END
 
-
 async def show_final_options(chat_id, context, user_id, order_id, message_prefix=None):
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
@@ -842,7 +839,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
 
         order = orders[order_id]
         invoice = invoice_numbers.get(order_id, "غير معروف")
-        phone_number = order.get('phone_number', 'لا يوجد رقم') # ✅ رقم هاتف الزبون جبناه من هنا
+        phone_number = order.get('phone_number', 'لا يوجد رقم')
 
         total_buy = 0.0
         total_sell = 0.0
@@ -917,6 +914,36 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         ])
 
         customer_final_text = "\n".join(customer_invoice_lines)
+
+        # ✅ فاتورة الزبون المخصصة للواتساب (مختصرة) - هذا هو الجزء الجديد
+        customer_whatsapp_invoice_lines = [
+            "📋 فاتورتك من أبو الأكبر 🚀",
+            "-------------------------------",
+            f"فاتورة رقم: #{invoice}",
+            f"🏠 العنوان: {order['title']}",
+            f"📞 الرقم: {phone_number}",
+            "🛍️ المنتجات:",
+        ]
+
+        for product in order["products"]:
+            if product in pricing.get(order_id, {}) and "sell" in pricing[order_id][product]:
+                sell_price = pricing[order_id][product]["sell"]
+                customer_whatsapp_invoice_lines.append(f"- {product}: {format_float(sell_price)}")
+            else:
+                customer_whatsapp_invoice_lines.append(f"- {product} (لم يتم تسعيره)")
+
+        if extra_cost > 0:
+            customer_whatsapp_invoice_lines.append(f"📦 تجهيز ({current_places} محلات): {format_float(extra_cost)}")
+        if delivery_fee > 0:
+            customer_whatsapp_invoice_lines.append(f"🚚 توصيل: {format_float(delivery_fee)}")
+
+        customer_whatsapp_invoice_lines.extend([
+            "-------------------------------",
+            f"✨ المجموع الكلي: {format_float(final_total)} 💵",
+            "شكراً لاختياركم أبو الأكبر! ❤️"
+        ])
+        customer_whatsapp_final_text = "\n".join(customer_whatsapp_invoice_lines)
+
 
         # باقي الدوال كما هي بدون تغيير
         invoices_dir = "invoices"
@@ -1005,12 +1032,12 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         except Exception as e:
             logger.error(f"[{chat_id}] Failed to save admin invoice to file: {e}")
 
-        # ✅ تم تعديل هذا الجزء من جديد بناءً على طلبك
-        # زر إرسال فاتورة الإدارة للواتساب - يبقى كما هو
         encoded_owner_invoice = quote(final_owner_invoice_text, safe='')
+        # ✅ هذا السطر اتغير حتى يستخدم الفاتورة المختصرة للواتساب للزبون
+        encoded_customer_whatsapp_text = quote(customer_whatsapp_final_text, safe='') 
+
         whatsapp_owner_button_markup = InlineKeyboardMarkup([
-            # هنا التعديل صار: حطينا رقمك مباشرة بدال المتغير
-            [InlineKeyboardButton("إرسال فاتورة الإدارة للواتساب", url=f"https://wa.me/+9647733921468?text={encoded_owner_invoice}")]
+            [InlineKeyboardButton("إرسال فاتورة الإدارة للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}")]
         ])
         try:
             await context.bot.send_message(
@@ -1027,10 +1054,9 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         keyboard = [
             [InlineKeyboardButton("1️⃣ تعديل الأسعار", callback_data=f"edit_prices_{order_id}")],
             [InlineKeyboardButton("2️⃣ رفع الطلبية", url="https://d.ksebstor.site/client/96f743f604a4baf145939298")],
-            # ✅ هذا هو التعديل اللي يخلي الزر يرسل الفاتورة كاملة للزبون
-            [InlineKeyboardButton("3️⃣ إرسال فاتورة الزبون (واتساب)", url=f"https://wa.me/{phone_number}?text={quote(customer_final_text, safe='')}")], # ✅ تم التعديل هنا
-            # ✅ حذف زر "إنشاء طلب جديد"
-            # [InlineKeyboardButton("4️⃣ إنشاء طلب جديد", callback_data="start_new_order")] # ✅ تم حذف هذا السطر
+            # ✅ هذا السطر اتغير حتى يرسل للزبون ويستخدم الفاتورة المختصرة
+            [InlineKeyboardButton("3️⃣ إرسال فاتورة الزبون (واتساب)", url=f"https://wa.me/{phone_number}?text={encoded_customer_whatsapp_text}")], 
+            [InlineKeyboardButton("4️⃣ إنشاء طلب جديد", callback_data="start_new_order")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -1051,7 +1077,6 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         logger.error(f"[{chat_id}] Error in show_final_options: {e}", exc_info=True)
         await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء عرض الفاتورة النهائية. الرجاء بدء طلبية جديدة.")
 
-        
 async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
