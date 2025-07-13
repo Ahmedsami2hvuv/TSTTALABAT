@@ -841,7 +841,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
 
         order = orders[order_id]
         invoice = invoice_numbers.get(order_id, "غير معروف")
-        phone_number = order.get('phone_number', 'لا يوجد رقم') # هذا رقم الزبون!
+        phone_number = order.get('phone_number', 'لا يوجد رقم') # هذا رقم الزبون اللي دخلته بالطلبية
 
         total_buy = 0.0
         total_sell = 0.0
