@@ -1009,7 +1009,8 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         # زر إرسال فاتورة الإدارة للواتساب - يبقى كما هو
         encoded_owner_invoice = quote(final_owner_invoice_text, safe='')
         whatsapp_owner_button_markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton("إرسال فاتورة الإدارة للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}")]
+            # هنا التعديل صار: حطينا رقمك مباشرة بدال المتغير
+            [InlineKeyboardButton("إرسال فاتورة الإدارة للواتساب", url=f"https://wa.me/+9647733921468?text={encoded_owner_invoice}")]
         ])
         try:
             await context.bot.send_message(
