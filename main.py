@@ -1007,27 +1007,67 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         encoded_owner_invoice = quote(final_owner_invoice_text, safe='')
         encoded_customer_text = quote(customer_final_text, safe='')
 
-        whatsapp_owner_button_markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton("إرسال فاتورة الإدارة للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}")]
-        ])
-        try:
-            await context.bot.send_message(
-                chat_id=OWNER_ID,
-                text=f"**فاتورة طلبية (الإدارة):**\n{final_owner_invoice_text}",
-                parse_mode="Markdown",
-                reply_markup=whatsapp_owner_button_markup
-            )
-        except Exception as e:
-            logger.error(f"[{chat_id}] Could not send admin invoice to OWNER_ID {OWNER_ID}: {e}")
-            await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من إرسال فاتورة الإدارة إلى خاصك.")
+        # ننشئ نسخة من الفاتورة للواتساب بدون إيموجي (لأنها قد لا تظهر بشكل صحيح)
+whatsapp_invoice_lines = [
+    "أبو الأكبر للتوصيل",
+    "-----------------------------------",
+    f"فاتورة رقم: #{invoice}",
+    f"عنوان الزبون: {order['title']}",
+    f"رقم الزبون: {phone_number}",
+    "المنتجات:",
+    ""
+]
 
-        # أزرار التحكم
-        keyboard = [
-            [InlineKeyboardButton("1️⃣ تعديل الأسعار", callback_data=f"edit_prices_{order_id}")],
-            [InlineKeyboardButton("2️⃣ رفع الطلبية", url="https://d.ksebstor.site/client/96f743f604a4baf145939298")],
-            [InlineKeyboardButton("3️⃣ إرسال فاتورة الزبون (واتساب)", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_customer_text}")],
-            [InlineKeyboardButton("4️⃣ إنشاء طلب جديد", callback_data="start_new_order")]
-        ]
+current_total = 0.0
+for i, product in enumerate(order["products"]):
+    if product in pricing.get(order_id, {}) and "sell" in pricing[order_id][product]:
+        sell_price = pricing[order_id][product]["sell"]
+        
+        if i == 0:
+            whatsapp_invoice_lines.append(f"- {product} بـ{format_float(sell_price)}")
+            whatsapp_invoice_lines.append(f"* {format_float(sell_price)} دينار")
+        else:
+            prev_total = current_total
+            whatsapp_invoice_lines.append(f"- {product} بـ{format_float(sell_price)}")
+            whatsapp_invoice_lines.append(f"* {format_float(prev_total)}+{format_float(sell_price)}= {format_float(prev_total + sell_price)} دينار")
+        
+        current_total += sell_price
+    else:
+        whatsapp_invoice_lines.append(f"- {product} (لم يتم تسعيره)")
+
+# إضافة كلفة التجهيز
+if extra_cost > 0:
+    prev_total = current_total
+    whatsapp_invoice_lines.append(f"- التجهيز: من {current_places} محلات بـ {format_float(extra_cost)}")
+    whatsapp_invoice_lines.append(f"* {format_float(prev_total)}+{format_float(extra_cost)}= {format_float(prev_total + extra_cost)} دينار")
+    current_total += extra_cost
+
+# إضافة أجرة التوصيل
+if delivery_fee > 0:
+    prev_total = current_total
+    whatsapp_invoice_lines.append(f"- التوصيل: بـ {format_float(delivery_fee)}")
+    whatsapp_invoice_lines.append(f"* {format_float(prev_total)}+{format_float(delivery_fee)}= {format_float(prev_total + delivery_fee)} دينار")
+    current_total += delivery_fee
+
+whatsapp_invoice_lines.extend([
+    "-----------------------------------",
+    "المجموع الكلي:",
+    f"بدون التوصيل = {format_float(total_before_delivery_fee)} دينار",
+    f"مع التوصيل = {format_float(final_total)} دينار",
+    "شكراً لاختياركم خدمة أبو الأكبر للتوصيل"
+])
+
+whatsapp_final_text = "\n".join(whatsapp_invoice_lines)
+encoded_customer_text = quote(whatsapp_final_text, safe='')
+
+# أزرار التحكم
+keyboard = [
+    [InlineKeyboardButton("1️⃣ تعديل الأسعار", callback_data=f"edit_prices_{order_id}")],
+    [InlineKeyboardButton("2️⃣ رفع الطلبية", url="https://d.ksebstor.site/client/96f743f604a4baf145939298")],
+    [InlineKeyboardButton("3️⃣ إرسال فاتورة الزبون (واتساب)", 
+                        url=f"https://wa.me/{phone_number}?text={encoded_customer_text}")],
+    [InlineKeyboardButton("4️⃣ إنشاء طلب جديد", callback_data="start_new_order")]
+]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         message_text = "افعل ما تريد من الأزرار:\n\n"
