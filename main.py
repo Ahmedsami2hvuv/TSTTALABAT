@@ -995,7 +995,214 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         whatsapp_owner_button_markup = InlineKeyboardMarkup([
             [InlineKeyboardButton("إرسال فاتورة الإدارة للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}")]
         ])
+        try:
+            await context.bot.send_message(
+                chat_id=OWNER_ID,
+                text=f"**فاتورة طلبية (الإدارة):**\n{final_owner_invoice_text}",
+                parse_mode="Markdown",
+                reply_markup=whatsapp_owner_button_markup
+            )
+        except Exception as e:
+            logger.error(f"[{chat_id}] Could not send admin invoice to OWNER_ID {OWNER_ID}: {e}")
+            await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من إرسال فاتورة الإدارة إلى خاصك.")
 
+        # أزرار التحكم
+        keyboard = [
+            [InlineKeyboardButton("1️⃣ تعديل الأسعار", callback_data=f"edit_prices_{order_id}")],
+            [InlineKeyboardButton("2️⃣ رفع الطلبية", url="https://d.ksebstor.site/client/96f743f604a4baf145939298")],
+            [InlineKeyboardButton("3️⃣ إرسال فاتورة الزبون (واتساب)", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_customer_text}")],
+            [InlineKeyboardButton("4️⃣ إنشاء طلب جديد", callback_data="start_new_order")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        message_text = "افعل ما تريد من الأزرار:\n\n"
+        if message_prefix:
+            message_text = message_prefix + "\n" + message_text
+
+        await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup, parse_mode="Markdown")
+
+        # تنظيف بيانات المستخدم
+        if user_id in context.user_data:
+            context.user_data[user_id].pop("order_id", None)
+            context.user_data[user_id].pop("product", None)
+            context.user_data[user_id].pop("current_active_order_id", None)
+            context.user_data[user_id].pop("messages_to_delete", None)
+
+    except Exception as e:
+        logger.error(f"[{chat_id}] Error in show_final_options: {e}", exc_info=True)
+        await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء عرض الفاتورة النهائية. الرجاء بدء طلبية جديدة.")
+
+    except Exception as e:
+        logger.error(f"[{chat_id}] Error in show_final_options: {e}", exc_info=True)
+        await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء عرض الفاتورة النهائية. الرجاء بدء طلبية جديدة.")
+        
+async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    orders = context.application.bot_data['orders']
+    pricing = context.application.bot_data['pricing']
+    
+    try:
+        query = update.callback_query
+        await query.answer()
+        
+        user_id = str(query.from_user.id)
+        logger.info(f"[{query.message.chat_id}] Edit prices callback from user {user_id}: {query.data}. User data: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
+        if query.data.startswith("edit_prices_"):
+            order_id = query.data.replace("edit_prices_", "")
+        else:
+            await query.message.reply_text("عذراً، حدث خطأ في بيانات الزر. الرجاء المحاولة مرة أخرى.")
+            return ConversationHandler.END
+
+        if order_id not in orders:
+            logger.warning(f"[{query.message.chat_id}] Edit prices: Order {order_id} not found.")
+            await query.message.reply_text("عذراً، الطلب الذي تحاول تعديله غير موجود.")
+            return ConversationHandler.END
+
+        if query.message:
+            context.user_data.setdefault(user_id, {}).setdefault('messages_to_delete', []).append({
+                'chat_id': query.message.chat_id,
+                'message_id': query.message.message_id
+            })
+            logger.info(f"[{query.message.chat_id}] Added edit prices button message {query.message.message_id} to delete queue.")
+            try:
+                await context.bot.edit_message_reply_markup(
+                    chat_id=query.message.chat_id,
+                    message_id=query.message.message_id,
+                    reply_markup=None 
+                )
+            except Exception as e:
+                logger.warning(f"[{query.message.chat_id}] Could not clear buttons from edit prices message {query.message.message_id} directly: {e}. Proceeding.")
+        
+        await show_buttons(query.message.chat_id, context, user_id, order_id, confirmation_message="يمكنك الآن تعديل أسعار المنتجات أو إضافة/حذف منتجات بتعديل الرسالة الأصلية للطلبية.")
+        logger.info(f"[{query.message.chat_id}] Showing edit buttons for order {order_id}. Exiting conversation for user {user_id}.")
+        return ConversationHandler.END
+    except Exception as e:
+        logger.error(f"[{update.effective_chat.id}] Error in edit_prices: {e}", exc_info=True)
+        await update.callback_query.message.reply_text("عذراً، حدث خطأ أثناء تعديل الأسعار. الرجاء بدء طلبية جديدة.")
+        return ConversationHandler.END
+
+async def start_new_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.from_user.id)
+    try:
+        query = update.callback_query
+        await query.answer()
+        
+        logger.info(f"[{query.message.chat_id}] Start new order callback from user {user_id}. User data: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
+        if user_id in context.user_data:
+            context.user_data[user_id].pop("order_id", None)
+            context.user_data[user_id].pop("product", None)
+            context.user_data[user_id].pop("current_active_order_id", None)
+            context.user_data[user_id].pop("messages_to_delete", None) 
+            context.user_data[user_id].pop("buy_price", None) # Clear buy_price too
+            logger.info(f"[{query.message.chat_id}] Cleared order-specific user_data for user {user_id} after starting a new order from button. User data after clean: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
+
+        if query.message:
+            context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
+
+        await query.message.reply_text("تمام، دز الطلبية الجديدة كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون.\n*السطر الثاني:* رقم هاتف الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", parse_mode="Markdown")
+        
+        return ConversationHandler.END
+    except Exception as e:
+        logger.error(f"[{update.effective_chat.id}] Error in start_new_order_callback: {e}", exc_info=True)
+        await update.callback_query.message.reply_text("عذراً، حدث خطأ أثناء بدء طلب جديد. الرجاء المحاولة مرة أخرى.")
+        return ConversationHandler.END
+
+
+# الدوال الخاصة بالتقارير والأرباح (ستُجزأ لاحقاً إلى features/reports.py)
+async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    orders = context.application.bot_data['orders'] # نجيب كل الطلبيات
+
+    try:
+        if str(update.message.from_user.id) != str(OWNER_ID):
+            await update.message.reply_text("عذراً، هذا الأمر متاح للمالك فقط.")
+            return
+        
+        # ✅ إعادة حساب الربح التراكمي الإجمالي من كل الطلبيات
+        total_cumulative_profit = 0.0
+        for order_id, order_data in orders.items():
+            # نجمع صافي الربح لكل طلبية، إذا كان موجود
+            if 'net_profit' in order_data:
+                total_cumulative_profit += order_data['net_profit']
+
+        logger.info(f"Current daily_profit (recalculated) requested by user {update.message.from_user.id}: {total_cumulative_profit}")
+        await update.message.reply_text(f"الربح التراكمي الإجمالي: *{format_float(total_cumulative_profit)}* دينار", parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"[{update.effective_chat.id}] Error in show_profit: {e}", exc_info=True)
+        await update.message.reply_text("عذراً، حدث خطأ أثناء عرض الأرباح.")
+        
+async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        if str(update.message.from_user.id) != str(OWNER_ID):
+            await update.message.reply_text("عذراً، هذا الأمر متاح للمالك فقط.")
+            return
+        
+        keyboard = [
+            [InlineKeyboardButton("نعم، متأكد", callback_data="confirm_reset")],
+            [InlineKeyboardButton("لا، إلغاء", callback_data="cancel_reset")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("هل أنت متأكد من تصفير جميع الأرباح ومسح كل الطلبات؟ هذا الإجراء لا يمكن التراجع عنه.", reply_markup=reply_markup)
+    except Exception as e:
+        logger.error(f"[{update.effective_chat.id}] Error in reset_all: {e}", exc_info=True)
+        await update.message.reply_text("عذراً، حدث خطأ أثناء محاولة التصفير.")
+
+async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    orders = context.application.bot_data['orders']
+    pricing = context.application.bot_data['pricing']
+    invoice_numbers = context.application.bot_data['invoice_numbers']
+    last_button_message = context.application.bot_data['last_button_message']
+    daily_profit = context.application.bot_data['daily_profit'] 
+    supplier_report_timestamps = context.application.bot_data['supplier_report_timestamps'] # ✅ جبنا هذا المتغير
+
+    try:
+        query = update.callback_query
+        await query.answer() # ✅ هذا السطر مهم جداً حتى يختفي التحميل من الزر
+
+        if str(query.from_user.id) != str(OWNER_ID):
+            await query.edit_message_text("عذراً، لا تملك صلاحية لتنفيذ هذا الأمر.")
+            return
+
+        if query.data == "confirm_reset":
+            logger.info(f"Daily profit before reset: {daily_profit}")
+            
+            # تصفير القيم في الذاكرة
+            orders.clear()
+            pricing.clear()
+            invoice_numbers.clear()
+            last_button_message.clear()
+            supplier_report_timestamps.clear() # ✅ تصفير سجلات المجهزين
+            
+            daily_profit_value = 0.0 # القيمة الجديدة للربح اليومي
+
+            try:
+                # إعادة تعيين عداد الفواتير
+                with open(COUNTER_FILE, "w") as f:
+                    f.write("1")
+            except Exception as e:
+                logger.error(f"Could not reset invoice counter file: {e}", exc_info=True)
+            
+            # تحديث القيم في bot_data بعد التصفير (هذا الجزء مهم)
+            context.application.bot_data['orders'] = orders
+            context.application.bot_data['pricing'] = pricing
+            context.application.bot_data['invoice_numbers'] = invoice_numbers
+            context.application.bot_data['last_button_message'] = last_button_message
+            context.application.bot_data['daily_profit'] = daily_profit_value
+            context.application.bot_data['supplier_report_timestamps'] = supplier_report_timestamps # ✅ تحديث سجل المجهزين في bot_data
+
+            # استدعاء دالة الحفظ العامة لحفظ التغييرات على القرص
+            _save_data_to_disk_global_func = context.application.bot_data.get('_save_data_to_disk_global_func')
+            if _save_data_to_disk_global_func:
+                _save_data_to_disk_global_func()
+            else:
+                logger.error("Could not find _save_data_to_disk_global_func in bot_data.")
+            
+            logger.info(f"Daily profit after reset: {context.application.bot_data['daily_profit']}")
+            await query.edit_message_text("تم تصفير الأرباح ومسح كل الطلبات بنجاح.")
+        elif query.data == "cancel_reset":
+            await query.edit_message_text("تم إلغاء عملية التصفير.")
+    except Exception as e:
+        logger.error(f"[{update.effective_chat.id}] Error in confirm_reset: {e}", exc_info=True)
+        await update.callback_query.message.reply_text("عذراً، حدث خطأ أثناء عملية التصفير.")
+        
 async def show_final_options(chat_id, context, user_id, order_id, message_prefix=None):
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
@@ -1226,243 +1433,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
     except Exception as e:
         logger.error(f"[{chat_id}] Error in show_final_options: {e}", exc_info=True)
         await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء عرض الفاتورة النهائية. الرجاء بدء طلبية جديدة.")
-
-
-async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    orders = context.application.bot_data['orders']
-    pricing = context.application.bot_data['pricing']
-    
-    try:
-        query = update.callback_query
-        await query.answer()
         
-        user_id = str(query.from_user.id)
-        logger.info(f"[{query.message.chat_id}] Edit prices callback from user {user_id}: {query.data}. User data: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
-        if query.data.startswith("edit_prices_"):
-            order_id = query.data.replace("edit_prices_", "")
-        else:
-            await query.message.reply_text("عذراً، حدث خطأ في بيانات الزر. الرجاء المحاولة مرة أخرى.")
-            return ConversationHandler.END
-
-        if order_id not in orders:
-            logger.warning(f"[{query.message.chat_id}] Edit prices: Order {order_id} not found.")
-            await query.message.reply_text("عذراً، الطلب الذي تحاول تعديله غير موجود.")
-            return ConversationHandler.END
-
-        if query.message:
-            context.user_data.setdefault(user_id, {}).setdefault('messages_to_delete', []).append({
-                'chat_id': query.message.chat_id,
-                'message_id': query.message.message_id
-            })
-            logger.info(f"[{query.message.chat_id}] Added edit prices button message {query.message.message_id} to delete queue.")
-            try:
-                await context.bot.edit_message_reply_markup(
-                    chat_id=query.message.chat_id,
-                    message_id=query.message.message_id,
-                    reply_markup=None 
-                )
-            except Exception as e:
-                logger.warning(f"[{query.message.chat_id}] Could not clear buttons from edit prices message {query.message.message_id} directly: {e}. Proceeding.")
-        
-        await show_buttons(query.message.chat_id, context, user_id, order_id, confirmation_message="يمكنك الآن تعديل أسعار المنتجات أو إضافة/حذف منتجات بتعديل الرسالة الأصلية للطلبية.")
-        logger.info(f"[{query.message.chat_id}] Showing edit buttons for order {order_id}. Exiting conversation for user {user_id}.")
-        return ConversationHandler.END
-    except Exception as e:
-        logger.error(f"[{update.effective_chat.id}] Error in edit_prices: {e}", exc_info=True)
-        await update.callback_query.message.reply_text("عذراً، حدث خطأ أثناء تعديل الأسعار. الرجاء بدء طلبية جديدة.")
-        return ConversationHandler.END
-
-async def start_new_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.from_user.id)
-    try:
-        query = update.callback_query
-        await query.answer()
-        
-        logger.info(f"[{query.message.chat_id}] Start new order callback from user {user_id}. User data: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
-        if user_id in context.user_data:
-            context.user_data[user_id].pop("order_id", None)
-            context.user_data[user_id].pop("product", None)
-            context.user_data[user_id].pop("current_active_order_id", None)
-            context.user_data[user_id].pop("messages_to_delete", None) 
-            context.user_data[user_id].pop("buy_price", None) # Clear buy_price too
-            logger.info(f"[{query.message.chat_id}] Cleared order-specific user_data for user {user_id} after starting a new order from button. User data after clean: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
-
-        if query.message:
-            context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
-
-        await query.message.reply_text("تمام، دز الطلبية الجديدة كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون.\n*السطر الثاني:* رقم هاتف الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", parse_mode="Markdown")
-        
-        return ConversationHandler.END
-    except Exception as e:
-        logger.error(f"[{update.effective_chat.id}] Error in start_new_order_callback: {e}", exc_info=True)
-        await update.callback_query.message.reply_text("عذراً، حدث خطأ أثناء بدء طلب جديد. الرجاء المحاولة مرة أخرى.")
-        return ConversationHandler.END
-
-
-# الدوال الخاصة بالتقارير والأرباح (ستُجزأ لاحقاً إلى features/reports.py)
-async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    orders = context.application.bot_data['orders'] # نجيب كل الطلبيات
-
-    try:
-        if str(update.message.from_user.id) != str(OWNER_ID):
-            await update.message.reply_text("عذراً، هذا الأمر متاح للمالك فقط.")
-            return
-        
-        # ✅ إعادة حساب الربح التراكمي الإجمالي من كل الطلبيات
-        total_cumulative_profit = 0.0
-        for order_id, order_data in orders.items():
-            # نجمع صافي الربح لكل طلبية، إذا كان موجود
-            if 'net_profit' in order_data:
-                total_cumulative_profit += order_data['net_profit']
-
-        logger.info(f"Current daily_profit (recalculated) requested by user {update.message.from_user.id}: {total_cumulative_profit}")
-        await update.message.reply_text(f"الربح التراكمي الإجمالي: *{format_float(total_cumulative_profit)}* دينار", parse_mode="Markdown")
-    except Exception as e:
-        logger.error(f"[{update.effective_chat.id}] Error in show_profit: {e}", exc_info=True)
-        await update.message.reply_text("عذراً، حدث خطأ أثناء عرض الأرباح.")
-        
-async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if str(update.message.from_user.id) != str(OWNER_ID):
-            await update.message.reply_text("عذراً، هذا الأمر متاح للمالك فقط.")
-            return
-        
-        keyboard = [
-            [InlineKeyboardButton("نعم، متأكد", callback_data="confirm_reset")],
-            [InlineKeyboardButton("لا، إلغاء", callback_data="cancel_reset")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("هل أنت متأكد من تصفير جميع الأرباح ومسح كل الطلبات؟ هذا الإجراء لا يمكن التراجع عنه.", reply_markup=reply_markup)
-    except Exception as e:
-        logger.error(f"[{update.effective_chat.id}] Error in reset_all: {e}", exc_info=True)
-        await update.message.reply_text("عذراً، حدث خطأ أثناء محاولة التصفير.")
-
-async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    orders = context.application.bot_data['orders']
-    pricing = context.application.bot_data['pricing']
-    invoice_numbers = context.application.bot_data['invoice_numbers']
-    last_button_message = context.application.bot_data['last_button_message']
-    daily_profit = context.application.bot_data['daily_profit'] 
-    supplier_report_timestamps = context.application.bot_data['supplier_report_timestamps'] # ✅ جبنا هذا المتغير
-
-    try:
-        query = update.callback_query
-        await query.answer() # ✅ هذا السطر مهم جداً حتى يختفي التحميل من الزر
-
-        if str(query.from_user.id) != str(OWNER_ID):
-            await query.edit_message_text("عذراً، لا تملك صلاحية لتنفيذ هذا الأمر.")
-            return
-
-        if query.data == "confirm_reset":
-            logger.info(f"Daily profit before reset: {daily_profit}")
-            
-            # تصفير القيم في الذاكرة
-            orders.clear()
-            pricing.clear()
-            invoice_numbers.clear()
-            last_button_message.clear()
-            supplier_report_timestamps.clear() # ✅ تصفير سجلات المجهزين
-            
-            daily_profit_value = 0.0 # القيمة الجديدة للربح اليومي
-
-            try:
-                # إعادة تعيين عداد الفواتير
-                with open(COUNTER_FILE, "w") as f:
-                    f.write("1")
-            except Exception as e:
-                logger.error(f"Could not reset invoice counter file: {e}", exc_info=True)
-            
-            # تحديث القيم في bot_data بعد التصفير (هذا الجزء مهم)
-            context.application.bot_data['orders'] = orders
-            context.application.bot_data['pricing'] = pricing
-            context.application.bot_data['invoice_numbers'] = invoice_numbers
-            context.application.bot_data['last_button_message'] = last_button_message
-            context.application.bot_data['daily_profit'] = daily_profit_value
-            context.application.bot_data['supplier_report_timestamps'] = supplier_report_timestamps # ✅ تحديث سجل المجهزين في bot_data
-
-            # استدعاء دالة الحفظ العامة لحفظ التغييرات على القرص
-            _save_data_to_disk_global_func = context.application.bot_data.get('_save_data_to_disk_global_func')
-            if _save_data_to_disk_global_func:
-                _save_data_to_disk_global_func()
-            else:
-                logger.error("Could not find _save_data_to_disk_global_func in bot_data.")
-            
-            logger.info(f"Daily profit after reset: {context.application.bot_data['daily_profit']}")
-            await query.edit_message_text("تم تصفير الأرباح ومسح كل الطلبات بنجاح.")
-        elif query.data == "cancel_reset":
-            await query.edit_message_text("تم إلغاء عملية التصفير.")
-    except Exception as e:
-        logger.error(f"[{update.effective_chat.id}] Error in confirm_reset: {e}", exc_info=True)
-        await update.callback_query.message.reply_text("عذراً، حدث خطأ أثناء عملية التصفير.")
-        
-async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    orders = context.application.bot_data['orders']
-    pricing = context.application.bot_data['pricing']
-    invoice_numbers = context.application.bot_data['invoice_numbers']
-    daily_profit = context.application.bot_data['daily_profit']
-
-    try:
-        if str(update.message.from_user.id) != str(OWNER_ID):
-            await update.message.reply_text("عذراً، هذا الأمر متاح للمالك فقط.")
-            return
-        
-        total_orders = len(orders)
-        total_products = 0
-        total_buy_all_orders = 0.0 
-        total_sell_all_orders = 0.0 
-        product_counter = Counter()
-        details = []
-
-        for order_id, order in orders.items():
-            invoice = invoice_numbers.get(order_id, "غير معروف")
-            details.append(f"\n**فاتورة رقم:** {invoice}")
-            details.append(f"**عنوان الزبون:** {order['title']}")
-            
-            order_buy = 0.0
-            order_sell = 0.0
-            
-            if isinstance(order.get("products"), list):
-                for p_name in order["products"]:
-                    total_products += 1
-                    product_counter[p_name] += 1
-                    
-                    if p_name in pricing.get(order_id, {}) and "buy" in pricing[order_id].get(p_name, {}) and "sell" in pricing[order_id].get(p_name, {}):
-                        buy = pricing[order_id][p_name]["buy"]
-                        sell = pricing[order_id][p_name]["sell"]
-                        profit = sell - buy
-                        order_buy += buy
-                        order_sell += sell
-                        details.append(f"  - {p_name} | شراء: {format_float(buy)} | بيع: {format_float(sell)} | ربح: {format_float(profit)}")
-                    else:
-                        details.append(f"  - {p_name} | (لم يتم تسعيره)")
-            else:
-                details.append(f"  (لا توجد منتجات محددة لهذا الطلب)")
-
-            total_buy_all_orders += order_buy
-            total_sell_all_orders += order_sell
-            details.append(f"  *ربح هذه الطلبية:* {format_float(order_sell - order_buy)}")
-
-        top_product_str = "لا يوجد"
-        if product_counter:
-            top_product_name, top_product_count = product_counter.most_common(1)[0]
-            top_product_str = f"{top_product_name} ({top_product_count} مرة)"
-
-        result = (
-            f"**--- تقرير عام عن الطلبات ---**\n"
-            f"**إجمالي عدد الطلبات المعالجة:** {total_orders}\n"
-            f"**إجمالي عدد المنتجات المباعة (في الطلبات المعالجة):** {total_products}\n"
-            f"**أكثر منتج تم طلبه:** {top_product_str}\n\n"
-            f"**مجموع الشراء الكلي (للطلبات المعالجة):** {format_float(total_buy_all_orders)}\n"
-            f"**مجموع البيع الكلي (للطلبات المعالجة):** {format_float(total_sell_all_orders)}\n" 
-            f"**صافي الربح الكلي (للطلبات المعالجة):** {format_float(total_sell_all_orders - total_buy_all_orders)}\n" 
-            f"**الربح التراكمي في البوت (منذ آخر تصفير):** {format_float(daily_profit)} دينار\n\n"
-            f"**--- تفاصيل الطلبات ---**\n" + "\n".join(details)
-        )
-        await update.message.reply_text(result, parse_mode="Markdown")
-    except Exception as e:
-        logger.error(f"[{update.effective_chat.id}] Error in show_report: {e}", exc_info=True)
-        await update.message.reply_text("عذراً، حدث خطأ أثناء عرض التقرير.")
-
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
