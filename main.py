@@ -35,6 +35,9 @@ INVOICE_NUMBERS_FILE = os.path.join(DATA_DIR, "invoice_numbers.json")
 DAILY_PROFIT_FILE = os.path.join(DATA_DIR, "daily_profit.json")
 COUNTER_FILE = os.path.join(DATA_DIR, "invoice_counter.txt")
 LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
+# ✅ مسار ملف أوقات تصفير تقارير المجهزين
+SUPPLIER_REPORT_TIMESTAMPS_FILE = os.path.join(DATA_DIR, "supplier_report_timestamps.json")
+
 
 # ✅ قراءة التوكن من المتغيرات البيئية (يفترض أنك ضايفه بـ Railway)
 TOKEN = os.getenv("TOKEN")
@@ -45,18 +48,18 @@ pricing = {}
 invoice_numbers = {}
 daily_profit = 0.0
 last_button_message = {}
-supplier_report_timestamps = {}
+supplier_report_timestamps = {} # ✅ هذا المتغير الجديد
 
 # تهيئة القفل لعمليات الحفظ
 save_lock = threading.Lock()
 save_timer = None
 save_pending = False
 
-# دالة تحميل JSON بشكل آمن (يمكن نقلها إلى ملف utils/data_manager لاحقاً)
+# دالة تحميل JSON بشكل آمن
 def load_json_file(filepath, default_value, var_name):
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     if os.path.exists(filepath):
-        with open(filepath, "r") as f:
+        with open(filepath, "r", encoding='utf-8') as f:
             try:
                 data = json.load(f)
                 logger.info(f"Loaded {var_name} from {filepath} successfully.")
@@ -71,34 +74,34 @@ def load_json_file(filepath, default_value, var_name):
 # دالة حفظ البيانات إلى القرص (يجب أن تكون عامة ويمكن الوصول إليها)
 def _save_data_to_disk_global():
     # الوصول إلى المتغيرات العالمية مباشرةً
-    global orders, pricing, invoice_numbers, daily_profit, last_button_message, supplier_report_timestamps # ✅ ضفنا هنا المتغير الجديد
+    global orders, pricing, invoice_numbers, daily_profit, last_button_message, supplier_report_timestamps
     with save_lock:
         os.makedirs(DATA_DIR, exist_ok=True)
         try:
-            with open(ORDERS_FILE + ".tmp", "w") as f:
-                json.dump(orders, f, indent=4)
+            with open(ORDERS_FILE + ".tmp", "w", encoding='utf-8') as f:
+                json.dump(orders, f, indent=4, ensure_ascii=False)
             os.replace(ORDERS_FILE + ".tmp", ORDERS_FILE)
 
-            with open(PRICING_FILE + ".tmp", "w") as f:
-                json.dump(pricing, f, indent=4)
+            with open(PRICING_FILE + ".tmp", "w", encoding='utf-8') as f:
+                json.dump(pricing, f, indent=4, ensure_ascii=False)
             os.replace(PRICING_FILE + ".tmp", PRICING_FILE)
 
-            with open(INVOICE_NUMBERS_FILE + ".tmp", "w") as f:
-                json.dump(invoice_numbers, f, indent=4)
+            with open(INVOICE_NUMBERS_FILE + ".tmp", "w", encoding='utf-8') as f:
+                json.dump(invoice_numbers, f, indent=4, ensure_ascii=False)
             os.replace(INVOICE_NUMBERS_FILE + ".tmp", INVOICE_NUMBERS_FILE)
 
-            with open(DAILY_PROFIT_FILE + ".tmp", "w") as f:
-                json.dump(daily_profit, f, indent=4)
+            with open(DAILY_PROFIT_FILE + ".tmp", "w", encoding='utf-8') as f:
+                json.dump(daily_profit, f, indent=4, ensure_ascii=False)
             os.replace(DAILY_PROFIT_FILE + ".tmp", DAILY_PROFIT_FILE)
 
-            with open(LAST_BUTTON_MESSAGE_FILE + ".tmp", "w") as f:
-                json.dump(last_button_message, f, indent=4)
+            with open(LAST_BUTTON_MESSAGE_FILE + ".tmp", "w", encoding='utf-8') as f:
+                json.dump(last_button_message, f, indent=4, ensure_ascii=False)
             os.replace(LAST_BUTTON_MESSAGE_FILE + ".tmp", LAST_BUTTON_MESSAGE_FILE)
 
             # ✅ هذا الكود الجديد لحفظ سجل أوقات التصفير
-            with open(os.path.join(DATA_DIR, "supplier_report_timestamps.json") + ".tmp", "w") as f:
-                json.dump(supplier_report_timestamps, f, indent=4)
-            os.replace(os.path.join(DATA_DIR, "supplier_report_timestamps.json") + ".tmp", os.path.join(DATA_DIR, "supplier_report_timestamps.json"))
+            with open(SUPPLIER_REPORT_TIMESTAMPS_FILE + ".tmp", "w", encoding='utf-8') as f:
+                json.dump(supplier_report_timestamps, f, indent=4, ensure_ascii=False)
+            os.replace(SUPPLIER_REPORT_TIMESTAMPS_FILE + ".tmp", SUPPLIER_REPORT_TIMESTAMPS_FILE)
 
             logger.info("All data (global) saved to disk successfully.")
         except Exception as e:
@@ -119,9 +122,9 @@ def schedule_save_global():
     save_timer.start()
     logger.info("Global data save scheduled with 0.5 sec delay.")
 
-# ✅ دالة تحميل البيانات عند بدء تشغيل البوت (تم تغيير موقعها)
+# ✅ دالة تحميل البيانات عند بدء تشغيل البوت
 def load_data():
-    global orders, pricing, invoice_numbers, daily_profit, last_button_message, supplier_report_timestamps # ✅ ضفنا هنا المتغير الجديد
+    global orders, pricing, invoice_numbers, daily_profit, last_button_message, supplier_report_timestamps
 
     os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -146,8 +149,7 @@ def load_data():
     last_button_message.clear()
     last_button_message.update({str(k): v for k, v in last_button_message_temp.items()})
 
-    # ✅ هذا السطر الجديد واللي بعده لتحميل سجل أوقات التصفير
-    supplier_report_timestamps_temp = load_json_file(os.path.join(DATA_DIR, "supplier_report_timestamps.json"), {}, "supplier_report_timestamps")
+    supplier_report_timestamps_temp = load_json_file(SUPPLIER_REPORT_TIMESTAMPS_FILE, {}, "supplier_report_timestamps")
     supplier_report_timestamps.clear()
     supplier_report_timestamps.update({str(k): v for k, v in supplier_report_timestamps_temp.items()})
 
@@ -225,6 +227,7 @@ async def save_data_in_background(context: ContextTypes.DEFAULT_TYPE):
     schedule_save_global()
     logger.info("Data save scheduled in background.")
 
+# الدوال التالية كلها يجب أن تكون قبل دالة main()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
@@ -755,7 +758,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
                  msg_error = await context.bot.send_message(chat_id=chat_id, text="عذراً، ماكو طلبية حالية منتظر عدد محلاتها أو الطلبية قديمة جداً. الرجاء استخدم الأزرار لتحديد عدد المحلات، أو بدء طلبية جديدة.", parse_mode="Markdown")
                  context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
                  if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
-                            del context.user_data[user_id]["current_active_order_id"]
+                             del context.user_data[user_id]["current_active_order_id"]
                  return ConversationHandler.END 
 
             if not update.message.text.strip().isdigit(): 
@@ -781,7 +784,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
             logger.warning(f"[{chat_id}] handle_places_count_data: No valid places count or order ID to process.")
             await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من فهم عدد المحلات أو الطلبية. الرجاء إدخال رقم صحيح أو البدء بطلبية جديدة.")
             if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
-                            del context.user_data[user_id]["current_active_order_id"]
+                             del context.user_data[user_id]["current_active_order_id"]
             return ConversationHandler.END 
 
         if 'places_count_message' in context.user_data[user_id]:
@@ -828,7 +831,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
 
     try:
         logger.info(f"[{chat_id}] Showing final options for order {order_id} to user {user_id}. User data: {json.dumps(context.user_data.get(user_id), indent=2)}")
-        
+
         if order_id not in orders:
             logger.warning(f"[{chat_id}] Attempted to show final options for non-existent order_id: {order_id}")
             await context.bot.send_message(chat_id=chat_id, text="عذراً، الطلب الذي تحاول الوصول إليه غير موجود أو تم حذفه. الرجاء بدء طلبية جديدة.")
@@ -871,34 +874,55 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
 
         # فاتورة الزبون - ترسل للكروب اللي انطى بيه الطلب (مثل ما هي)
         customer_invoice_lines = [
-            "**أبو الأكبر للتوصيل**",
-            f"رقم الفاتورة: {invoice}",
-            f"عنوان الزبون: {order['title']}",
-            f"رقم الزبون: `{phone_number}`",
-            "\n*المواد:*"
+            "📋 أبو الأكبر للتوصيل 🚀", # ✅ تم التعديل
+            "----------------------------------- ", # ✅ تم التعديل
+            f"فاتورة رقم: #{invoice}", # ✅ تم التعديل
+            f"🏠 عنوان الزبون: {order['title']}", # ✅ تم التعديل
+            f"📞 رقم الزبون: `{phone_number}`", # ✅ تم التعديل
+            "🛍️ المنتجات:  " # ✅ تم التعديل
         ]
         
         current_display_total = 0.0
-        for p in order["products"]:
+        for i, p in enumerate(order["products"]): # ✅ ضفنا i هنا للحصول على رقم العنصر
             if p in pricing.get(order_id, {}) and "sell" in pricing[order_id][p]:
                 sell = pricing[order_id][p]["sell"]
+                
+                if i == 0: # ✅ إذا كان المنتج الأول
+                    customer_invoice_lines.append(f"– {p} بـ{format_float(sell)}")
+                    customer_invoice_lines.append(f"•  {format_float(sell)} 💵") # ✅ السطر الجديد للمجموع الأول
+                else: # ✅ للمنتجات اللي بعدها
+                    prev_total = current_display_total # المجموع قبل إضافة المنتج الحالي
+                    customer_invoice_lines.append(f"– {p} بـ{format_float(sell)}") # ✅ تم تعديل هذا السطر
+                    customer_invoice_lines.append(f"•  {format_float(prev_total)}+{format_float(sell)}= {format_float(prev_total + sell)} 💵") # ✅ السطر الجديد للجمع
+                
                 current_display_total += sell
-                customer_invoice_lines.append(f"{p} - {format_float(sell)} = {format_float(current_display_total)}")
             else:
-                customer_invoice_lines.append(f"{p} - (لم يتم تسعيره)")
+                customer_invoice_lines.append(f"– {p} - (لم يتم تسعيره)")
 
-        current_display_total += extra_cost
-        customer_invoice_lines.append(f"كلفة تجهيز من - {current_places} محلات {format_float(extra_cost)} = {format_float(current_display_total)}")
+        # كلفة تجهيز المحلات
+        if current_places > 0: # ✅ التأكد من وجود كلفة تجهيز
+            prev_total = current_display_total
+            customer_invoice_lines.append(f"– 📦  التجهيز: من {current_places} محلات بـ {format_float(extra_cost)}")
+            current_display_total += extra_cost
+            customer_invoice_lines.append(f"•  {format_float(prev_total)}+{format_float(extra_cost)}= {format_float(current_display_total)} 💵")
 
+        # أجرة التوصيل
         if delivery_fee > 0:
-            customer_invoice_lines.append(f"أجرة التوصيل: {format_float(delivery_fee)}")
+            prev_total = current_display_total
+            customer_invoice_lines.append(f"– 🚚 التوصيل: بـ {format_float(delivery_fee)}")
+            current_display_total += delivery_fee
+            customer_invoice_lines.append(f"•  {format_float(prev_total)}+{format_float(delivery_fee)}= {format_float(current_display_total)} 💵")
 
-        customer_invoice_lines.append(f"\n*المجموع الكلي:*")
-        customer_invoice_lines.append(f"بدون التوصيل = {format_float(total_before_delivery_fee)}")
-        customer_invoice_lines.append(f"مــــع التوصيل = {format_float(final_total)}")
+        customer_invoice_lines.append("----------------------------------- ")
+        customer_invoice_lines.append("✨ المجموع الكلي: ✨ ")
+        customer_invoice_lines.append(f"بدون التوصيل = {format_float(total_before_delivery_fee)}  💵")
+        customer_invoice_lines.append(f"مــــع التوصيل = {format_float(final_total)} 💵")
+        customer_invoice_lines.append("شكراً لاختياركم خدمة أبو الأكبر للتوصيل! ❤️")
         
         customer_final_text = "\n".join(customer_invoice_lines)
 
+        # باقي الدالة مثل ما هي (حفظ فاتورة الزبون، إرسال فاتورة المجهز، فاتورة الإدارة، الأزرار)
+    
         # حفظ فاتورة الزبون (للسجلات)
         invoices_dir = "invoices"
         os.makedirs(invoices_dir, exist_ok=True)
@@ -920,7 +944,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         except Exception as e:
             logger.error(f"[{chat_id}] Could not send customer invoice as message: {e}")
 
-        # فاتورة المجهز (للخاص مال المجهز) - مثل ما هي
+        # فاتورة المجهز (للخاص مال المجهز)
         supplier_invoice_details = [
             f"**فاتورة شراء طلبية (لك يا مجهز):**",
             f"رقم الفاتورة: {invoice}",
@@ -943,7 +967,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         # إرسال فاتورة الشراء لخاص المجهز
         try:
             await context.bot.send_message(
-                chat_id=user_id, # هذا هو الـ ID مال المجهز
+                chat_id=user_id,
                 text=final_supplier_invoice_text,
                 parse_mode="Markdown"
             )
@@ -961,7 +985,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         ]
         
         for p in order["products"]:
-            if p in pricing.get(order_id, {}) and "buy" in pricing[order_id][p] and "sell" in pricing[order_id][p]:
+            if p in pricing.get(order_id, {}) and "buy" in pricing[order_id].get(p, {}) and "sell" in pricing[order_id].get(p, {}):
                 buy = pricing[order_id][p]["buy"]
                 sell = pricing[order_id][p]["sell"]
                 profit_item = sell - buy
@@ -1032,6 +1056,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         logger.error(f"[{chat_id}] Error in show_final_options: {e}", exc_info=True)
         await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء عرض الفاتورة النهائية. الرجاء بدء طلبية جديدة.")
 
+    # ✅ هذا الـ except الزايد اللي لازم ينمسح
     except Exception as e:
         logger.error(f"[{chat_id}] Error in show_final_options: {e}", exc_info=True)
         await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء عرض الفاتورة النهائية. الرجاء بدء طلبية جديدة.")
@@ -1151,11 +1176,11 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     invoice_numbers = context.application.bot_data['invoice_numbers']
     last_button_message = context.application.bot_data['last_button_message']
     daily_profit = context.application.bot_data['daily_profit'] 
-    supplier_report_timestamps = context.application.bot_data['supplier_report_timestamps'] # ✅ جبنا هذا المتغير
+    supplier_report_timestamps = context.application.bot_data['supplier_report_timestamps']
 
     try:
         query = update.callback_query
-        await query.answer() # ✅ هذا السطر مهم جداً حتى يختفي التحميل من الزر
+        await query.answer()
 
         if str(query.from_user.id) != str(OWNER_ID):
             await query.edit_message_text("عذراً، لا تملك صلاحية لتنفيذ هذا الأمر.")
@@ -1169,9 +1194,9 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pricing.clear()
             invoice_numbers.clear()
             last_button_message.clear()
-            supplier_report_timestamps.clear() # ✅ تصفير سجلات المجهزين
+            supplier_report_timestamps.clear()
             
-            daily_profit_value = 0.0 # القيمة الجديدة للربح اليومي
+            daily_profit_value = 0.0
 
             try:
                 # إعادة تعيين عداد الفواتير
@@ -1186,7 +1211,7 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.application.bot_data['invoice_numbers'] = invoice_numbers
             context.application.bot_data['last_button_message'] = last_button_message
             context.application.bot_data['daily_profit'] = daily_profit_value
-            context.application.bot_data['supplier_report_timestamps'] = supplier_report_timestamps # ✅ تحديث سجل المجهزين في bot_data
+            context.application.bot_data['supplier_report_timestamps'] = supplier_report_timestamps
 
             # استدعاء دالة الحفظ العامة لحفظ التغييرات على القرص
             _save_data_to_disk_global_func = context.application.bot_data.get('_save_data_to_disk_global_func')
@@ -1234,6 +1259,14 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
                 total_sell += pricing[order_id][p]["sell"]
 
         net_profit = total_sell - total_buy
+        
+        # ✅ حفظ صافي الربح داخل تفاصيل الطلبية
+        orders[order_id]['net_profit'] = net_profit
+        
+        # ✅ إلغاء تحديث daily_profit هنا، لأنه سيتم حسابه ديناميكياً
+        # context.application.bot_data['daily_profit'] = daily_profit_current + net_profit 
+        logger.info(f"[{chat_id}] Calculated net profit {net_profit} for order {order_id}. This profit is stored within the order details.")
+        context.application.create_task(save_data_in_background(context))
 
         current_places = orders[order_id].get("places_count", 0)
         extra_cost = calculate_extra(current_places)
@@ -1241,65 +1274,60 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         delivery_fee = get_delivery_price(order.get('title', ''))
 
         total_before_delivery_fee = total_sell + extra_cost
-
+        
         final_total = total_before_delivery_fee + delivery_fee
-
-        context.application.bot_data['daily_profit'] = daily_profit_current + net_profit
-        logger.info(f"[{chat_id}] Daily profit after adding {net_profit} for order {order_id}: {context.application.bot_data['daily_profit']}")
-        context.application.create_task(save_data_in_background(context))
 
         # فاتورة الزبون - ترسل للكروب اللي انطى بيه الطلب (مثل ما هي)
         customer_invoice_lines = [
-            "📋 أبو الأكبر للتوصيل 🚀", # ✅ تم التعديل
-            "----------------------------------- ", # ✅ تم التعديل
-            f"فاتورة رقم: #{invoice}", # ✅ تم التعديل
-            f"🏠 عنوان الزبون: {order['title']}", # ✅ تم التعديل
-            f"📞 رقم الزبون: `{phone_number}`", # ✅ تم التعديل
-            "🛍️ المنتجات:  " # ✅ تم التعديل
+            "📋 أبو الأكبر للتوصيل 🚀",
+            "----------------------------------- ",
+            f"فاتورة رقم: #{invoice}",
+            f"🏠 عنوان الزبون: {order['title']}",
+            f"📞 رقم الزبون: `{phone_number}`",
+            "🛍️ المنتجات:  "
         ]
-
+        
         current_display_total = 0.0
-        for i, p in enumerate(order["products"]): # ✅ ضفنا i هنا للحصول على رقم العنصر
+        for i, p in enumerate(order["products"]):
             if p in pricing.get(order_id, {}) and "sell" in pricing[order_id][p]:
                 sell = pricing[order_id][p]["sell"]
-
-                if i == 0: # ✅ إذا كان المنتج الأول
+                
+                if i == 0:
                     customer_invoice_lines.append(f"– {p} بـ{format_float(sell)}")
-                    customer_invoice_lines.append(f"•  {format_float(sell)} 💵") # ✅ السطر الجديد للمجموع الأول
-                else: # ✅ للمنتجات اللي بعدها
-                    prev_total = current_display_total # المجموع قبل إضافة المنتج الحالي
-                    customer_invoice_lines.append(f"– {p} بـ{format_float(sell)}") # ✅ تم تعديل هذا السطر
-                    customer_invoice_lines.append(f"•  {format_float(prev_total)}+{format_float(sell)}= {format_float(prev_total + sell)} 💵") # ✅ السطر الجديد للجمع
-
+                    customer_invoice_lines.append(f"•  {format_float(sell)} 💵")
+                else:
+                    prev_total = current_display_total
+                    customer_invoice_lines.append(f"– {p} بـ{format_float(sell)}")
+                    customer_invoice_lines.append(f"•  {format_float(prev_total)}+{format_float(sell)}= {format_float(prev_total + sell)} 💵")
+                
                 current_display_total += sell
             else:
                 customer_invoice_lines.append(f"– {p} - (لم يتم تسعيره)")
 
         # كلفة تجهيز المحلات
-        if current_places > 0: # ✅ التأكد من وجود كلفة تجهيز
-            prev_total = current_display_total # المجموع قبل إضافة كلفة التجهيز
-            customer_invoice_lines.append(f"– 📦  التجهيز: من {current_places} محلات بـ {format_float(extra_cost)}") # ✅ تم التعديل
+        if current_places > 0:
+            prev_total = current_display_total
+            customer_invoice_lines.append(f"– 📦  التجهيز: من {current_places} محلات بـ {format_float(extra_cost)}")
             current_display_total += extra_cost
-            customer_invoice_lines.append(f"•  {format_float(prev_total)}+{format_float(extra_cost)}= {format_float(current_display_total)} 💵") # ✅ السطر الجديد للجمع
+            customer_invoice_lines.append(f"•  {format_float(prev_total)}+{format_float(extra_cost)}= {format_float(current_display_total)} 💵")
 
         # أجرة التوصيل
         if delivery_fee > 0:
-            prev_total = current_display_total # المجموع قبل إضافة أجرة التوصيل
-            customer_invoice_lines.append(f"– 🚚 التوصيل: بـ {format_float(delivery_fee)}") # ✅ تم التعديل
+            prev_total = current_display_total
+            customer_invoice_lines.append(f"– 🚚 التوصيل: بـ {format_float(delivery_fee)}")
             current_display_total += delivery_fee
-            customer_invoice_lines.append(f"•  {format_float(prev_total)}+{format_float(delivery_fee)}= {format_float(current_display_total)} 💵") # ✅ السطر الجديد للجمع
+            customer_invoice_lines.append(f"•  {format_float(prev_total)}+{format_float(delivery_fee)}= {format_float(current_display_total)} 💵")
 
-        customer_invoice_lines.append("----------------------------------- ") # ✅ تم التعديل
-        customer_invoice_lines.append("✨ المجموع الكلي: ✨ ") # ✅ تم التعديل
-        customer_invoice_lines.append(f"بدون التوصيل = {format_float(total_before_delivery_fee)}  💵") # ✅ تم التعديل
-        customer_invoice_lines.append(f"مــــع التوصيل = {format_float(final_total)} 💵") # ✅ تم التعديل
-        customer_invoice_lines.append("شكراً لاختياركم خدمة أبو الأكبر للتوصيل! ❤️") # ✅ تم التعديل
-
+        customer_invoice_lines.append("----------------------------------- ")
+        customer_invoice_lines.append("✨ المجموع الكلي: ✨ ")
+        customer_invoice_lines.append(f"بدون التوصيل = {format_float(total_before_delivery_fee)}  💵")
+        customer_invoice_lines.append(f"مــــع التوصيل = {format_float(final_total)} 💵")
+        customer_invoice_lines.append("شكراً لاختياركم خدمة أبو الأكبر للتوصيل! ❤️")
+        
         customer_final_text = "\n".join(customer_invoice_lines)
 
         # باقي الدالة مثل ما هي (حفظ فاتورة الزبون، إرسال فاتورة المجهز، فاتورة الإدارة، الأزرار)
-        # ... (باقي الكود مثل ما هو بدون تغيير)
-
+    
         # حفظ فاتورة الزبون (للسجلات)
         invoices_dir = "invoices"
         os.makedirs(invoices_dir, exist_ok=True)
@@ -1321,9 +1349,9 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         except Exception as e:
             logger.error(f"[{chat_id}] Could not send customer invoice as message: {e}")
 
-        # ✅ فاتورة المجهز (للخاص مال المجهز) - هذا هو الجزء الجديد
+        # فاتورة المجهز (للخاص مال المجهز)
         supplier_invoice_details = [
-            f"**فاتورة شراء طلبية (لك):**",
+            f"**فاتورة شراء طلبية (لك يا مجهز):**",
             f"رقم الفاتورة: {invoice}",
             f"عنوان الزبون: {order['title']}",
             f"رقم الزبون: `{phone_number}`",
@@ -1337,15 +1365,14 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
                 supplier_invoice_details.append(f"  - {p}: {format_float(buy)}")
             else:
                 supplier_invoice_details.append(f"  - {p}: (لم يتم تحديد سعر الشراء)")
-
+        
         supplier_invoice_details.append(f"\n*مجموع كلفة الشراء للطلبية:* {format_float(supplier_total_buy)}")
         final_supplier_invoice_text = "\n".join(supplier_invoice_details)
 
         # إرسال فاتورة الشراء لخاص المجهز
         try:
-            # هنا نستخدم user_id مال المجهز (اللي جهز الطلب)
             await context.bot.send_message(
-                chat_id=user_id, # هذا هو الـ ID مال المجهز
+                chat_id=user_id,
                 text=final_supplier_invoice_text,
                 parse_mode="Markdown"
             )
@@ -1361,9 +1388,9 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             f"رقم الزبون: `{phone_number}`",
             f"عنوان الزبون: {order['title']}"
         ]
-
+        
         for p in order["products"]:
-            if p in pricing.get(order_id, {}) and "buy" in pricing[order_id][p] and "sell" in pricing[order_id][p]:
+            if p in pricing.get(order_id, {}) and "buy" in pricing[order_id].get(p, {}) and "sell" in pricing[order_id].get(p, {}):
                 buy = pricing[order_id][p]["buy"]
                 sell = pricing[order_id][p]["sell"]
                 profit_item = sell - buy
@@ -1433,90 +1460,179 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
     except Exception as e:
         logger.error(f"[{chat_id}] Error in show_final_options: {e}", exc_info=True)
         await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء عرض الفاتورة النهائية. الرجاء بدء طلبية جديدة.")
+
+    # ✅ هذا الـ except الزايد اللي لازم ينمسح
+    except Exception as e: # This is the duplicate except block
+        logger.error(f"[{chat_id}] Error in show_final_options: {e}", exc_info=True)
+        await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء عرض الفاتورة النهائية. الرجاء بدء طلبية جديدة.")
         
-def main():
-    app = ApplicationBuilder().token(TOKEN).build()
-
-    # وضع المتغيرات العالمية في bot_data
-    app.bot_data['orders'] = orders
-    app.bot_data['pricing'] = pricing
-    app.bot_data['invoice_numbers'] = invoice_numbers
-    app.bot_data['daily_profit'] = daily_profit
-    app.bot_data['last_button_message'] = last_button_message
-    app.bot_data['supplier_report_timestamps'] = supplier_report_timestamps 
-
-    # تمرير دوال الحفظ العامة لـ bot_data حتى تتمكن الدوال الأخرى من استدعائها
-    app.bot_data['schedule_save_global_func'] = schedule_save_global
-    app.bot_data['_save_data_to_disk_global_func'] = _save_data_to_disk_global
-
-    # ✅ Handlers خارج المحادثة (الآن صارت داخل main())
-    # تأكد إنو هاي الأسطر تبدي بـ 4 مسافات فراغ من بداية السطر:
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("profit", show_profit))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(الارباح|ارباح)$"), show_profit))
-    app.add_handler(CommandHandler("reset", reset_all))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^تصفير$"), reset_all))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^صفر$"), reset_supplier_report))
-    app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
-    app.add_handler(CommandHandler("report", show_report))
-    app.add_handler(CommandHandler("myreport", show_supplier_report))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تقاريري|تقريري)$"), show_supplier_report))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(التقارير|تقرير|تقارير)$"), show_report))
-
-    app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
-    app.add_handler(CallbackQueryHandler(edit_prices, pattern=r"^edit_prices_"))
-    app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern=r"^start_new_order$"))
-    # أمر /zones لعرض المناطق
-    app.add_handler(CommandHandler("zones", list_zones))
-    # استجابة نصية "مناطق" أو "المناطق"
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(مناطق|المناطق)$"), list_zones))
-    # ✅ تم إزالة أمر /add_zones_bulk لأنه لن يتم استخدامه بعد الآن
-
-    # ✅ ConversationHandler لعدد المحلات
-    places_conv_handler = ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(handle_places_count_data, pattern=r"^places_data_[a-f0-9]{8}_\d+$"),
-        ],
-        states={
-            ASK_PLACES_COUNT: [
-                MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, handle_places_count_data),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_places_count_data),
-            ],
-        },
-        fallbacks=[
-            CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
-        ]
-    )
-    app.add_handler(places_conv_handler)
-
-    # ✅ ConversationHandler لإنشاء وتسعير الطلبات
-    order_creation_conv_handler = ConversationHandler(
-        entry_points=[
-            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
-            CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$")
-        ],
-        states={
-            ASK_BUY: [
-                MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_buy_price),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
-            ],
-            ASK_SELL: [
-                MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_sell_price),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sell_price),
-            ]
-        },
-        fallbacks=[
-            CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
-        ]
-    )
-    app.add_handler(order_creation_conv_handler)
-
-    # ✅ تشغيل البوت
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    orders = context.application.bot_data['orders']
+    pricing = context.application.bot_data['pricing']
     
+    try:
+        query = update.callback_query
+        await query.answer()
+        
+        user_id = str(query.from_user.id)
+        logger.info(f"[{query.message.chat_id}] Edit prices callback from user {user_id}: {query.data}. User data: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
+        if query.data.startswith("edit_prices_"):
+            order_id = query.data.replace("edit_prices_", "")
+        else:
+            await query.message.reply_text("عذراً، حدث خطأ في بيانات الزر. الرجاء المحاولة مرة أخرى.")
+            return ConversationHandler.END
 
+        if order_id not in orders:
+            logger.warning(f"[{query.message.chat_id}] Edit prices: Order {order_id} not found.")
+            await query.message.reply_text("عذراً، الطلب الذي تحاول تعديله غير موجود.")
+            return ConversationHandler.END
+
+        if query.message:
+            context.user_data.setdefault(user_id, {}).setdefault('messages_to_delete', []).append({
+                'chat_id': query.message.chat_id,
+                'message_id': query.message.message_id
+            })
+            logger.info(f"[{query.message.chat_id}] Added edit prices button message {query.message.message_id} to delete queue.")
+            try:
+                await context.bot.edit_message_reply_markup(
+                    chat_id=query.message.chat_id,
+                    message_id=query.message.message_id,
+                    reply_markup=None 
+                )
+            except Exception as e:
+                logger.warning(f"[{query.message.chat_id}] Could not clear buttons from edit prices message {query.message.message_id} directly: {e}. Proceeding.")
+        
+        await show_buttons(query.message.chat_id, context, user_id, order_id, confirmation_message="يمكنك الآن تعديل أسعار المنتجات أو إضافة/حذف منتجات بتعديل الرسالة الأصلية للطلبية.")
+        logger.info(f"[{query.message.chat_id}] Showing edit buttons for order {order_id}. Exiting conversation for user {user_id}.")
+        return ConversationHandler.END
+    except Exception as e:
+        logger.error(f"[{update.effective_chat.id}] Error in edit_prices: {e}", exc_info=True)
+        await update.callback_query.message.reply_text("عذراً، حدث خطأ أثناء تعديل الأسعار. الرجاء بدء طلبية جديدة.")
+        return ConversationHandler.END
+
+async def start_new_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.from_user.id)
+    try:
+        query = update.callback_query
+        await query.answer()
+        
+        logger.info(f"[{query.message.chat_id}] Start new order callback from user {user_id}. User data: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
+        if user_id in context.user_data:
+            context.user_data[user_id].pop("order_id", None)
+            context.user_data[user_id].pop("product", None)
+            context.user_data[user_id].pop("current_active_order_id", None)
+            context.user_data[user_id].pop("messages_to_delete", None) 
+            context.user_data[user_id].pop("buy_price", None) # Clear buy_price too
+            logger.info(f"[{query.message.chat_id}] Cleared order-specific user_data for user {user_id} after starting a new order from button. User data after clean: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
+
+        if query.message:
+            context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
+
+        await query.message.reply_text("تمام، دز الطلبية الجديدة كلها برسالة واحدة.\n\n*السطر الأول:* عنوان الزبون.\n*السطر الثاني:* رقم هاتف الزبون.\n*الأسطر الباقية:* كل منتج بسطر واحد.", parse_mode="Markdown")
+        
+        return ConversationHandler.END
+    except Exception as e:
+        logger.error(f"[{update.effective_chat.id}] Error in start_new_order_callback: {e}", exc_info=True)
+        await update.callback_query.message.reply_text("عذراً، حدث خطأ أثناء بدء طلب جديد. الرجاء المحاولة مرة أخرى.")
+        return ConversationHandler.END
+
+
+# الدوال الخاصة بالتقارير والأرباح (ستُجزأ لاحقاً إلى features/reports.py)
+async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    orders = context.application.bot_data['orders'] # نجيب كل الطلبيات
+
+    try:
+        if str(update.message.from_user.id) != str(OWNER_ID):
+            await update.message.reply_text("عذراً، هذا الأمر متاح للمالك فقط.")
+            return
+        
+        # ✅ إعادة حساب الربح التراكمي الإجمالي من كل الطلبيات
+        total_cumulative_profit = 0.0
+        for order_id, order_data in orders.items():
+            # نجمع صافي الربح لكل طلبية، إذا كان موجود
+            if 'net_profit' in order_data:
+                total_cumulative_profit += order_data['net_profit']
+
+        logger.info(f"Current daily_profit (recalculated) requested by user {update.message.from_user.id}: {total_cumulative_profit}")
+        await update.message.reply_text(f"الربح التراكمي الإجمالي: *{format_float(total_cumulative_profit)}* دينار", parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"[{update.effective_chat.id}] Error in show_profit: {e}", exc_info=True)
+        await update.message.reply_text("عذراً، حدث خطأ أثناء عرض الأرباح.")
+        
+async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        if str(update.message.from_user.id) != str(OWNER_ID):
+            await update.message.reply_text("عذراً، هذا الأمر متاح للمالك فقط.")
+            return
+        
+        keyboard = [
+            [InlineKeyboardButton("نعم، متأكد", callback_data="confirm_reset")],
+            [InlineKeyboardButton("لا، إلغاء", callback_data="cancel_reset")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("هل أنت متأكد من تصفير جميع الأرباح ومسح كل الطلبات؟ هذا الإجراء لا يمكن التراجع عنه.", reply_markup=reply_markup)
+    except Exception as e:
+        logger.error(f"[{update.effective_chat.id}] Error in reset_all: {e}", exc_info=True)
+        await update.message.reply_text("عذراً، حدث خطأ أثناء محاولة التصفير.")
+
+async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    orders = context.application.bot_data['orders']
+    pricing = context.application.bot_data['pricing']
+    invoice_numbers = context.application.bot_data['invoice_numbers']
+    last_button_message = context.application.bot_data['last_button_message']
+    daily_profit = context.application.bot_data['daily_profit'] 
+    supplier_report_timestamps = context.application.bot_data['supplier_report_timestamps']
+
+    try:
+        query = update.callback_query
+        await query.answer()
+
+        if str(query.from_user.id) != str(OWNER_ID):
+            await query.edit_message_text("عذراً، لا تملك صلاحية لتنفيذ هذا الأمر.")
+            return
+
+        if query.data == "confirm_reset":
+            logger.info(f"Daily profit before reset: {daily_profit}")
+            
+            # تصفير القيم في الذاكرة
+            orders.clear()
+            pricing.clear()
+            invoice_numbers.clear()
+            last_button_message.clear()
+            supplier_report_timestamps.clear()
+            
+            daily_profit_value = 0.0
+
+            try:
+                # إعادة تعيين عداد الفواتير
+                with open(COUNTER_FILE, "w") as f:
+                    f.write("1")
+            except Exception as e:
+                logger.error(f"Could not reset invoice counter file: {e}", exc_info=True)
+            
+            # تحديث القيم في bot_data بعد التصفير (هذا الجزء مهم)
+            context.application.bot_data['orders'] = orders
+            context.application.bot_data['pricing'] = pricing
+            context.application.bot_data['invoice_numbers'] = invoice_numbers
+            context.application.bot_data['last_button_message'] = last_button_message
+            context.application.bot_data['daily_profit'] = daily_profit_value
+            context.application.bot_data['supplier_report_timestamps'] = supplier_report_timestamps
+
+            # استدعاء دالة الحفظ العامة لحفظ التغييرات على القرص
+            _save_data_to_disk_global_func = context.application.bot_data.get('_save_data_to_disk_global_func')
+            if _save_data_to_disk_global_func:
+                _save_data_to_disk_global_func()
+            else:
+                logger.error("Could not find _save_data_to_disk_global_func in bot_data.")
+            
+            logger.info(f"Daily profit after reset: {context.application.bot_data['daily_profit']}")
+            await query.edit_message_text("تم تصفير الأرباح ومسح كل الطلبات بنجاح.")
+        elif query.data == "cancel_reset":
+            await query.edit_message_text("تم إلغاء عملية التصفير.")
+    except Exception as e:
+        logger.error(f"[{update.effective_chat.id}] Error in confirm_reset: {e}", exc_info=True)
+        await update.callback_query.message.reply_text("عذراً، حدث خطأ أثناء عملية التصفير.")
+        
 async def show_supplier_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
@@ -1593,3 +1709,17 @@ async def reset_supplier_report(update: Update, context: ContextTypes.DEFAULT_TY
     
 if __name__ == "__main__":
     main()
+أبو الأكبر يا بطل، حقك عليَّ والله. اني كلش آسف على هاي الدوخة اللي دتصير، وكلش أقدر صبرك ومتابعتك.
+
+شفت الكود اللي دزيته. حالياً البوت "ساكت" لأنو **الكود مالتك بي خطأ إملائي (SyntaxError) واضح يمنع البوت من التشغيل أصلاً**. اللوغ اللي دزيته قبل شويه جان يشتكي من `NameError`، بس حالياً بالرمز اللي دزيته، **الخطأ الأكيد اللي دأشوفه هو وجود `except` مكرر في نهاية دالة `show_final_options`**.
+
+شوف هذا الجزء من دالة `show_final_options` اللي دزيتها:
+
+```python
+    except Exception as e:
+        logger.error(f"[{chat_id}] Error in show_final_options: {e}", exc_info=True)
+        await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء عرض الفاتورة النهائية. الرجاء بدء طلبية جديدة.")
+
+    except Exception as e: # ✅ هذا الـ except الزايد اللي لازم ينمسح
+        logger.error(f"[{chat_id}] Error in show_final_options: {e}", exc_info=True)
+        await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء عرض الفاتورة النهائية. الرجاء بدء طلبية جديدة.")
