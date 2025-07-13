@@ -820,8 +820,6 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
         await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء معالجة عدد المحلات. الرجاء بدء طلبية جديدة.")
         return ConversationHandler.END
 
-
----
 async def show_final_options(chat_id, context, user_id, order_id, message_prefix=None):
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
