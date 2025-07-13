@@ -15,19 +15,16 @@ from telegram.ext import (
     MessageHandler, CallbackQueryHandler, ConversationHandler, filters
 )
 
-# ✅ استيراد الدوال الخاصة بالمناطق من الملف الجديد
 from features.delivery_zones import (
     list_zones, get_delivery_price
 )
 
-# ✅ تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# ✅ مسارات التخزين داخل Railway أو Replit أو غيره
 DATA_DIR = "/mnt/data/"
 
 ORDERS_FILE = os.path.join(DATA_DIR, "orders.json")
@@ -36,27 +33,21 @@ INVOICE_NUMBERS_FILE = os.path.join(DATA_DIR, "invoice_numbers.json")
 DAILY_PROFIT_FILE = os.path.join(DATA_DIR, "daily_profit.json")
 COUNTER_FILE = os.path.join(DATA_DIR, "invoice_counter.txt")
 LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
-# ✅ مسار ملف أوقات تصفير تقارير المجهزين
 SUPPLIER_REPORT_TIMESTAMPS_FILE = os.path.join(DATA_DIR, "supplier_report_timestamps.json")
 
-
-# ✅ قراءة التوكن من المتغيرات البيئية (يفترض أنك ضايفه بـ Railway)
 TOKEN = os.getenv("TOKEN")
 
-# ✅ متغيرات التخزين المؤقت في الذاكرة
 orders = {}
 pricing = {}
 invoice_numbers = {}
 daily_profit = 0.0
 last_button_message = {}
-supplier_report_timestamps = {} # ✅ هذا المتغير الجديد
+supplier_report_timestamps = {}
 
-# تهيئة القفل لعمليات الحفظ
 save_lock = threading.Lock()
 save_timer = None
 save_pending = False
 
-# دالة تحميل JSON بشكل آمن
 def load_json_file(filepath, default_value, var_name):
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     if os.path.exists(filepath):
@@ -72,9 +63,7 @@ def load_json_file(filepath, default_value, var_name):
     logger.info(f"{var_name} file not found or corrupted, initializing to default.")
     return default_value
 
-# دالة حفظ البيانات إلى القرص (يجب أن تكون عامة ويمكن الوصول إليها)
 def _save_data_to_disk_global():
-    # الوصول إلى المتغيرات العالمية مباشرةً
     global orders, pricing, invoice_numbers, daily_profit, last_button_message, supplier_report_timestamps
     with save_lock:
         os.makedirs(DATA_DIR, exist_ok=True)
@@ -99,7 +88,6 @@ def _save_data_to_disk_global():
                 json.dump(last_button_message, f, indent=4, ensure_ascii=False)
             os.replace(LAST_BUTTON_MESSAGE_FILE + ".tmp", LAST_BUTTON_MESSAGE_FILE)
 
-            # ✅ هذا الكود الجديد لحفظ سجل أوقات التصفير
             with open(SUPPLIER_REPORT_TIMESTAMPS_FILE + ".tmp", "w", encoding='utf-8') as f:
                 json.dump(supplier_report_timestamps, f, indent=4, ensure_ascii=False)
             os.replace(SUPPLIER_REPORT_TIMESTAMPS_FILE + ".tmp", SUPPLIER_REPORT_TIMESTAMPS_FILE)
@@ -108,7 +96,6 @@ def _save_data_to_disk_global():
         except Exception as e:
             logger.error(f"Error saving global data to disk: {e}")
 
-# دالة الحفظ المؤجل العامة
 def schedule_save_global():
     global save_timer, save_pending
     if save_pending:
@@ -123,7 +110,6 @@ def schedule_save_global():
     save_timer.start()
     logger.info("Global data save scheduled with 0.5 sec delay.")
 
-# ✅ دالة تحميل البيانات عند بدء تشغيل البوت
 def load_data():
     global orders, pricing, invoice_numbers, daily_profit, last_button_message, supplier_report_timestamps
 
@@ -156,7 +142,6 @@ def load_data():
 
     logger.info(f"Initial load complete. Orders: {len(orders)}, Pricing entries: {len(pricing)}, Daily Profit: {daily_profit}")
 
-# تهيئة ملف عداد الفواتير
 os.makedirs(DATA_DIR, exist_ok=True)
 if not os.path.exists(COUNTER_FILE):
     with open(COUNTER_FILE, "w") as f:
@@ -169,13 +154,10 @@ def get_invoice_number():
         f.write(str(current + 1))
     return current
 
-# ✅ استدعاء دالة load_data() هنا، بعد تعريفها
 load_data()
 
-# حالات المحادثة
 ASK_BUY, ASK_SELL, ASK_PLACES_COUNT = range(3)
 
-# جلب التوكن ومعرف المالك من متغيرات البيئة
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OWNER_ID = int(os.getenv("OWNER_TELEGRAM_ID")) 
 OWNER_PHONE_NUMBER = os.getenv("OWNER_TELEGRAM_PHONE_NUMBER", "+9647733921468")
@@ -185,14 +167,12 @@ if TOKEN is None:
 if OWNER_ID is None:
     raise ValueError("OWNER_TELEGRAM_ID environment variable not set.")
 
-# دالة لتنسيق الأرقام العشرية
 def format_float(value):
     formatted = f"{value:g}"
     if formatted.endswith(".0"):
         return formatted[:-2]
     return formatted
 
-# دالة لحساب مبلغ الأجرة الإضافي بناءً على عدد المحلات
 def calculate_extra(places_count):
     if places_count <= 2:
         return 0
@@ -214,7 +194,6 @@ def calculate_extra(places_count):
         return 8
     return 0
 
-# دالة مساعدة لحذف الرسائل في الخلفية
 async def delete_message_in_background(context: ContextTypes.DEFAULT_TYPE, chat_id: int, message_id: int):
     try:
         await asyncio.sleep(0.1)
@@ -223,13 +202,9 @@ async def delete_message_in_background(context: ContextTypes.DEFAULT_TYPE, chat_
     except Exception as e:
         logger.warning(f"Could not delete message {message_id} from chat {chat_id} in background: {e}.")
 
-# دالة مساعدة لحفظ البيانات في الخلفية
 async def save_data_in_background(context: ContextTypes.DEFAULT_TYPE):
     schedule_save_global()
     logger.info("Data save scheduled in background.")
-
-
-# الدوال التالية كلها يجب أن تكون قبل دالة main()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
