@@ -818,6 +818,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
         await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء معالجة عدد المحلات. الرجاء بدء طلبية جديدة.")
         return ConversationHandler.END
 
+---
 async def show_final_options(chat_id, context, user_id, order_id, message_prefix=None):
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
@@ -915,7 +916,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
 
         customer_final_text = "\n".join(customer_invoice_lines)
 
-        # ✅ فاتورة الزبون المخصصة للواتساب (مختصرة) - هذا هو الجزء الجديد
+        # ✅ فاتورة الزبون المخصصة للواتساب (مختصرة)
         customer_whatsapp_invoice_lines = [
             "📋 فاتورتك من أبو الأكبر 🚀",
             "-------------------------------",
@@ -943,7 +944,6 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             "شكراً لاختياركم أبو الأكبر! ❤️"
         ])
         customer_whatsapp_final_text = "\n".join(customer_whatsapp_invoice_lines)
-
 
         # باقي الدوال كما هي بدون تغيير
         invoices_dir = "invoices"
@@ -1033,7 +1033,6 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             logger.error(f"[{chat_id}] Failed to save admin invoice to file: {e}")
 
         encoded_owner_invoice = quote(final_owner_invoice_text, safe='')
-        # ✅ هذا السطر اتغير حتى يستخدم الفاتورة المختصرة للواتساب للزبون
         encoded_customer_whatsapp_text = quote(customer_whatsapp_final_text, safe='') 
 
         whatsapp_owner_button_markup = InlineKeyboardMarkup([
@@ -1054,7 +1053,6 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         keyboard = [
             [InlineKeyboardButton("1️⃣ تعديل الأسعار", callback_data=f"edit_prices_{order_id}")],
             [InlineKeyboardButton("2️⃣ رفع الطلبية", url="https://d.ksebstor.site/client/96f743f604a4baf145939298")],
-            # ✅ هذا السطر اتغير حتى يرسل للزبون ويستخدم الفاتورة المختصرة
             [InlineKeyboardButton("3️⃣ إرسال فاتورة الزبون (واتساب)", url=f"https://wa.me/{phone_number}?text={encoded_customer_whatsapp_text}")], 
             [InlineKeyboardButton("4️⃣ إنشاء طلب جديد", callback_data="start_new_order")]
         ]
@@ -1064,9 +1062,33 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         if message_prefix:
             message_text = message_prefix + "\n" + message_text
 
-        await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup, parse_mode="Markdown")
+        # ✅ هنا المشكلة كانت تصير!
+        # تأكد إنو الـ chat_id هذا صحيح ومو جاي يسبب مشكلة.
+        # وأيضاً تأكد من انه لا يوجد delete_message_in_background للرسالة اللي بيها الأزرار النهائية.
 
-        # تنظيف بيانات المستخدم
+        # قبل إرسال الرسالة النهائية بالأزرار، تأكد من تنظيف رسائل الأزرار السابقة لنفس الطلبية
+        # (لو كان اكو زر سابق انعرض للطلب نفسه)
+        last_button_message_info = context.application.bot_data['last_button_message'].get(order_id)
+        if last_button_message_info and last_button_message_info['chat_id'] == chat_id:
+            try:
+                await context.bot.delete_message(chat_id=last_button_message_info['chat_id'], message_id=last_button_message_info['message_id'])
+                logger.info(f"[{chat_id}] Deleted old final options message {last_button_message_info['message_id']} for order {order_id}.")
+            except Exception as e:
+                logger.warning(f"[{chat_id}] Could not delete old final options message {last_button_message_info['message_id']}: {e}")
+            finally:
+                context.application.bot_data['last_button_message'].pop(order_id, None) # نظفها بعد الحذف
+
+        sent_message = await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup, parse_mode="Markdown")
+        # حفظ معلومات الرسالة النهائية الجديدة لغرض التعديل أو الحذف مستقبلاً
+        context.application.bot_data['last_button_message'][order_id] = {
+            'chat_id': chat_id,
+            'message_id': sent_message.message_id
+        }
+        context.application.create_task(save_data_in_background(context))
+        logger.info(f"[{chat_id}] Sent final options message {sent_message.message_id} with buttons for order {order_id}.")
+
+
+        # تنظيف بيانات المستخدم (بعد ما انعرضت الأزرار بنجاح)
         if user_id in context.user_data:
             context.user_data[user_id].pop("order_id", None)
             context.user_data[user_id].pop("product", None)
