@@ -1135,11 +1135,12 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pricing = context.application.bot_data['pricing']
     invoice_numbers = context.application.bot_data['invoice_numbers']
     last_button_message = context.application.bot_data['last_button_message']
-    daily_profit = context.application.bot_data['daily_profit'] # الوصول إلى القيمة الحالية قبل التصفير
-    
+    daily_profit = context.application.bot_data['daily_profit'] 
+    supplier_report_timestamps = context.application.bot_data['supplier_report_timestamps'] # ✅ جبنا هذا المتغير
+
     try:
         query = update.callback_query
-        await query.answer()
+        await query.answer() # ✅ هذا السطر مهم جداً حتى يختفي التحميل من الزر
 
         if str(query.from_user.id) != str(OWNER_ID):
             await query.edit_message_text("عذراً، لا تملك صلاحية لتنفيذ هذا الأمر.")
@@ -1153,6 +1154,8 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pricing.clear()
             invoice_numbers.clear()
             last_button_message.clear()
+            supplier_report_timestamps.clear() # ✅ تصفير سجلات المجهزين
+            
             daily_profit_value = 0.0 # القيمة الجديدة للربح اليومي
 
             try:
@@ -1162,12 +1165,13 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.error(f"Could not reset invoice counter file: {e}", exc_info=True)
             
-            # تحديث القيم في bot_data بعد التصفير
+            # تحديث القيم في bot_data بعد التصفير (هذا الجزء مهم)
             context.application.bot_data['orders'] = orders
             context.application.bot_data['pricing'] = pricing
             context.application.bot_data['invoice_numbers'] = invoice_numbers
             context.application.bot_data['last_button_message'] = last_button_message
-            context.application.bot_data['daily_profit'] = daily_profit_value # تحديث القيمة المصفّرة
+            context.application.bot_data['daily_profit'] = daily_profit_value
+            context.application.bot_data['supplier_report_timestamps'] = supplier_report_timestamps # ✅ تحديث سجل المجهزين في bot_data
 
             # استدعاء دالة الحفظ العامة لحفظ التغييرات على القرص
             _save_data_to_disk_global_func = context.application.bot_data.get('_save_data_to_disk_global_func')
@@ -1183,7 +1187,7 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"[{update.effective_chat.id}] Error in confirm_reset: {e}", exc_info=True)
         await update.callback_query.message.reply_text("عذراً، حدث خطأ أثناء عملية التصفير.")
-
+        
 async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
@@ -1268,71 +1272,71 @@ def main():
     app.bot_data['_save_data_to_disk_global_func'] = _save_data_to_disk_global
 
 
-    # ✅ Handlers خارج المحادثة (كل هاي الأسطر لازم تكون بداخل دالة main())
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("profit", show_profit))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(الارباح|ارباح)$"), show_profit)) # ربط "الارباح" و "ارباح"
-    app.add_handler(CommandHandler("reset", reset_all))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^تصفير$"), reset_all)) # للمدير: "تصفير"
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^صفر$"), reset_supplier_report)) # للمجهز: "صفر"
-    app.add_handler(CommandHandler("report", show_report))
-    app.add_handler(CommandHandler("myreport", show_supplier_report))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تقاريري|تقريري)$"), show_supplier_report)) # للمجهز: "تقاريري" أو "تقريري"
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(التقارير|تقرير|تقارير)$"), show_report)) # للادارة: "التقارير" أو "تقرير" أو "تقارير"
+    # ✅ Handlers خارج المحادثة (الآن صارت داخل main())
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("profit", show_profit))
+app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(الارباح|ارباح)$"), show_profit)) # ربط "الارباح" و "ارباح"
+app.add_handler(CommandHandler("reset", reset_all)) # هذا الأمر القديم (للمالك)
+app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^تصفير$"), reset_all)) # للمدير: "تصفير" (للتصفير الكلي)
+app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^صفر$"), reset_supplier_report)) # للمجهز: "صفر" (لتصفير التقارير الشخصية)
+app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$")) # هذا Handler لأزرار "نعم/لا" مال تصفير المدير
+app.add_handler(CommandHandler("report", show_report))
+app.add_handler(CommandHandler("myreport", show_supplier_report))
+app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تقاريري|تقريري)$"), show_supplier_report)) # للمجهز: "تقاريري" أو "تقريري"
+app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(التقارير|تقرير|تقارير)$"), show_report)) # للادارة: "التقارير" أو "تقرير" أو "تقارير"
 
-    app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
-    app.add_handler(CallbackQueryHandler(edit_prices, pattern=r"^edit_prices_"))
-    app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern=r"^start_new_order$"))
-    # أمر /zones لعرض المناطق
-    app.add_handler(CommandHandler("zones", list_zones))
-    # استجابة نصية "مناطق" أو "المناطق"
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(مناطق|المناطق)$"), list_zones))
-    # ✅ تم إزالة أمر /add_zones_bulk لأنه لن يتم استخدامه بعد الآن
+app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
+app.add_handler(CallbackQueryHandler(edit_prices, pattern=r"^edit_prices_"))
+app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern=r"^start_new_order$"))
+# أمر /zones لعرض المناطق
+app.add_handler(CommandHandler("zones", list_zones))
+# استجابة نصية "مناطق" أو "المناطق"
+app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(مناطق|المناطق)$"), list_zones))
+# ✅ تم إزالة أمر /add_zones_bulk لأنه لن يتم استخدامه بعد الآن
 
-    # ✅ ConversationHandler لعدد المحلات
-    places_conv_handler = ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(handle_places_count_data, pattern=r"^places_data_[a-f0-9]{8}_\d+$"),
+# ✅ ConversationHandler لعدد المحلات
+places_conv_handler = ConversationHandler(
+    entry_points=[
+        CallbackQueryHandler(handle_places_count_data, pattern=r"^places_data_[a-f0-9]{8}_\d+$"),
+    ],
+    states={
+        ASK_PLACES_COUNT: [
+            MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, handle_places_count_data),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_places_count_data),
         ],
-        states={
-            ASK_PLACES_COUNT: [
-                MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, handle_places_count_data),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_places_count_data),
-            ],
-        },
-        fallbacks=[
-            CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
-        ]
-    )
-    app.add_handler(places_conv_handler)
+    },
+    fallbacks=[
+        CommandHandler("cancel", lambda u, c: ConversationHandler.END),
+        MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
+    ]
+)
+app.add_handler(places_conv_handler)
 
-    # ✅ ConversationHandler لإنشاء وتسعير الطلبات
-    order_creation_conv_handler = ConversationHandler(
-        entry_points=[
-            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
-            CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$")
+# ✅ ConversationHandler لإنشاء وتسعير الطلبات
+order_creation_conv_handler = ConversationHandler(
+    entry_points=[
+        MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
+        CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$")
+    ],
+    states={
+        ASK_BUY: [
+            MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_buy_price),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
         ],
-        states={
-            ASK_BUY: [
-                MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_buy_price),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
-            ],
-            ASK_SELL: [
-                MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_sell_price),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sell_price),
-            ]
-        },
-        fallbacks=[
-            CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
+        ASK_SELL: [
+            MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, receive_sell_price),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_sell_price),
         ]
-    )
-    app.add_handler(order_creation_conv_handler)
+    },
+    fallbacks=[
+        CommandHandler("cancel", lambda u, c: ConversationHandler.END),
+        MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
+    ]
+)
+app.add_handler(order_creation_conv_handler)
 
-    # ✅ تشغيل البوت
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
-    
+# ✅ تشغيل البوت
+app.run_polling(allowed_updates=Update.ALL_TYPES)    
 
 async def show_supplier_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
