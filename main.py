@@ -824,7 +824,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
     invoice_numbers = context.application.bot_data['invoice_numbers']
-    daily_profit_current = context.application.bot_data['daily_profit']
+    daily_profit_current = context.application.bot_data['daily_profit'] # هذا المتغير راح نلغيه تدريجياً
 
     try:
         logger.info(f"[{chat_id}] Showing final options for order {order_id} to user {user_id}. User data: {json.dumps(context.user_data.get(user_id), indent=2)}")
@@ -852,6 +852,14 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
 
         net_profit = total_sell - total_buy
         
+        # ✅ حفظ صافي الربح داخل تفاصيل الطلبية
+        orders[order_id]['net_profit'] = net_profit # هذا السطر الجديد
+        
+        # ✅ إلغاء تحديث daily_profit هنا، لأنه سيتم حسابه ديناميكياً
+        # context.application.bot_data['daily_profit'] = daily_profit_current + net_profit 
+        logger.info(f"[{chat_id}] Calculated net profit {net_profit} for order {order_id}. This profit is stored within the order details.")
+        context.application.create_task(save_data_in_background(context)) # مهم جداً الحفظ بعد التعديل
+
         current_places = orders[order_id].get("places_count", 0)
         extra_cost = calculate_extra(current_places)
 
@@ -860,10 +868,6 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         total_before_delivery_fee = total_sell + extra_cost
         
         final_total = total_before_delivery_fee + delivery_fee
-
-        context.application.bot_data['daily_profit'] = daily_profit_current + net_profit
-        logger.info(f"[{chat_id}] Daily profit after adding {net_profit} for order {order_id}: {context.application.bot_data['daily_profit']}")
-        context.application.create_task(save_data_in_background(context))
 
         # فاتورة الزبون - ترسل للكروب اللي انطى بيه الطلب (مثل ما هي)
         customer_invoice_lines = [
@@ -916,7 +920,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         except Exception as e:
             logger.error(f"[{chat_id}] Could not send customer invoice as message: {e}")
 
-        # ✅ فاتورة المجهز (للخاص مال المجهز) - هذا هو الجزء الجديد
+        # فاتورة المجهز (للخاص مال المجهز) - مثل ما هي
         supplier_invoice_details = [
             f"**فاتورة شراء طلبية (لك يا مجهز):**",
             f"رقم الفاتورة: {invoice}",
@@ -938,7 +942,6 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
 
         # إرسال فاتورة الشراء لخاص المجهز
         try:
-            # هنا نستخدم user_id مال المجهز (اللي جهز الطلب)
             await context.bot.send_message(
                 chat_id=user_id, # هذا هو الـ ID مال المجهز
                 text=final_supplier_invoice_text,
@@ -1028,6 +1031,10 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
     except Exception as e:
         logger.error(f"[{chat_id}] Error in show_final_options: {e}", exc_info=True)
         await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء عرض الفاتورة النهائية. الرجاء بدء طلبية جديدة.")
+
+    except Exception as e:
+        logger.error(f"[{chat_id}] Error in show_final_options: {e}", exc_info=True)
+        await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء عرض الفاتورة النهائية. الرجاء بدء طلبية جديدة.")
         
 async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
@@ -1102,18 +1109,26 @@ async def start_new_order_callback(update: Update, context: ContextTypes.DEFAULT
 
 # الدوال الخاصة بالتقارير والأرباح (ستُجزأ لاحقاً إلى features/reports.py)
 async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    daily_profit = context.application.bot_data['daily_profit']
+    orders = context.application.bot_data['orders'] # نجيب كل الطلبيات
 
     try:
         if str(update.message.from_user.id) != str(OWNER_ID):
             await update.message.reply_text("عذراً، هذا الأمر متاح للمالك فقط.")
             return
-        logger.info(f"Current daily_profit requested by user {update.message.from_user.id}: {daily_profit}")
-        await update.message.reply_text(f"الربح التراكمي الإجمالي: *{format_float(daily_profit)}* دينار", parse_mode="Markdown")
+        
+        # ✅ إعادة حساب الربح التراكمي الإجمالي من كل الطلبيات
+        total_cumulative_profit = 0.0
+        for order_id, order_data in orders.items():
+            # نجمع صافي الربح لكل طلبية، إذا كان موجود
+            if 'net_profit' in order_data:
+                total_cumulative_profit += order_data['net_profit']
+
+        logger.info(f"Current daily_profit (recalculated) requested by user {update.message.from_user.id}: {total_cumulative_profit}")
+        await update.message.reply_text(f"الربح التراكمي الإجمالي: *{format_float(total_cumulative_profit)}* دينار", parse_mode="Markdown")
     except Exception as e:
         logger.error(f"[{update.effective_chat.id}] Error in show_profit: {e}", exc_info=True)
         await update.message.reply_text("عذراً، حدث خطأ أثناء عرض الأرباح.")
-
+        
 async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if str(update.message.from_user.id) != str(OWNER_ID):
