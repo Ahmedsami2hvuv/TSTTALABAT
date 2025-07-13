@@ -932,7 +932,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         encoded_customer_text = quote(customer_final_text, safe='')
 
         whatsapp_owner_button_markup = InlineKeyboardMarkup([
-            [InlineKeyboardButton("إرسال فاتورة الإدارة للواتساب", url=f"[https://wa.me/](https://wa.me/){OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}")]
+            [InlineKeyboardButton("إرسال فاتورة الإدارة للواتساب", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_owner_invoice}")]
         ])
         try:
             await context.bot.send_message(
@@ -948,8 +948,8 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         # أزرار التحكم
         keyboard = [
             [InlineKeyboardButton("1️⃣ تعديل الأسعار", callback_data=f"edit_prices_{order_id}")],
-            [InlineKeyboardButton("2️⃣ رفع الطلبية", url="[https://d.ksebstor.site/client/96f743f604a4baf145939298](https://d.ksebstor.site/client/96f743f604a4baf145939298)")],
-            [InlineKeyboardButton("3️⃣ إرسال فاتورة الزبون (واتساب)", url=f"[https://wa.me/](https://wa.me/){OWNER_PHONE_NUMBER}?text={encoded_customer_text}")],
+            [InlineKeyboardButton("2️⃣ رفع الطلبية", url="https://d.ksebstor.site/client/96f743f604a4baf145939298")],
+            [InlineKeyboardButton("3️⃣ إرسال فاتورة الزبون (واتساب)", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_customer_text}")],
             [InlineKeyboardButton("4️⃣ إنشاء طلب جديد", callback_data="start_new_order")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -968,11 +968,6 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             context.user_data[user_id].pop("messages_to_delete", None)
 
     except Exception as e:
-        logger.error(f"[{chat_id}] Error in show_final_options: {e}", exc_info=True)
-        await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء عرض الفاتورة النهائية. الرجاء بدء طلبية جديدة.")
-
-    # ✅ هذا الـ except الزايد اللي لازم ينمسح
-    except Exception as e: # This is the duplicate except block
         logger.error(f"[{chat_id}] Error in show_final_options: {e}", exc_info=True)
         await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء عرض الفاتورة النهائية. الرجاء بدء طلبية جديدة.")
         
