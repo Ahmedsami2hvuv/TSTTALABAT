@@ -714,10 +714,9 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
                 context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
                 return ASK_PLACES_COUNT 
         
-        if places is None or order_id_to_process is None:
+       if places is None or order_id_to_process is None:
             logger.warning(f"[{chat_id}] handle_places_count_data: No valid places count or order ID to process.")
-            await context.bot.send_message(chat_id=chat_id, text="😒لاتخبلني ترا مافتهمت لا عدد المحلات ولا تحى الطلبية 
-دوس رقم صحيح لو تسوي طلب جديد .")
+            await context.bot.send_message(chat_id=chat_id, text="باعلي ترا ما افتهمت لا عدد المحلات  ولا الطلبية بكبرها ، . رحمة لبيبيتك لو دخلت رقم صح لو تسوي طلب جديد.")
             if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
                             del context.user_data[user_id]["current_active_order_id"]
             return ConversationHandler.END 
