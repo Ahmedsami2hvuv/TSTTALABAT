@@ -920,7 +920,6 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         keyboard = [
             [InlineKeyboardButton("1️⃣ تعديل الأسعار", callback_data=f"edit_prices_{order_id}")],
             [InlineKeyboardButton("2️⃣ إرسال فاتورة الزبون (واتساب)", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_customer_text}")],
-            [InlineKeyboardButton("3️⃣ إنشاء طلب جديد", callback_data="start_new_order")]
         ]
         
         reply_markup = InlineKeyboardMarkup(keyboard)
