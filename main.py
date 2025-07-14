@@ -1015,14 +1015,41 @@ async def start_new_order_callback(update: Update, context: ContextTypes.DEFAULT
 
 # الدوال الخاصة بالتقارير والأرباح (ستُجزأ لاحقاً إلى features/reports.py)
 async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    daily_profit = context.application.bot_data['daily_profit']
+    orders = context.application.bot_data['orders'] # نجيب كل الطلبيات
+    pricing = context.application.bot_data['pricing'] # نحتاج الأسعار لحساب الربح
 
     try:
         if str(update.message.from_user.id) != str(OWNER_ID):
             await update.message.reply_text("عذراً، هذا الأمر متاح للمالك فقط.")
             return
-        logger.info(f"Current daily_profit requested by user {update.message.from_user.id}: {daily_profit}")
-        await update.message.reply_text(f"الربح التراكمي الإجمالي: *{format_float(daily_profit)}* دينار", parse_mode="Markdown")
+
+        total_net_profit_products_all_orders = 0.0 # صافي ربح المنتجات الكلي
+        total_extra_profit_all_orders = 0.0 # ربح المحلات الكلي
+
+        for order_id, order_data in orders.items():
+            order_net_profit_products = 0.0 # ربح منتجات الطلبية الواحدة
+            order_extra_profit_single_order = 0.0 # ربح محلات الطلبية الواحدة
+
+            # حساب ربح المنتجات للطلبية
+            if isinstance(order_data.get("products"), list):
+                for p_name in order_data["products"]:
+                    if p_name in pricing.get(order_id, {}) and "buy" in pricing[order_id].get(p_name, {}) and "sell" in pricing[order_id].get(p_name, {}):
+                        buy = pricing[order_id][p_name]["buy"]
+                        sell = pricing[order_id][p_name]["sell"]
+                        order_net_profit_products += (sell - buy)
+
+            # حساب ربح المحلات للطلبية
+            num_places = order_data.get("places_count", 0)
+            order_extra_profit_single_order = calculate_extra(num_places) # نستخدم الدالة الموجودة
+
+            total_net_profit_products_all_orders += order_net_profit_products
+            total_extra_profit_all_orders += order_extra_profit_single_order
+
+        # مجموع الربح الكلي (منتجات + محلات)
+        overall_cumulative_profit = total_net_profit_products_all_orders + total_extra_profit_all_orders
+
+        logger.info(f"Overall cumulative profit requested by user {update.message.from_user.id}: {overall_cumulative_profit}")
+        await update.message.reply_text(f"الربح التراكمي الإجمالي الكلي (منتجات + محلات): *{format_float(overall_cumulative_profit)}* دينار", parse_mode="Markdown")
     except Exception as e:
         logger.error(f"[{update.effective_chat.id}] Error in show_profit: {e}", exc_info=True)
         await update.message.reply_text("عذراً، حدث خطأ أثناء عرض الأرباح.")
@@ -1178,7 +1205,6 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"**صافي ربح المنتجات الكلي:** {format_float(total_net_profit_all_orders)}\n" 
             f"**ربح المحلات الكلي:** {format_float(total_extra_profit_all_orders)}\n"
             f"**الربح التراكمي الإجمالي الكلي (منتجات + محلات):** {format_float(total_net_profit_all_orders + total_extra_profit_all_orders)} دينار\n\n"
-            f"**الربح التراكمي في البوت (المحفوظ):** *{format_float(daily_profit)}* دينار\n\n" # هذا يجي من الـ daily_profit المحفوظ
             f"**--- تفاصيل الطلبات ---**\n" + "\n".join(details)
         )
         await update.message.reply_text(result, parse_mode="Markdown")
