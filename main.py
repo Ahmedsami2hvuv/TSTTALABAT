@@ -743,7 +743,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
                 context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
             context.user_data[user_id]['messages_to_delete'].clear()
         
-        await show_final_options(chat_id, context, user_id, order_id_to_process, message_prefix="هلهل صلوات.")
+        await show_final_options(chat_id, context, user_id, order_id_to_process, message_prefix="هلهل كللوش.")
         
         if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
             del context.user_data[user_id]["current_active_order_id"]
@@ -923,7 +923,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         ]
         
         reply_markup = InlineKeyboardMarkup(keyboard)
-        message_text = "صلوات كملت كلللوش😏!\nاختار من الخيارات ابو العريف :"
+        message_text = "صلوات كملت 😏!\nدختار من الخيارات ابو العريف :"
         if message_prefix:
             message_text = message_prefix + "\n" + message_text
 
