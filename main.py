@@ -404,7 +404,7 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
         message_text = ""
         if confirmation_message:
             message_text += f"{confirmation_message}\n\n"
-        message_text += f"اضغط على منتج لتحديد سعره من *{order['title']}*:"
+        message_text += f"دوس على منتج واتكتب سعره *{order['title']}*:"
 
         msg_info = last_button_message.get(order_id)
         if msg_info:
@@ -534,7 +534,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines = [line.strip() for line in update.message.text.strip().split('\n') if line.strip()]
         if len(lines) != 2:
             logger.warning(f"[{update.effective_chat.id}] Buy/Sell prices: Invalid number of lines from user {user_id}: '{update.message.text}'")
-            msg_error = await update.message.reply_text("شوف *سعر الشراء بالسطر الأول* و *سعر البيع بالسطر الثاني* فقط.", parse_mode="Markdown")
+            msg_error = await update.message.reply_text("شوف *سعر الشراء بالسطر الأول* و *سعر البيع بالسطر الثاني* افتهمت لولا .", parse_mode="Markdown")
             context.user_data[user_id]['messages_to_delete'].append({
                 'chat_id': msg_error.chat_id, 
                 'message_id': msg_error.message_id
@@ -856,8 +856,8 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         supplier_invoice = [
             f"**فاتورة الشراء:🧾💸**",
             f"رقم الفاتورة🔢: {invoice}",
-            f"عنوان الزبون📞: {order['title']}",
-            f"رقم الزبون🏠: `{phone_number}`",
+            f"عنوان الزبون🏠: {order['title']}",
+            f"رقم الزبون📞: `{phone_number}`",
             "\n*تفاصيل الشراء:🗒️💸*"
         ]
         
@@ -1134,7 +1134,7 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         if str(update.message.from_user.id) != str(OWNER_ID):
-            await update.message.reply_text("لاتاكل خره هذا الامر للمدير فقط.")
+            await update.message.reply_text("لاتاكل خره هذا الامر للمدير افتهمت لولا.")
             return
 
         total_orders = len(orders)
@@ -1326,7 +1326,7 @@ async def show_supplier_report(update: Update, context: ContextTypes.DEFAULT_TYP
 
             order_buy_total = 0.0
 
-            report_text += "   *المنتجات (سعر الشراء فقط):💸*\n"
+            report_text += "   *المنتجات (سعر الشراء افتهمت لولا):💸*\n"
             for p_name in order["products"]:
                 if p_name in pricing.get(order_id, {}) and "buy" in pricing[order_id].get(p_name, {}):
                     buy_price = pricing[order_id][p_name]["buy"]
