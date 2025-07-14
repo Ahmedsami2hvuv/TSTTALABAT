@@ -716,7 +716,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
         
        if places is None or order_id_to_process is None:
             logger.warning(f"[{chat_id}] handle_places_count_data: No valid places count or order ID to process.")
-            await context.bot.send_message(chat_id=chat_id, text="باعلي ترا ما افتهمت لا عدد المحلات  ولا الطلبية بكبرها ، . رحمة لبيبيتك لو دخلت رقم صح لو تسوي طلب جديد.")
+            await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من فهم عدد المحلات أو الطلبية. الرجاء إدخال رقم صحيح أو البدء بطلبية جديدة.")
             if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
                             del context.user_data[user_id]["current_active_order_id"]
             return ConversationHandler.END 
