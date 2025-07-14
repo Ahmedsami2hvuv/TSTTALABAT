@@ -1166,7 +1166,24 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"[{update.effective_chat.id}] Error in show_report: {e}", exc_info=True)
         await update.message.reply_text("عذراً، حدث خطأ أثناء عرض التقرير.")
-        
+    
+
+async def reset_supplier_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    supplier_report_timestamps = context.application.bot_data['supplier_report_timestamps']
+    schedule_save_global = context.application.bot_data['schedule_save_global_func']
+
+    user_id = str(update.message.from_user.id)
+    
+    # نسجل الوقت الحالي كـ آخر وقت تصفير لهذا المجهز
+    now_iso = datetime.now(timezone.utc).isoformat()
+    supplier_report_timestamps[user_id] = now_iso
+    
+    # نحفظ التغييرات
+    schedule_save_global()
+    logger.info(f"[{update.effective_chat.id}] Supplier report for user {user_id} reset to {now_iso}.")
+
+    await update.message.reply_text("تم تصفير تقاريرك بنجاح. أي طلبية جديدة تجهزها من الآن راح تظهر بالتقرير القادم.")
+
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
@@ -1299,22 +1316,6 @@ async def show_supplier_report(update: Update, context: ContextTypes.DEFAULT_TYP
         report_text += f"**💰 مجموع مشترياتك الكلي: {format_float(total_purchases_all_orders)} دينار**"
 
     await update.message.reply_text(report_text, parse_mode="Markdown")
-
-async def reset_supplier_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    supplier_report_timestamps = context.application.bot_data['supplier_report_timestamps']
-    schedule_save_global = context.application.bot_data['schedule_save_global_func']
-
-    user_id = str(update.message.from_user.id)
-    
-    # نسجل الوقت الحالي كـ آخر وقت تصفير لهذا المجهز
-    now_iso = datetime.now(timezone.utc).isoformat()
-    supplier_report_timestamps[user_id] = now_iso
-    
-    # نحفظ التغييرات
-    schedule_save_global()
-    logger.info(f"[{update.effective_chat.id}] Supplier report for user {user_id} reset to {now_iso}.")
-
-    await update.message.reply_text("تم تصفير تقاريرك بنجاح. أي طلبية جديدة تجهزها من الآن راح تظهر بالتقرير القادم.")
     
 if __name__ == "__main__":
     main()
