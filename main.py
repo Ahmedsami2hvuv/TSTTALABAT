@@ -1176,14 +1176,13 @@ def main():
     app.bot_data['invoice_numbers'] = invoice_numbers
     app.bot_data['daily_profit'] = daily_profit
     app.bot_data['last_button_message'] = last_button_message
-    app.bot_data['supplier_report_timestamps'] = supplier_report_timestamps 
+    app.bot_data['supplier_report_timestamps'] = supplier_report_timestamps
 
     # تمرير دوال الحفظ العامة لـ bot_data حتى تتمكن الدوال الأخرى من استدعائها
     app.bot_data['schedule_save_global_func'] = schedule_save_global
     app.bot_data['_save_data_to_disk_global_func'] = _save_data_to_disk_global
 
-    # ✅ Handlers خارج المحادثة (الآن صارت داخل main())
-    # تأكد إنو هاي الأسطر تبدي بـ 4 مسافات فراغ من بداية السطر:
+    # Handlers (تأكد إنو هاي الأسطر تبدي بـ 4 مسافات فراغ من بداية سطر def main():)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("profit", show_profit))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(الارباح|ارباح)$"), show_profit))
@@ -1203,9 +1202,8 @@ def main():
     app.add_handler(CommandHandler("zones", list_zones))
     # استجابة نصية "مناطق" أو "المناطق"
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(مناطق|المناطق)$"), list_zones))
-    # ✅ تم إزالة أمر /add_zones_bulk لأنه لن يتم استخدامه بعد الآن
 
-    # ✅ ConversationHandler لعدد المحلات
+    # ConversationHandler لعدد المحلات
     places_conv_handler = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(handle_places_count_data, pattern=r"^places_data_[a-f0-9]{8}_\d+$"),
@@ -1223,7 +1221,7 @@ def main():
     )
     app.add_handler(places_conv_handler)
 
-    # ✅ ConversationHandler لإنشاء وتسعير الطلبات
+    # ConversationHandler لإنشاء وتسعير الطلبات
     order_creation_conv_handler = ConversationHandler(
         entry_points=[
             MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
@@ -1241,7 +1239,7 @@ def main():
     )
     app.add_handler(order_creation_conv_handler)
 
-    # ✅ تشغيل البوت
+    # تشغيل البوت
     app.run_polling(allowed_updates=Update.ALL_TYPES)  
 
 async def show_supplier_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
