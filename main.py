@@ -474,7 +474,7 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message_prompt = ""
         if current_buy is not None and current_sell is not None:
             message_prompt = f"سعر *'{product}'* حالياً هو شراء: {format_float(current_buy)}، بيع: {format_float(current_sell)}.\n" \
-                            f"باعلي سعر الشراء الجديد بالسطر الأول، وسعر البيع بالسطر الثاني؟ (أو دز نفس الأسعار إذا ماكو تغيير)"
+                            f"شوف سعر الشراء الجديد بالسطر الأول، وسعر البيع بالسطر الثاني؟ (أو دز نفس الأسعار إذا ماكو تغيير)"
         else:
             message_prompt = f"تمام، بيش اشتريت *'{product}'*؟ (بالسطر الأول)\n" \
                              f"وبييش راح تبيعه؟ (بالسطر الثاني)"
