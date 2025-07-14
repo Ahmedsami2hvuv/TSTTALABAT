@@ -534,7 +534,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines = [line.strip() for line in update.message.text.strip().split('\n') if line.strip()]
         if len(lines) != 2:
             logger.warning(f"[{update.effective_chat.id}] Buy/Sell prices: Invalid number of lines from user {user_id}: '{update.message.text}'")
-            msg_error = await update.message.reply_text(باعلي *سعر الشراء بالسطر الأول* و *سعر البيع بالسطر الثاني* فقط.", parse_mode="Markdown")
+            msg_error = await update.message.reply_text(شوف *سعر الشراء بالسطر الأول* و *سعر البيع بالسطر الثاني* فقط.", parse_mode="Markdown")
             context.user_data[user_id]['messages_to_delete'].append({
                 'chat_id': msg_error.chat_id, 
                 'message_id': msg_error.message_id
