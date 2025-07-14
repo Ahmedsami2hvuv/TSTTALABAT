@@ -404,7 +404,7 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
         message_text = ""
         if confirmation_message:
             message_text += f"{confirmation_message}\n\n"
-        message_text += f"دوس على منتج واتكتب سعره *{order['title']}*:"
+        message_text += f"دوس على منتج واكتب سعره *{order['title']}*:"
 
         msg_info = last_button_message.get(order_id)
         if msg_info:
@@ -614,7 +614,7 @@ async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT
 
         msg_places = await context.bot.send_message(
             chat_id=chat_id,
-            text="صلوات كللوش كل المنتجات تسعرت ديالله اختار عدد المحلات وفضني؟ (باوع لو تنقر ع رقم لو تكتبلي الرقم بكيفك)", 
+            text="صلوات كللوش كل المنتجات تسعرت ديالله اختار عدد المحلات وفضني؟ (باوع ممنوع تكتب رقم لازم تختار من ذني الارقام )", 
             reply_markup=reply_markup
         )
         
