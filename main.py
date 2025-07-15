@@ -494,18 +494,22 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def add_new_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    await query.answer() 
 
     user_id = str(query.from_user.id)
-    order_id = query.data.replace("add_product_to_order_", "") # جلب الـ order_id من الـ callback_data
+    chat_id = query.message.chat_id # للحصول على الـ chat_id
+    order_id = query.data.replace("add_product_to_order_", "") 
 
-    logger.info(f"[{query.message.chat_id}] Add new product button clicked for order {order_id} by user {user_id}.")
+    logger.info(f"[{chat_id}] Add new product button clicked for order {order_id} by user {user_id}.")
+
+    # ✅ إضافة هذا السطر لتهيئة context.user_data قبل استخدامها
+    context.user_data.setdefault(user_id, {}) 
 
     # حفظ الـ order_id في user_data للحالة القادمة
     context.user_data[user_id]["current_active_order_id"] = order_id
     context.user_data[user_id]["adding_new_product"] = True # علامة لتدل على أننا في عملية إضافة منتج
 
-    # حذف رسالة الأزرار القديمة
+    # حذف رسالة الأزرار القديمة (إذا كانت موجودة)
     if query.message:
         context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
 
