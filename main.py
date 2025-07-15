@@ -566,7 +566,7 @@ async def confirm_delete_product_by_button_callback(update: Update, context: Con
     # مثلاً: "confirm_delete_product_order_123_product_بيبسي"
     data_parts = query.data.split('_')
     order_id = data_parts[3] # الجزء الرابع هو الـ order_id
-    product_name_to_delete = "_".join(data_parts[5:]) # اسم المنتج ممكن يكون بأكثر من كلمة، ناخذه من الجزء الخامس للنهاية
+    product_name_to_delete = "_".join(data_parts[4:]) # اسم المنتج ممكن يكون بأكثر من كلمة، ناخذه من الجزء الرابع للنهاية
 
     logger.info(f"[{chat_id}] Product '{product_name_to_delete}' confirmed for deletion from order {order_id} by user {user_id}.")
 
