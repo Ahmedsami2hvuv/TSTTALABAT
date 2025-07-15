@@ -1602,54 +1602,7 @@ async def delete_order_command(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data[user_id]["deleting_order"] = True # علامة لتدل على أننا في عملية مسح طلبية
     return ASK_CUSTOMER_PHONE_NUMBER_FOR_DELETION # ننتقل لحالة المحادثة لطلب رقم الزبون
 
-async def receive_customer_phone_for_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.message.from_user.id)
-    chat_id = update.effective_chat.id
-    customer_phone_number = update.message.text.strip()
-
-    logger.info(f"[{chat_id}] Received phone number '{customer_phone_number}' for order deletion from user {user_id}.")
-
-    # تأكد من أن المستخدم يمتلك صلاحيات المالك
-    if user_id != str(OWNER_ID):
-        await update.message.reply_text("😏لاتاكل خره ماتكدر تسوي هالشي. هذا الأمر متاح للمالك فقط.")
-        context.user_data[user_id].pop("deleting_order", None)
-        return ConversationHandler.END
-
-    # البحث عن الطلبية بواسطة رقم الزبون
-    order_to_delete_id = None
-    order_details_text = "ما لكييت طلبية لهذا الزبون."
-
-    # البحث في الطلبيات الموجودة حالياً
-    found_orders = {oid: o for oid, o in orders.items() if o.get("phone_number") == customer_phone_number}
-
-    if found_orders:
-        # نختار آخر طلبية لهذا الرقم (أو نطلب من المستخدم يختار إذا اكو هواي)
-        # حالياً، راح ناخذ أول طلبية نلكاها
-        order_to_delete_id = list(found_orders.keys())[0]
-        found_order = found_orders[order_to_delete_id]
-
-        # بناء تفاصيل الطلبية للعرض قبل المسح
-        invoice = invoice_numbers.get(order_to_delete_id, "غير معروف")
-        order_details_text = (
-            f"لكيت طلبية رقم #{invoice} لهذا الزبون:\n"
-            f"العنوان: {found_order.get('title', 'غير متوفر')}\n"
-            f"المنتجات: {', '.join(found_order.get('products', []))}\n"
-            f"متأكد تريد تمسح هاي الطلبية؟ هذا الإجراء ما بي رجعة."
-        )
-
-    if order_to_delete_id:
-        context.user_data[user_id]["order_id_to_delete"] = order_to_delete_id # نحفظ الـ ID للتأكيد
-        confirm_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ اي، امسحها", callback_data=f"confirm_delete_order_{order_to_delete_id}")],
-            [InlineKeyboardButton("❌ لا، بطلت", callback_data=f"cancel_delete_order")]
-        ])
-        await update.message.reply_text(order_details_text, reply_markup=confirm_keyboard, parse_mode="Markdown")
-        return ASK_FOR_DELETION_CONFIRMATION # ننتقل لحالة المحادثة لانتظار التأكيد
-    else:
-        await update.message.reply_text(order_details_text) # "ما لكييت طلبية..."
-        context.user_data[user_id].pop("deleting_order", None)
-        return ConversationHandler.END
-
+receive_customer_phone_for_deletion
 async def confirm_delete_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
