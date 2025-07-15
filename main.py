@@ -1448,10 +1448,10 @@ def main():
     )
     app.add_handler(places_conv_handler)
 
-    # ✅ ConversationHandler لمسح الطلبية (تأكد إنو هذا يبدي بـ 4 فراغات)
+    # ConversationHandler لمسح الطلبية
     delete_order_conv_handler = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.TEXT & filters.Regex(r"^(مسح)$"), delete_order_command), # ✅ أمر مسح الطلبية بالعربي (بدون /)
+            MessageHandler(filters.TEXT & filters.Regex(r"^(مسح)$"), delete_order_command), # أمر مسح الطلبية بالعربي
             CommandHandler("delete_order", delete_order_command), # أمر مسح الطلبية بالإنكليزي
         ],
         states={
@@ -1468,9 +1468,9 @@ def main():
             MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
         ]
     )
-    app.add_handler(delete_order_conv_handler) # ✅ تأكد إنو هذا السطر يبدي بـ 4 فراغات
+    app.add_handler(delete_order_conv_handler)
 
-    # ✅ ConversationHandler لإنشاء وتسعير الطلبات وإضافة المنتجات (تأكد إنو هذا يبدي بـ 4 فراغات)
+    # ConversationHandler لإنشاء وتسعير الطلبات وإضافة المنتجات
     order_creation_conv_handler = ConversationHandler(
         entry_points=[
             MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
@@ -1494,9 +1494,9 @@ def main():
             MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
         ]
     )
-    app.add_handler(order_creation_conv_handler) # ✅ تأكد إنو هذا السطر يبدي بـ 4 فراغات
+    app.add_handler(order_creation_conv_handler)
 
-    # ✅ تشغيل البوت (تأكد إنو هذا يبدي بـ 4 فراغات)
+    # تشغيل البوت
     app.run_polling(allowed_updates=Update.ALL_TYPES)
    
 
