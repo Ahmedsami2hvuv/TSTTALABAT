@@ -1672,23 +1672,27 @@ async def confirm_delete_order_callback(update: Update, context: ContextTypes.DE
         context.user_data[user_id].pop("order_id_to_delete", None)
         return ConversationHandler.END
 
+    # حفظ رقم الفاتورة قبل المسح
+    invoice_number_to_display = invoice_numbers.get(order_id_to_delete, "غير معروف")
+
     try:
         # حذف الطلبية من الـ orders
         del orders[order_id_to_delete]
         # حذف أسعار الطلبية من الـ pricing
         if order_id_to_delete in pricing:
             del pricing[order_id_to_delete]
-        # حذف رقم الفاتورة (إذا كان موجود)
+        # حذف رقم الفاتورة من الـ invoice_numbers
         if order_id_to_delete in invoice_numbers:
             del invoice_numbers[order_id_to_delete]
 
         context.application.create_task(save_data_in_background(context)) # حفظ التغييرات
 
-       logger.error(f"[{chat_id}] Error deleting order {order_id_to_delete}: {e}", exc_info=True)
-        await query.edit_message_text("عذراً، صار خطأ أثناء مسح الطلبية.")
-    except Exception as e:
-        logger.error(f"[{chat_id}] Error deleting order {order_id_to_delete}: {e}", exc_info=True)
-        await query.edit_message_text("عذراً، صار خطأ أثناء مسح الطلبية.")
+        logger.info(f"[{chat_id}] Order {order_id_to_delete} deleted successfully by user {user_id}.")
+        # استخدام رقم الفاتورة المحفوظ
+        await query.edit_message_text(f"تم مسح الطلبية رقم `{invoice_number_to_display}` بنجاح!") 
+    except Exception as e: # ✅ هذا السطر اللي جان متخربط
+        logger.error(f"[{chat_id}] Error deleting order {order_id_to_delete}: {e}", exc_info=True) # ✅ وهذا السطر اللي جان بي خطأ بالمسافات
+        await query.edit_message_text("عذراً، صار خطأ أثناء مسح الطلبية.") # ✅ وهذا السطر هم
 
     context.user_data[user_id].pop("deleting_order", None)
     context.user_data[user_id].pop("order_id_to_delete", None)
