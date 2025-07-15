@@ -1463,7 +1463,7 @@ def main():
     )
     app.add_handler(places_conv_handler)
 
-    # ConversationHandler لمسح الطلبية
+    # ✅ ConversationHandler لمسح الطلبية
     delete_order_conv_handler = ConversationHandler(
         entry_points=[
             MessageHandler(filters.TEXT & filters.Regex(r"^(مسح)$"), delete_order_command), # أمر مسح الطلبية بالعربي
@@ -1480,15 +1480,16 @@ def main():
         },
         fallbacks=[
             CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
+            # هنا لازم ما يكون MessageHandler(filters.ALL...) حتى ما يتداخل ويا receive_order
+            # MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
         ]
     )
     app.add_handler(delete_order_conv_handler)
 
-    # ConversationHandler لإنشاء وتسعير الطلبات وإضافة المنتجات
+    # ✅ ConversationHandler لإنشاء وتسعير الطلبات وإضافة المنتجات (تأكد إنو هذا يبدي بـ 4 فراغات)
     order_creation_conv_handler = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order), # هذا الـ entry_point لازم يبقى هو الأخير
             CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$"),
             CallbackQueryHandler(add_new_product_callback, pattern=r"^add_product_to_order_.*$"),
             CallbackQueryHandler(delete_product_callback, pattern=r"^delete_specific_product_.*$"), 
@@ -1509,9 +1510,10 @@ def main():
             MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
         ]
     )
-    app.add_handler(order_creation_conv_handler)
+    # ✅ مهم جداً: هذا الـ handler لازم ينضاف بعد الـ delete_order_conv_handler
+    app.add_handler(order_creation_conv_handler) 
 
-    # تشغيل البوت
+    # ✅ تشغيل البوت
     app.run_polling(allowed_updates=Update.ALL_TYPES)
    
 
