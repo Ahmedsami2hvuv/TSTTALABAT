@@ -1649,6 +1649,19 @@ async def receive_customer_phone_for_deletion(update: Update, context: ContextTy
         context.user_data[user_id].pop("deleting_order", None)
         return ConversationHandler.END
 
+    if order_to_delete_id:
+        context.user_data[user_id]["order_id_to_delete"] = order_to_delete_id # نحفظ الـ ID للتأكيد
+        confirm_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ اي، امسحها", callback_data=f"confirm_delete_order_{order_to_delete_id}")],
+            [InlineKeyboardButton("❌ لا، بطلت", callback_data=f"cancel_delete_order")]
+        ])
+        await update.message.reply_text(order_details_text, reply_markup=confirm_keyboard, parse_mode="Markdown")
+        return ASK_FOR_DELETION_CONFIRMATION # ننتقل لحالة المحادثة لانتظار التأكيد
+    else:
+        await update.message.reply_text(order_details_text) # "ما لكييت طلبية..."
+        context.user_data[user_id].pop("deleting_order", None)
+        return ConversationHandler.END
+
 async def confirm_delete_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1685,7 +1698,7 @@ async def confirm_delete_order_callback(update: Update, context: ContextTypes.DE
         context.application.create_task(save_data_in_background(context)) # حفظ التغييرات
 
         logger.info(f"[{chat_id}] Order {order_id_to_delete} deleted successfully by user {user_id}.")
-        await query.edit_message_text(f"مسحتها ارتاحيت يدز طلبية وتعالو مسحوها الغسل  اي والله .") # نستخدم رقم الفاتورة الأصلي قبل المسح
+        await query.edit_message_text(f"تم مسح الطلبية رقم `{invoice_numbers.get(order_id_to_delete, 'القديمة')}` بنجاح!.") # نستخدم رقم الفاتورة الأصلي قبل المسح
     except Exception as e:
         logger.error(f"[{chat_id}] Error deleting order {order_id_to_delete}: {e}", exc_info=True)
         await query.edit_message_text("عذراً، صار خطأ أثناء مسح الطلبية.")
