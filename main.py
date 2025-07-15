@@ -388,19 +388,27 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
         # ✅ إضافة زر "إضافة منتج جديد" وزر "مسح منتج" (عام) في صف واحد بالأعلى
         final_buttons_list.append([
             InlineKeyboardButton("➕ إضافة منتج جديد", callback_data=f"add_product_to_order_{order_id}"),
-            InlineKeyboardButton("🗑️ مسح منتج", callback_data=f"delete_specific_product_{order_id}") # زر مسح منتج عام
+            InlineKeyboardButton("🗑️ مسح منتج", callback_data=f"delete_specific_product_{order_id}")
         ])
 
-        # إضافة أزرار المنتجات (المكتملة والتي تنتظر التسعير)
+        # فصل المنتجات المكتملة عن المنتجات اللي تنتظر التسعير
+        completed_products_buttons = []
+        pending_products_buttons = []
+
         for p_name in order["products"]:
             if p_name in pricing.get(order_id, {}) and 'buy' in pricing[order_id].get(p_name, {}) and 'sell' in pricing[order_id].get(p_name, {}):
-                final_buttons_list.append([InlineKeyboardButton(f"✅ {p_name}", callback_data=f"{order_id}|{p_name}")])
+                completed_products_buttons.append([InlineKeyboardButton(f"✅ {p_name}", callback_data=f"{order_id}|{p_name}")])
                 logger.info(f"[{chat_id}] Product '{p_name}' in order {order_id} is completed.")
             else:
-                final_buttons_list.append([InlineKeyboardButton(p_name, callback_data=f"{order_id}|{p_name}")])
+                pending_products_buttons.append([InlineKeyboardButton(p_name, callback_data=f"{order_id}|{p_name}")])
                 logger.info(f"[{chat_id}] Product '{p_name}' in order {order_id} is pending. Pricing state for this product: {json.dumps(pricing.get(order_id, {}).get(p_name, {}), indent=2)}")
 
-        markup = InlineKeyboardMarkup(final_buttons_list) # استخدام final_buttons_list هنا
+        # ✅ إضافة أزرار المنتجات المكتملة أولاً
+        final_buttons_list.extend(completed_products_buttons)
+        # ✅ ثم إضافة أزرار المنتجات اللي تنتظر التسعير
+        final_buttons_list.extend(pending_products_buttons)
+
+        markup = InlineKeyboardMarkup(final_buttons_list)
 
         message_text = ""
         if confirmation_message:
@@ -496,12 +504,11 @@ async def add_new_product_callback(update: Update, context: ContextTypes.DEFAULT
     await query.answer() 
 
     user_id = str(query.from_user.id)
-    chat_id = query.message.chat_id # للحصول على الـ chat_id
+    chat_id = query.message.chat_id
     order_id = query.data.replace("add_product_to_order_", "") 
 
     logger.info(f"[{chat_id}] Add new product button clicked for order {order_id} by user {user_id}.")
 
-    # ✅ إضافة هذا السطر لتهيئة context.user_data قبل استخدامها
     context.user_data.setdefault(user_id, {}) 
 
     # حفظ الـ order_id في user_data للحالة القادمة
@@ -512,7 +519,11 @@ async def add_new_product_callback(update: Update, context: ContextTypes.DEFAULT
     if query.message:
         context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
 
-    await context.bot.send_message(chat_id=chat_id, text="تمام، شنو اسم المنتج الجديد اللي تريد تضيفه؟")
+    # ✅ إضافة زر الإلغاء هنا
+    cancel_keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ إلغاء الإضافة", callback_data=f"cancel_add_product_{order_id}")]
+    ])
+    await context.bot.send_message(chat_id=chat_id, text="تمام، شنو اسم المنتج الجديد اللي تريد تضيفه؟", reply_markup=cancel_keyboard)
     return ASK_PRODUCT_NAME # حالة محادثة جديدة لطلب اسم المنتج
 
 async def delete_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -539,7 +550,10 @@ async def delete_product_callback(update: Update, context: ContextTypes.DEFAULT_
 
     products_to_delete_buttons = []
     for p_name in order["products"]:
-        products_to_delete_buttons.append([InlineKeyboardButton(p_name, callback_data=f"confirm_delete_product_{order_id}_{p_name}")]) # زر لكل منتج للحذف
+        products_to_delete_buttons.append([InlineKeyboardButton(p_name, callback_data=f"confirm_delete_product_{order_id}_{p_name}")])
+
+    # ✅ إضافة زر الإلغاء هنا
+    products_to_delete_buttons.append([InlineKeyboardButton("❌ إلغاء المسح", callback_data=f"cancel_delete_product_{order_id}")])
 
     markup = InlineKeyboardMarkup(products_to_delete_buttons)
 
@@ -548,8 +562,7 @@ async def delete_product_callback(update: Update, context: ContextTypes.DEFAULT_
         context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
 
     await context.bot.send_message(chat_id=chat_id, text="تمام، دوس على المنتج اللي تريد تمسحه من الطلبية:", reply_markup=markup)
-    # هنا ما نرجع حالة، لأن الضغطة الجاية راح تكون على زر، وراح تتعامل وياها دالة جديدة
-    return ConversationHandler.END # ننهي المحادثة هنا، والدالة الجديدة راح تبدي محادثة جديدة او عملية مستقلة
+    return ConversationHandler.END
     
 async def confirm_delete_product_by_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -589,6 +602,45 @@ async def confirm_delete_product_by_button_callback(update: Update, context: Con
 
     # نرجع نعرض الأزرار المحدثة
     await show_buttons(chat_id, context, user_id, order_id) 
+    return ConversationHandler.END
+
+async def cancel_add_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = str(query.from_user.id)
+    chat_id = query.message.chat_id
+    order_id = query.data.replace("cancel_add_product_", "")
+
+    logger.info(f"[{chat_id}] Cancel add product button clicked for order {order_id} by user {user_id}.")
+
+    # حذف رسالة الأزرار القديمة (إذا كانت موجودة)
+    if query.message:
+        context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
+
+    await context.bot.send_message(chat_id=chat_id, text="تم إلغاء عملية إضافة منتج جديد.")
+    # نرجع نعرض الأزرار الأصلية
+    await show_buttons(chat_id, context, user_id, order_id)
+    return ConversationHandler.END
+
+
+async def cancel_delete_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = str(query.from_user.id)
+    chat_id = query.message.chat_id
+    order_id = query.data.replace("cancel_delete_product_", "")
+
+    logger.info(f"[{chat_id}] Cancel delete product button clicked for order {order_id} by user {user_id}.")
+
+    # حذف رسالة الأزرار القديمة (إذا كانت موجودة)
+    if query.message:
+        context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
+
+    await context.bot.send_message(chat_id=chat_id, text="تم إلغاء عملية مسح المنتج.")
+    # نرجع نعرض الأزرار الأصلية
+    await show_buttons(chat_id, context, user_id, order_id)
     return ConversationHandler.END
 
     
@@ -1403,7 +1455,10 @@ def main():
         CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$"),
         CallbackQueryHandler(add_new_product_callback, pattern=r"^add_product_to_order_.*$"),
         CallbackQueryHandler(delete_product_callback, pattern=r"^delete_specific_product_.*$"), # زر مسح المنتجات العام
-        CallbackQueryHandler(confirm_delete_product_by_button_callback, pattern=r"^confirm_delete_product_.*$") # ✅ إضافة الزر الجديد للحذف من خلال اختيار المنتج
+        CallbackQueryHandler(confirm_delete_product_by_button_callback, pattern=r"^confirm_delete_product_.*$"), # زر تأكيد مسح المنتج
+        # ✅ إضافة أزرار الإلغاء هنا
+        CallbackQueryHandler(cancel_add_product_callback, pattern=r"^cancel_add_product_.*$"),
+        CallbackQueryHandler(cancel_delete_product_callback, pattern=r"^cancel_delete_product_.*$")
     ],
     states={
         ASK_BUY: [
@@ -1411,8 +1466,8 @@ def main():
         ],
         ASK_PRODUCT_NAME: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_product_name),
-        ]
-        # ✅ تم حذف ASK_PRODUCT_TO_DELETE بالكامل
+        ],
+        # ✅ لا نحتاج حالة خاصة للإلغاء، لأن دوال الإلغاء تنهي المحادثة
     },
     fallbacks=[
         CommandHandler("cancel", lambda u, c: ConversationHandler.END),
