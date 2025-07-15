@@ -1480,13 +1480,12 @@ def main():
         },
         fallbacks=[
             CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-            # هنا لازم ما يكون MessageHandler(filters.ALL...) حتى ما يتداخل ويا receive_order
-            # MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
+            # ✅ تم حذف السطر MessageHandler(filters.ALL, ...) من هنا
         ]
     )
     app.add_handler(delete_order_conv_handler)
 
-    # ✅ ConversationHandler لإنشاء وتسعير الطلبات وإضافة المنتجات (تأكد إنو هذا يبدي بـ 4 فراغات)
+    # ✅ ConversationHandler لإنشاء وتسعير الطلبات وإضافة المنتجات
     order_creation_conv_handler = ConversationHandler(
         entry_points=[
             MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order), # هذا الـ entry_point لازم يبقى هو الأخير
