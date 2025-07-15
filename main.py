@@ -492,6 +492,26 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"[{update.effective_chat.id}] Error in product_selected: {e}", exc_info=True)
         await update.callback_query.message.reply_text("ههه صار خطا باختيار المنتج. دياللة سوي طلب جديد.")
         return ConversationHandler.END
+
+async def add_new_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = str(query.from_user.id)
+    order_id = query.data.replace("add_product_to_order_", "") # جلب الـ order_id من الـ callback_data
+
+    logger.info(f"[{query.message.chat_id}] Add new product button clicked for order {order_id} by user {user_id}.")
+
+    # حفظ الـ order_id في user_data للحالة القادمة
+    context.user_data[user_id]["current_active_order_id"] = order_id
+    context.user_data[user_id]["adding_new_product"] = True # علامة لتدل على أننا في عملية إضافة منتج
+
+    # حذف رسالة الأزرار القديمة
+    if query.message:
+        context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
+
+    await context.bot.send_message(chat_id=chat_id, text="تمام، شنو اسم المنتج الجديد اللي تريد تضيفه؟")
+    return ASK_PRODUCT_NAME # حالة محادثة جديدة لطلب اسم المنتج
     
 async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
@@ -921,7 +941,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         encoded_customer_text = quote(customer_final_text, safe='')
         keyboard = [
             [InlineKeyboardButton("1️⃣ تعدل سعر", callback_data=f"edit_prices_{order_id}")],
-            [InlineKeyboardButton("2️⃣ ترفع الطلب", url="https://d.ksebstor.site/vendors/49aefb89034f23f051cae428")]
+            [InlineKeyboardButton("2️⃣ ترفع الطلب", url="https://d.ksebstor.site/client/96f743f604a4baf145939298")]
         ]
         
         reply_markup = InlineKeyboardMarkup(keyboard)
