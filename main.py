@@ -1451,7 +1451,7 @@ def main():
     # ✅ ConversationHandler لمسح الطلبية (تأكد إنو هذا يبدي بـ 4 فراغات)
     delete_order_conv_handler = ConversationHandler(
         entry_points=[
-            CommandHandler("مسح", delete_order_command), # أمر مسح الطلبية بالعربي
+            MessageHandler(filters.TEXT & filters.Regex(r"^(مسح)$"), delete_order_command), # ✅ أمر مسح الطلبية بالعربي (بدون /)
             CommandHandler("delete_order", delete_order_command), # أمر مسح الطلبية بالإنكليزي
         ],
         states={
