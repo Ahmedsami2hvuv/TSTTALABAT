@@ -971,7 +971,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         current_places = order.get("places_count", 0)
         extra_cost_value = calculate_extra(current_places)
         
-        # 🟢 بداية تعديل منطق أجرة التوصيل 🟢
+        # 🟢 بداية منطق أجرة التوصيل المُحدث 🟢
         # أجرة التوصيل الأساسية حسب المنطقة (هذه لا تتغير)
         delivery_fee_from_zone = get_delivery_price(order.get('title', '')) 
         
@@ -982,11 +982,9 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         
         # المجموع الكلي النهائي الذي يشمل أجرة التوصيل بعد تطبيق الخصم (إذا وجدت)
         final_total = total_sell + extra_cost_value + final_delivery_charge_for_customer
-        # 🔴 نهاية تعديل منطق أجرة التوصيل 🔴
+        # 🔴 نهاية منطق أجرة التوصيل المُحدث 🔴
 
         # تحديث الربح اليومي
-        # الربح اليومي يُحسب من ربح المنتجات + ربح المحلات
-        # أجرة التوصيل لا تدخل في الربح اليومي لأنها تغطي كلفة التوصيل، وليست ربح مباشر
         context.application.bot_data['daily_profit'] = daily_profit_current + net_profit_products + extra_cost_value
         context.application.create_task(save_data_in_background(context))
 
@@ -1025,12 +1023,11 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             customer_invoice_lines.append(f"• {format_float(prev_total_for_display)}+{format_float(extra_cost_value)}= {format_float(prev_total_for_display + extra_cost_value)} 💵")
             current_display_total_sum += extra_cost_value
 
-        # 🟢 بداية تعديل عرض أجرة التوصيل للزبون في الفاتورة 🟢
-        # نستخدم final_delivery_charge_for_customer هنا لضمان التطابق مع المجموع الكلي
-        prev_total_for_display = current_display_total_sum
+        # 🟢 بداية تعديل عرض أجرة التوصيل للزبون في الفاتورة (هذا هو الجزء الحاسم) 🟢
+        prev_total_for_display = current_display_total_sum # تحديث المجموع قبل إضافة سطر التوصيل
         customer_invoice_lines.append(f"– 🚚 التوصيل: بـ {format_float(final_delivery_charge_for_customer)}")
         customer_invoice_lines.append(f"• {format_float(prev_total_for_display)}+{format_float(final_delivery_charge_for_customer)}= {format_float(prev_total_for_display + final_delivery_charge_for_customer)} 💵")
-        current_display_total_sum += final_delivery_charge_for_customer # نضيفها هنا للمجموع العرضي
+        current_display_total_sum += final_delivery_charge_for_customer # إضافة قيمة التوصيل إلى المجموع المعروض
         # 🔴 نهاية تعديل عرض أجرة التوصيل للزبون في الفاتورة 🔴
 
 
@@ -1038,7 +1035,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             "-----------------------------------",
             "✨ المجموع الكلي: ✨",
             f"بدون التوصيل = {format_float(total_sell + extra_cost_value)} 💵",
-            f"مــــع التوصيل = {format_float(final_total)} 💵", # هنا final_total هي اللي حسبناها فوق
+            f"مــــع التوصيل = {format_float(final_total)} 💵", 
             "شكراً لاختياركم خدمة أبو الأكبر للتوصيل! ❤️"
         ])
 
@@ -1143,8 +1140,6 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         await context.bot.send_message(
             chat_id=chat_id,
             text="😏كسها باعلي ماكدرت ادزلك الفاتورة عاجبك تسوي طلبية جديدة اهلا وسهلا .")
-
-
 
             
 async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
