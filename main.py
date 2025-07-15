@@ -381,10 +381,10 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
             return
 
         order = orders[order_id]
-        
+
         completed_products = []
         pending_products = []
-        
+
         for p in order["products"]:
             if p in pricing.get(order_id, {}) and 'buy' in pricing[order_id].get(p, {}) and 'sell' in pricing[order_id].get(p, {}):
                 completed_products.append(p)
@@ -392,15 +392,18 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
             else:
                 pending_products.append(p)
                 logger.info(f"[{chat_id}] Product '{p}' in order {order_id} is pending. Pricing state for this product: {json.dumps(pricing.get(order_id, {}).get(p, {}), indent=2)}")
-        
+
         buttons_list = []
         for p in completed_products:
             buttons_list.append([InlineKeyboardButton(f"✅ {p}", callback_data=f"{order_id}|{p}")])
         for p in pending_products:
             buttons_list.append([InlineKeyboardButton(p, callback_data=f"{order_id}|{p}")])
-        
+
+        # ✅ إضافة زر "إضافة منتج جديد"
+        buttons_list.append([InlineKeyboardButton("➕ إضافة منتج جديد", callback_data=f"add_product_to_order_{order_id}")])
+
         markup = InlineKeyboardMarkup(buttons_list)
-        
+
         message_text = ""
         if confirmation_message:
             message_text += f"{confirmation_message}\n\n"
@@ -423,14 +426,13 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
         context.application.create_task(save_data_in_background(context)) 
 
         if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
-            logger.info(f"[{chat_id}] Scheduling deletion of {len(context.user_data[user_id].get('messages_to_delete', []))} old messages after showing new buttons for user {user_id}.")
+            logger.info(f"[{chat_id}] Scheduling deletion of {len(context.user_data[user_id].get('messages_to_delete', []))} old messages after showing places buttons for user {user_id}.")
             for msg_info in context.user_data[user_id]['messages_to_delete']:
                 context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
             context.user_data[user_id]['messages_to_delete'].clear()
     except Exception as e:
         logger.error(f"[{chat_id}] Error in show_buttons for order {order_id}: {e}", exc_info=True)
         await context.bot.send_message(chat_id=chat_id, text="ماكدرت اعرض الازرار تريد عدل الطلب .")
-
 
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
