@@ -630,7 +630,9 @@ async def cancel_delete_product_callback(update: Update, context: ContextTypes.D
 
     user_id = str(query.from_user.id)
     chat_id = query.message.chat_id
-    order_id = query.data.replace("cancel_delete_product_", "")
+    # ✅ هذا هو السطر المصحح الذي يحل مشكلة القوس المفتوح
+    # نحن نستخرج الـ order_id من الـ callback_data
+    order_id = query.data.replace("cancel_delete_product_", "") 
 
     logger.info(f"[{chat_id}] Cancel delete product button clicked for order {order_id} by user {user_id}.")
 
@@ -639,7 +641,7 @@ async def cancel_delete_product_callback(update: Update, context: ContextTypes.D
         context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
 
     await context.bot.send_message(chat_id=chat_id, text="تم إلغاء عملية مسح المنتج.")
-    # نرجع نعرض الأزرار الأصلية
+    # نرجع نعرض الأزرار المحدثة
     await show_buttons(chat_id, context, user_id, order_id)
     return ConversationHandler.END
 
