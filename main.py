@@ -1131,11 +1131,14 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         if message_prefix:
             message_text = message_prefix + "\n" + message_text
 
+        # 🟢 السطر الذي يسبب المشكلة (تم تصحيحه هنا) 🟢
         await context.bot.send_message(
             chat_id=chat_id,
             text=message_text,
-            reply_markup=reply_markup
+            reply_markup=reply_markup,
+            parse_mode="Markdown" # تأكد من وجود هذا السطر وقوس الإغلاق الخاص به
         )
+        # 🔴 نهاية السطر المصحح 🔴
 
     except Exception as e:
         logger.error(f"[{chat_id}] Error in show_final_options: {str(e)}", exc_info=True)
