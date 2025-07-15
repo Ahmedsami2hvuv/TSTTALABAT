@@ -170,7 +170,7 @@ def get_invoice_number():
 load_data()
 
 # حالات المحادثة
-ASK_BUY, ASK_PLACES_COUNT, ASK_PRODUCT_NAME = range(3)
+ASK_BUY, ASK_PLACES_COUNT, ASK_PRODUCT_NAME, ASK_PRODUCT_TO_DELETE = range(4)
 
 # جلب التوكن ومعرف المالك من متغيرات البيئة
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -515,6 +515,38 @@ async def add_new_product_callback(update: Update, context: ContextTypes.DEFAULT
 
     await context.bot.send_message(chat_id=chat_id, text="تمام، شنو اسم المنتج الجديد اللي تريد تضيفه؟")
     return ASK_PRODUCT_NAME # حالة محادثة جديدة لطلب اسم المنتج
+
+async def delete_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = str(query.from_user.id)
+    chat_id = query.message.chat_id
+
+    # استخراج الـ order_id والـ product_id من الـ callback_data
+    # مثلاً: "delete_product_order_123_product_abc"
+    data_parts = query.data.split('_')
+    order_id = data_parts[2] # الجزء الثالث هو الـ order_id
+    product_id = data_parts[4] # الجزء الخامس هو الـ product_id
+
+    logger.info(f"[{chat_id}] Delete product button clicked for product {product_id} in order {order_id} by user {user_id}.")
+
+    # هنا راح نحذف المنتج من قاعدة البيانات
+    # (راح نسوي هاي الدالة بالخطوة الجاية، بس هسه خليها هيج)
+    # مثال:
+    # success = await delete_product_from_db(order_id, product_id) 
+    # if success:
+    #     await context.bot.send_message(chat_id=chat_id, text=f"تم حذف المنتج بنجاح من الطلبية {order_id}.")
+    #     # ممكن هنا نحدث رسالة تفاصيل الطلبية بعد الحذف
+    # else:
+    #     await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء حذف المنتج.")
+
+    # حالياً، بس راح نرسل رسالة تأكيد مؤقتة
+    await context.bot.send_message(chat_id=chat_id, text=f"تم استلام طلب حذف المنتج {product_id} من الطلبية {order_id}. (الخاصية قيد التطوير)")
+
+    # حذف رسالة الأزرار القديمة (إذا كانت موجودة)
+    if query.message:
+        context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
     
 async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
@@ -645,6 +677,44 @@ async def receive_new_product_name(update: Update, context: ContextTypes.DEFAULT
         context.application.create_task(save_data_in_background(context)) # حفظ البيانات بعد إضافة المنتج
 
     context.user_data[user_id].pop("adding_new_product", None) # إزالة العلامة
+    context.user_data[user_id].pop("current_active_order_id", None) # إزالة الـ order_id بعد الانتهاء
+
+    await show_buttons(chat_id, context, user_id, order_id) # عرض الأزرار المحدثة
+    return ConversationHandler.END
+
+async def receive_product_to_delete_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    chat_id = update.effective_chat.id
+    product_name_to_delete = update.message.text.strip()
+
+    logger.info(f"[{chat_id}] Received product name '{product_name_to_delete}' for deletion from user {user_id}.")
+
+    order_id = context.user_data[user_id].get("current_active_order_id")
+
+    if not order_id or order_id not in orders:
+        logger.warning(f"[{chat_id}] No active order found or order_id invalid for user {user_id} when deleting product.")
+        await update.message.reply_text("ترا ماكو طلب فعال حتى أمسح منه منتج. سوي طلب جديد أول.")
+        context.user_data[user_id].pop("deleting_product", None) # إزالة العلامة
+        return ConversationHandler.END
+
+    order = orders[order_id]
+
+    # التأكد من وجود المنتج في الطلبية
+    if product_name_to_delete in order["products"]:
+        order["products"].remove(product_name_to_delete) # حذف المنتج من قائمة المنتجات بالطلبية
+
+        # حذف سعر المنتج من الـ pricing (إذا كان موجود)
+        if order_id in pricing and product_name_to_delete in pricing[order_id]:
+            del pricing[order_id][product_name_to_delete]
+            logger.info(f"[{chat_id}] Deleted pricing for product '{product_name_to_delete}' from order {order_id}.")
+
+        logger.info(f"[{chat_id}] Deleted product '{product_name_to_delete}' from order {order_id}.")
+        await update.message.reply_text(f"تم حذف المنتج '{product_name_to_delete}' من الطلبية بنجاح.")
+        context.application.create_task(save_data_in_background(context)) # حفظ البيانات بعد حذف المنتج
+    else:
+        await update.message.reply_text(f"ترا المنتج '{product_name_to_delete}' مو موجود بالطلبية أصلاً. تأكد من الاسم.")
+
+    context.user_data[user_id].pop("deleting_product", None) # إزالة العلامة
     context.user_data[user_id].pop("current_active_order_id", None) # إزالة الـ order_id بعد الانتهاء
 
     await show_buttons(chat_id, context, user_id, order_id) # عرض الأزرار المحدثة
@@ -1320,24 +1390,28 @@ def main():
 
     # ConversationHandler لإنشاء وتسعير الطلبات وإضافة المنتجات
     order_creation_conv_handler = ConversationHandler(
-        entry_points=[
-            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
-            CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$"),
-            CallbackQueryHandler(add_new_product_callback, pattern=r"^add_product_to_order_.*$")
+    entry_points=[
+        MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
+        CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$"),
+        CallbackQueryHandler(add_new_product_callback, pattern=r"^add_product_to_order_.*$"),
+        CallbackQueryHandler(delete_specific_product_callback, pattern=r"^delete_specific_product_.*$") # ✅ إضافة زر مسح منتج
+    ],
+    states={
+        ASK_BUY: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
         ],
-        states={
-            ASK_BUY: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
-            ],
-            ASK_PRODUCT_NAME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_product_name),
-            ]
-        },
-        fallbacks=[
-            CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
+        ASK_PRODUCT_NAME: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_product_name),
+        ],
+        ASK_PRODUCT_TO_DELETE: [ # ✅ حالة جديدة لطلب اسم المنتج المراد حذفه
+            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_product_to_delete_name),
         ]
-    )
+    },
+    fallbacks=[
+        CommandHandler("cancel", lambda u, c: ConversationHandler.END),
+        MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
+    ]
+)
     app.add_handler(order_creation_conv_handler)
 
     # تشغيل البوت
