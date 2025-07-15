@@ -971,6 +971,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         current_places = order.get("places_count", 0)
         extra_cost_value = calculate_extra(current_places)
         delivery_fee = get_delivery_price(order.get('title', ''))
+        original_delivery_fee = delivery_fee # ✅ إضافة هذا السطر الجديد حسب اقتراح DeepSeek
         final_total = total_sell + extra_cost_value + delivery_fee
 
         # تحديث الربح اليومي
@@ -1117,8 +1118,6 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         keyboard = [
             [InlineKeyboardButton("1️⃣ تعدل سعر", callback_data=f"edit_prices_{order_id}")],
             [InlineKeyboardButton("2️⃣ ترفع الطلب", url="https://d.ksebstor.site/client/96f743f604a4baf145939299")], # Fixed URL
-            [InlineKeyboardButton("3️⃣ إرسال فاتورة الزبون (واتساب)", url=f"https://wa.me/{OWNER_PHONE_NUMBER}?text={encoded_customer_text}")],
-            [InlineKeyboardButton("4️⃣ إنشاء طلب جديد", callback_data="start_new_order")]
         ]
 
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -1465,24 +1464,24 @@ def main():
 
     # ConversationHandler لمسح الطلبية
     delete_order_conv_handler = ConversationHandler(
-        entry_points=[
-            MessageHandler(filters.TEXT & filters.Regex(r"^(مسح)$"), delete_order_command), # أمر مسح الطلبية بالعربي
-            CommandHandler("delete_order", delete_order_command), # أمر مسح الطلبية بالإنكليزي
+    entry_points=[
+        MessageHandler(filters.TEXT & filters.Regex(r"^(مسح)$"), delete_order_command),
+        CommandHandler("delete_order", delete_order_command),
+    ],
+    states={
+        ASK_CUSTOMER_PHONE_NUMBER_FOR_DELETION: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_customer_phone_for_deletion),
         ],
-        states={
-            ASK_CUSTOMER_PHONE_NUMBER_FOR_DELETION: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_customer_phone_for_deletion),
-            ],
-            ASK_FOR_DELETION_CONFIRMATION: [
-                CallbackQueryHandler(confirm_delete_order_callback, pattern=r"^confirm_delete_order_.*$"),
-                CallbackQueryHandler(cancel_delete_order_callback, pattern=r"^cancel_delete_order$"),
-            ],
-        },
-        fallbacks=[
-            CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
-        ]
-    )
+        ASK_FOR_DELETION_CONFIRMATION: [
+            # ✅ هذا هو التعديل الجديد: ربط الدالة الجديدة handle_order_selection_for_deletion
+            CallbackQueryHandler(handle_order_selection_for_deletion, pattern=r"^(select_order_to_delete_.*|confirm_final_delete_.*|cancel_delete_order_final_selection)$"),
+        ],
+    },
+    fallbacks=[
+        CommandHandler("cancel", lambda u, c: ConversationHandler.END),
+        # MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END) # هذا السطر تم حذفه مسبقا
+    ]
+)
     app.add_handler(delete_order_conv_handler)
 
     # ConversationHandler لإنشاء وتسعير الطلبات وإضافة المنتجات
@@ -1608,6 +1607,59 @@ async def receive_customer_phone_for_deletion(update: Update, context: ContextTy
 
     logger.info(f"[{chat_id}] Received phone number '{customer_phone_number}' for order deletion from user {user_id}.")
 
+    if user_id != str(OWNER_ID):
+        await update.message.reply_text("عذراً، هذا الأمر متاح للمالك فقط.")
+        context.user_data[user_id].pop("deleting_order", None)
+        return ConversationHandler.END
+
+    order_to_delete_id = None
+    order_details_text = "ما لكييت طلبية لهذا الزبون."
+
+    found_orders = {oid: o for oid, o in orders.items() if o.get("phone_number") == customer_phone_number}
+
+    if not found_orders:
+        await update.message.reply_text("ما لكييت أي طلبية لهذا الزبون.")
+        context.user_data[user_id].pop("deleting_order", None)
+        return ConversationHandler.END
+
+    orders_list_details = []
+    keyboard_buttons = []
+
+    # ترتيب الطلبات حسب تاريخ الإنشاء (الأحدث أولاً)
+    sorted_orders_items = sorted(found_orders.items(), key=lambda item: item[1].get('created_at', ''), reverse=True)
+
+    for i, (oid, order_data) in enumerate(sorted_orders_items):
+        invoice = invoice_numbers.get(oid, "غير معروف")
+        is_priced = all(p in pricing.get(oid, {}) and 'buy' in pricing[oid].get(p, {}) and 'sell' in pricing[oid].get(p, {}) for p in order_data.get("products", []))
+        status = "مكتملة التسعير" if is_priced else "غير مكتملة التسعير"
+
+        orders_list_details.append(
+            f"🔹 *الفاتورة رقم #{invoice}* ({status})\n"
+            f"    العنوان: {order_data.get('title', 'غير متوفر')}\n"
+            f"    المنتجات: {', '.join(order_data.get('products', []))}"
+        )
+        keyboard_buttons.append(
+            [InlineKeyboardButton(f"مسح الفاتورة #{invoice} ({status})", callback_data=f"select_order_to_delete_{oid}")]
+        )
+
+    keyboard_buttons.append([InlineKeyboardButton("❌ إلغاء العملية", callback_data="cancel_delete_order")])
+
+    await update.message.reply_text(
+        f"تم العثور على {len(found_orders)} طلبية لهذا الرقم:\n\n" +
+        "\n\n".join(orders_list_details) +
+        "\n\nاختر الفاتورة التي تريد مسحها:",
+        reply_markup=InlineKeyboardMarkup(keyboard_buttons),
+        parse_mode="Markdown"
+    )
+    return ASK_FOR_DELETION_CONFIRMATION
+
+async def receive_customer_phone_for_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.message.from_user.id)
+    chat_id = update.effective_chat.id
+    customer_phone_number = update.message.text.strip()
+
+    logger.info(f"[{chat_id}] Received phone number '{customer_phone_number}' for order deletion from user {user_id}.")
+
     # تأكد من أن المستخدم يمتلك صلاحيات المالك
     if user_id != str(OWNER_ID):
         await update.message.reply_text("😏لاتاكل خره ماتكدر تسوي هالشي. هذا الأمر متاح للمالك فقط.")
@@ -1656,36 +1708,36 @@ async def confirm_delete_order_callback(update: Update, context: ContextTypes.DE
     user_id = str(query.from_user.id)
     chat_id = query.message.chat_id
 
-    # التأكد من أن المستخدم يمتلك صلاحيات المالك
     if user_id != str(OWNER_ID):
-        await query.edit_message_text("😏لاتاكل خره ماتكدر تسوي هالشي.")
+        await query.edit_message_text("عذراً، لا تملك صلاحية لتنفيذ هذا الأمر.")
         context.user_data[user_id].pop("deleting_order", None)
         context.user_data[user_id].pop("order_id_to_delete", None)
         return ConversationHandler.END
 
-    order_id_to_delete = context.user_data[user_id].get("order_id_to_delete")
+    # الـ order_id_to_delete راح يجي مباشرة من الـ callback_data
+    order_id_to_delete = query.data.replace("confirm_delete_order_", "")
 
     if not order_id_to_delete or order_id_to_delete not in orders:
         logger.warning(f"[{chat_id}] Order ID to delete not found in user_data or orders for user {user_id}.")
-        await query.edit_message_text("ترا ما لكيت الطلبية اللي جنت دحاول تمسحها. يمكن انمسحت من قبل.")
+        await query.edit_message_text("ترا ما لكيت الطلبية اللي كنت تحاول تمسحها. يمكن انمسحت من قبل.")
         context.user_data[user_id].pop("deleting_order", None)
         context.user_data[user_id].pop("order_id_to_delete", None)
         return ConversationHandler.END
 
+    # حفظ رقم الفاتورة قبل المسح فعلياً
+    invoice_number_to_display = invoice_numbers.get(order_id_to_delete, "غير معروف")
+
     try:
-        # حذف الطلبية من الـ orders
         del orders[order_id_to_delete]
-        # حذف أسعار الطلبية من الـ pricing
         if order_id_to_delete in pricing:
             del pricing[order_id_to_delete]
-        # حذف رقم الفاتورة (إذا كان موجود)
         if order_id_to_delete in invoice_numbers:
             del invoice_numbers[order_id_to_delete]
 
-        context.application.create_task(save_data_in_background(context)) # حفظ التغييرات
+        context.application.create_task(save_data_in_background(context))
 
         logger.info(f"[{chat_id}] Order {order_id_to_delete} deleted successfully by user {user_id}.")
-        await query.edit_message_text(f"تم مسح الطلبية رقم `{invoice_numbers.get(order_id_to_delete, 'القديمة')}` بنجاح!.") # نستخدم رقم الفاتورة الأصلي قبل المسح
+        await query.edit_message_text(f"تم مسح الطلبية رقم `{invoice_number_to_display}` بنجاح!")
     except Exception as e:
         logger.error(f"[{chat_id}] Error deleting order {order_id_to_delete}: {e}", exc_info=True)
         await query.edit_message_text("عذراً، صار خطأ أثناء مسح الطلبية.")
@@ -1708,6 +1760,54 @@ async def cancel_delete_order_callback(update: Update, context: ContextTypes.DEF
 
     context.user_data[user_id].pop("deleting_order", None)
     context.user_data[user_id].pop("order_id_to_delete", None)
+    return ConversationHandler.END
+
+async def handle_order_selection_for_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = str(query.from_user.id)
+    data = query.data
+
+    if data.startswith("select_order_"):
+        try:
+            order_index = int(data.replace("select_order_", ""))
+            order_id = context.user_data[user_id]["matching_order_ids"][order_index]
+            
+            # تأكيد الحذف
+            keyboard = [
+                [InlineKeyboardButton("✅ نعم، امسح", callback_data=f"confirm_delete_{order_id}")],
+                [InlineKeyboardButton("❌ لا، إلغاء", callback_data="cancel_delete_order")]
+            ]
+            await query.edit_message_text(
+                f"هل أنت متأكد من رغبتك في مسح الطلبية {order_id}؟",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        except (IndexError, ValueError) as e:
+            logger.error(f"Error selecting order for deletion: {e}")
+            await query.edit_message_text("حدث خطأ في اختيار الطلبية")
+            return ConversationHandler.END
+    elif data.startswith("confirm_delete_"):
+        order_id = data.replace("confirm_delete_", "")
+        try:
+            # حذف الطلبية
+            if order_id in orders: del orders[order_id]
+            if order_id in pricing: del pricing[order_id]
+            if order_id in invoice_numbers: del invoice_numbers[order_id]
+            
+            context.application.create_task(save_data_in_background(context))
+            await query.edit_message_text(f"تم حذف الطلبية {order_id} بنجاح")
+        except Exception as e:
+            logger.error(f"Error deleting order {order_id}: {e}")
+            await query.edit_message_text("حدث خطأ أثناء حذف الطلبية")
+    elif data == "cancel_delete_order":
+        await query.edit_message_text("تم إلغاء عملية الحذف")
+
+    # تنظيف user_data
+    if user_id in context.user_data:
+        context.user_data[user_id].pop("matching_order_ids", None)
+        context.user_data[user_id].pop("deleting_order", None)
+    
     return ConversationHandler.END
     
     
