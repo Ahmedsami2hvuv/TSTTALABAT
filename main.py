@@ -1260,22 +1260,22 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"[{update.effective_chat.id}] Error in show_report: {e}", exc_info=True)
         await update.message.reply_text("😐هذا الظراط ماكدرت ادزلك التقرير .")
         
-def main():
+        def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     # وضع المتغيرات العالمية في bot_data
-app.bot_data['orders'] = orders
-app.bot_data['pricing'] = pricing
-app.bot_data['invoice_numbers'] = invoice_numbers
-app.bot_data['daily_profit'] = daily_profit
-app.bot_data['last_button_message'] = last_button_message
-app.bot_data['supplier_report_timestamps'] = supplier_report_timestamps
+    app.bot_data['orders'] = orders
+    app.bot_data['pricing'] = pricing
+    app.bot_data['invoice_numbers'] = invoice_numbers
+    app.bot_data['daily_profit'] = daily_profit
+    app.bot_data['last_button_message'] = last_button_message
+    app.bot_data['supplier_report_timestamps'] = supplier_report_timestamps
 
-# تمرير دوال الحفظ العامة لـ bot_data حتى تتمكن الدوال الأخرى من استدعائها
-app.bot_data['schedule_save_global_func'] = schedule_save_global
-app.bot_data['_save_data_to_disk_global_func'] = _save_data_to_disk_global
-
-# Handlers (تأكد إنو هاي الأسطر تبدي بـ 4 مسافات فراغ من بداية سطر def main():)
+    # تمرير دوال الحفظ العامة لـ bot_data
+    app.bot_data['schedule_save_global_func'] = schedule_save_global
+    app.bot_data['_save_data_to_disk_global_func'] = _save_data_to_disk_global
+    
+    # Handlers (تأكد إنو هاي الأسطر تبدي بـ 4 مسافات فراغ من بداية سطر def main():)
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("profit", show_profit))
 app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(الارباح|ارباح)$"), show_profit))
@@ -1337,7 +1337,9 @@ order_creation_conv_handler = ConversationHandler(
 app.add_handler(order_creation_conv_handler)
 
 # ✅ تشغيل البوت
-app.run_polling(allowed_updates=Update.ALL_TYPES)   
+app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+   
 
 async def show_supplier_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
