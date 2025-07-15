@@ -393,17 +393,17 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
                 pending_products.append(p)
                 logger.info(f"[{chat_id}] Product '{p}' in order {order_id} is pending. Pricing state for this product: {json.dumps(pricing.get(order_id, {}).get(p, {}), indent=2)}")
 
+        # ✅ ارار اضافة ومسح"
+        buttons_list.append([InlineKeyboardButton("➕ إضافة منتج جديد", callback_data=f"add_product_to_order_{order_id}")])
+        delete_product_button = InlineKeyboardButton("🗑️ مسح منتج", callback_data=f"delete_specific_product_{order_id}")
+        buttons_list.append([delete_product_button]) # ✅ هنا تم تصحيح مكان الزر ليكون في نفس الصف أو ينضاف بشكل صحيح لقائمة الأزرار الكبيرة.
+                                                  
         buttons_list = []
         for p in completed_products:
             buttons_list.append([InlineKeyboardButton(f"✅ {p}", callback_data=f"{order_id}|{p}")])
         for p in pending_products:
             buttons_list.append([InlineKeyboardButton(p, callback_data=f"{order_id}|{p}")])
-
-        # ✅ إضافة زر "إضافة منتج جديد"
-        buttons_list.append([InlineKeyboardButton("➕ إضافة منتج جديد", callback_data=f"add_product_to_order_{order_id}")])
-        delete_product_button = InlineKeyboardButton("🗑️ مسح منتج", callback_data=f"delete_specific_product_{order_id}")
-        buttons_list.append([delete_product_button]) # ✅ هنا تم تصحيح مكان الزر ليكون في نفس الصف أو ينضاف بشكل صحيح لقائمة الأزرار الكبيرة.
-                                                    
+          
 
         markup = InlineKeyboardMarkup(buttons_list)
 
@@ -436,6 +436,7 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
     except Exception as e:
         logger.error(f"[{chat_id}] Error in show_buttons for order {order_id}: {e}", exc_info=True)
         await context.bot.send_message(chat_id=chat_id, text="ماكدرت اعرض الازرار تريد عدل الطلب .")
+        
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
