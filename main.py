@@ -170,7 +170,7 @@ def get_invoice_number():
 load_data()
 
 # حالات المحادثة
-ASK_BUY, ASK_SELL, ASK_PLACES_COUNT, ASK_PRODUCT_NAME = range(4)
+ASK_BUY, ASK_SELL, ASK_PLACES_COUNT, ASK_PRODUCT_NAME = range(3)
 
 # جلب التوكن ومعرف المالك من متغيرات البيئة
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
