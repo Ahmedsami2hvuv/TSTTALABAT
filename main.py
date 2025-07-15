@@ -977,10 +977,11 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         # أجرة التوصيل الأساسية حسب المنطقة (هذه لا تتغير)
         delivery_fee_from_zone = get_delivery_price(order.get('title', '')) 
         
-        # أجرة التوصيل النهائية التي سيراها الزبون وستضاف للمجموع (قد تكون 0)
-        final_delivery_charge_for_customer = delivery_fee_from_zone
-        if current_places in [1, 2]:
-            final_delivery_charge_for_customer = 0 # إذا عدد المحلات 1 أو 2، التوصيل يصير مجاني للزبون
+       # أجرة التوصيل النهائية التي سيراها الزبون وستضاف للمجموع
+        final_delivery_charge_for_customer = delivery_fee_from_zone
+        # إذا كنت لا تريد أن يكون التوصيل مجانياً أبداً، احذف السطر التالي أو اجعله تعليقاً
+        # if current_places in [1, 2]:
+        #     final_delivery_charge_for_customer = 0
         
         # المجموع الكلي النهائي الذي يشمل أجرة التوصيل بعد تطبيق الخصم (إذا وجدت)
         final_total = total_sell + extra_cost_value + final_delivery_charge_for_customer
