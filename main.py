@@ -1394,7 +1394,7 @@ def main():
         MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
         CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$"),
         CallbackQueryHandler(add_new_product_callback, pattern=r"^add_product_to_order_.*$"),
-        CallbackQueryHandler(delete_specific_product_callback, pattern=r"^delete_specific_product_.*$") # ✅ إضافة زر مسح منتج
+        CallbackQueryHandler(delete_product_callback, pattern=r"^delete_specific_product_.*$") # ✅ إضافة زر مسح منتج
     ],
     states={
         ASK_BUY: [
