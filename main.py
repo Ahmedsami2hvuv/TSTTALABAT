@@ -1908,19 +1908,21 @@ async def handle_order_selection_for_deletion(update: Update, context: ContextTy
             await query.edit_message_text("حدث خطأ في اختيار الطلبية")
             return ConversationHandler.END
     elif data.startswith("confirm_delete_"):
-        order_id = data.replace("confirm_delete_", "")
-        try:
-            # حذف الطلبية
-            if order_id in context.application.bot_data['orders']:
-    del context.application.bot_data['orders'][order_id]
-            if order_id in pricing: del pricing[order_id]
-            if order_id in invoice_numbers: del invoice_numbers[order_id]
-            
-            context.application.create_task(save_data_in_background(context))
-            await query.edit_message_text(f"تم حذف الطلبية {order_id} بنجاح")
-        except Exception as e:
-            logger.error(f"Error deleting order {order_id}: {e}")
-            await query.edit_message_text("حدث خطأ أثناء حذف الطلبية")
+    order_id = data.replace("confirm_delete_", "")
+    try:
+        # حذف الطلبية
+        if order_id in context.application.bot_data['orders']:
+            del context.application.bot_data['orders'][order_id]
+        if order_id in pricing: 
+            del pricing[order_id]
+        if order_id in invoice_numbers: 
+            del invoice_numbers[order_id]
+        
+        context.application.create_task(save_data_in_background(context))
+        await query.edit_message_text(f"تم حذف الطلبية {order_id} بنجاح")
+    except Exception as e:
+        logger.error(f"Error deleting order {order_id}: {e}")
+        await query.edit_message_text("حدث خطأ أثناء حذف الطلبية")
     elif data == "cancel_delete_order":
         await query.edit_message_text("تم إلغاء عملية الحذف")
 
