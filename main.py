@@ -1448,55 +1448,55 @@ def main():
     )
     app.add_handler(places_conv_handler)
 
-    # ✅ ConversationHandler لمسح الطلبية
-delete_order_conv_handler = ConversationHandler(
-    entry_points=[
-        CommandHandler("مسح", delete_order_command), # أمر مسح الطلبية بالعربي
-        CommandHandler("delete_order", delete_order_command), # أمر مسح الطلبية بالإنكليزي
-    ],
-    states={
-        ASK_CUSTOMER_PHONE_NUMBER_FOR_DELETION: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_customer_phone_for_deletion),
+    # ✅ ConversationHandler لمسح الطلبية (تأكد إنو هذا يبدي بـ 4 فراغات)
+    delete_order_conv_handler = ConversationHandler(
+        entry_points=[
+            CommandHandler("مسح", delete_order_command), # أمر مسح الطلبية بالعربي
+            CommandHandler("delete_order", delete_order_command), # أمر مسح الطلبية بالإنكليزي
         ],
-        ASK_FOR_DELETION_CONFIRMATION: [
-            CallbackQueryHandler(confirm_delete_order_callback, pattern=r"^confirm_delete_order_.*$"),
-            CallbackQueryHandler(cancel_delete_order_callback, pattern=r"^cancel_delete_order$"),
-        ],
-    },
-    fallbacks=[
-        CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-        MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
-    ]
-)
-app.add_handler(delete_order_conv_handler) # ✅ إضافة هذا الـ handler للـ app
+        states={
+            ASK_CUSTOMER_PHONE_NUMBER_FOR_DELETION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_customer_phone_for_deletion),
+            ],
+            ASK_FOR_DELETION_CONFIRMATION: [
+                CallbackQueryHandler(confirm_delete_order_callback, pattern=r"^confirm_delete_order_.*$"),
+                CallbackQueryHandler(cancel_delete_order_callback, pattern=r"^cancel_delete_order$"),
+            ],
+        },
+        fallbacks=[
+            CommandHandler("cancel", lambda u, c: ConversationHandler.END),
+            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
+        ]
+    )
+    app.add_handler(delete_order_conv_handler) # ✅ تأكد إنو هذا السطر يبدي بـ 4 فراغات
 
-    # ConversationHandler لإنشاء وتسعير الطلبات وإضافة المنتجات
-order_creation_conv_handler = ConversationHandler(
-    entry_points=[
-        MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
-        CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$"),
-        CallbackQueryHandler(add_new_product_callback, pattern=r"^add_product_to_order_.*$"),
-        CallbackQueryHandler(delete_product_callback, pattern=r"^delete_specific_product_.*$"), 
-        CallbackQueryHandler(confirm_delete_product_by_button_callback, pattern=r"^confirm_delete_product_.*$"), 
-        CallbackQueryHandler(cancel_delete_product_callback, pattern=r"^cancel_delete_product_.*$") # زر إلغاء المسح
-    ],
-    states={
-        ASK_BUY: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
+    # ✅ ConversationHandler لإنشاء وتسعير الطلبات وإضافة المنتجات (تأكد إنو هذا يبدي بـ 4 فراغات)
+    order_creation_conv_handler = ConversationHandler(
+        entry_points=[
+            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
+            CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$"),
+            CallbackQueryHandler(add_new_product_callback, pattern=r"^add_product_to_order_.*$"),
+            CallbackQueryHandler(delete_product_callback, pattern=r"^delete_specific_product_.*$"), 
+            CallbackQueryHandler(confirm_delete_product_by_button_callback, pattern=r"^confirm_delete_product_.*$"), 
+            CallbackQueryHandler(cancel_delete_product_callback, pattern=r"^cancel_delete_product_.*$")
         ],
-        ASK_PRODUCT_NAME: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_product_name),
-            CallbackQueryHandler(cancel_add_product_callback, pattern=r"^cancel_add_product_.*$") # ✅ إضافة زر إلغاء الإضافة هنا مباشرة
-        ],
-    },
-    fallbacks=[
-        CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-        MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
-    ]
-)
-    app.add_handler(order_creation_conv_handler)
+        states={
+            ASK_BUY: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
+            ],
+            ASK_PRODUCT_NAME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_product_name),
+                CallbackQueryHandler(cancel_add_product_callback, pattern=r"^cancel_add_product_.*$")
+            ],
+        },
+        fallbacks=[
+            CommandHandler("cancel", lambda u, c: ConversationHandler.END),
+            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
+        ]
+    )
+    app.add_handler(order_creation_conv_handler) # ✅ تأكد إنو هذا السطر يبدي بـ 4 فراغات
 
-    # تشغيل البوت
+    # ✅ تشغيل البوت (تأكد إنو هذا يبدي بـ 4 فراغات)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
    
 
