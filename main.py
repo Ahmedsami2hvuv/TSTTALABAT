@@ -170,7 +170,7 @@ def get_invoice_number():
 load_data()
 
 # حالات المحادثة
-ASK_BUY, ASK_SELL, ASK_PLACES_COUNT = range(3)
+ASK_BUY, ASK_SELL, ASK_PLACES_COUNT, ASK_PRODUCT_NAME = range(4)
 
 # جلب التوكن ومعرف المالك من متغيرات البيئة
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -426,14 +426,13 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
         context.application.create_task(save_data_in_background(context)) 
 
         if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
-            logger.info(f"[{chat_id}] Scheduling deletion of {len(context.user_data[user_id].get('messages_to_delete', []))} old messages after showing places buttons for user {user_id}.")
+            logger.info(f"[{chat_id}] Scheduling deletion of {len(context.user_data[user_id].get('messages_to_delete', []))} old messages after showing new buttons for user {user_id}.")
             for msg_info in context.user_data[user_id]['messages_to_delete']:
                 context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
             context.user_data[user_id]['messages_to_delete'].clear()
     except Exception as e:
         logger.error(f"[{chat_id}] Error in show_buttons for order {order_id}: {e}", exc_info=True)
         await context.bot.send_message(chat_id=chat_id, text="ماكدرت اعرض الازرار تريد عدل الطلب .")
-
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
@@ -616,7 +615,36 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("😏اهووو صار خطا من دخلت السعر. يالله بوجهك سوي طلب جديد.")
         return ConversationHandler.END
 
+async def receive_new_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    chat_id = update.effective_chat.id
+    new_product_name = update.message.text.strip()
 
+    logger.info(f"[{chat_id}] Received new product name '{new_product_name}' from user {user_id}.")
+
+    order_id = context.user_data[user_id].get("current_active_order_id")
+
+    if not order_id or order_id not in orders:
+        logger.warning(f"[{chat_id}] No active order found or order_id invalid for user {user_id} when adding new product.")
+        await update.message.reply_text("ترا ماكو طلب فعال حتى أضيفله منتج. سوي طلب جديد أول.")
+        context.user_data[user_id].pop("adding_new_product", None)
+        return ConversationHandler.END
+
+    order = orders[order_id]
+
+    if new_product_name in order["products"]:
+        await update.message.reply_text(f"ترا المنتج '{new_product_name}' موجود بالطلبية أصلاً. اختار منتج ثاني أو كمل تسعير الموجودات.")
+    else:
+        order["products"].append(new_product_name)
+        logger.info(f"[{chat_id}] Added new product '{new_product_name}' to order {order_id}.")
+        await update.message.reply_text(f"تمت إضافة المنتج '{new_product_name}' للطلبية بنجاح.")
+        context.application.create_task(save_data_in_background(context)) # حفظ البيانات بعد إضافة المنتج
+
+    context.user_data[user_id].pop("adding_new_product", None) # إزالة العلامة
+    context.user_data[user_id].pop("current_active_order_id", None) # إزالة الـ order_id بعد الانتهاء
+
+    await show_buttons(chat_id, context, user_id, order_id) # عرض الأزرار المحدثة
+    return ConversationHandler.END
 
 async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT_TYPE, user_id: str, order_id: str):
     orders = context.application.bot_data['orders']
@@ -1236,78 +1264,80 @@ def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     # وضع المتغيرات العالمية في bot_data
-    app.bot_data['orders'] = orders
-    app.bot_data['pricing'] = pricing
-    app.bot_data['invoice_numbers'] = invoice_numbers
-    app.bot_data['daily_profit'] = daily_profit
-    app.bot_data['last_button_message'] = last_button_message
-    app.bot_data['supplier_report_timestamps'] = supplier_report_timestamps 
+app.bot_data['orders'] = orders
+app.bot_data['pricing'] = pricing
+app.bot_data['invoice_numbers'] = invoice_numbers
+app.bot_data['daily_profit'] = daily_profit
+app.bot_data['last_button_message'] = last_button_message
+app.bot_data['supplier_report_timestamps'] = supplier_report_timestamps
 
-    # تمرير دوال الحفظ العامة لـ bot_data حتى تتمكن الدوال الأخرى من استدعائها
-    app.bot_data['schedule_save_global_func'] = schedule_save_global
-    app.bot_data['_save_data_to_disk_global_func'] = _save_data_to_disk_global
+# تمرير دوال الحفظ العامة لـ bot_data حتى تتمكن الدوال الأخرى من استدعائها
+app.bot_data['schedule_save_global_func'] = schedule_save_global
+app.bot_data['_save_data_to_disk_global_func'] = _save_data_to_disk_global
 
-    # ✅ Handlers خارج المحادثة (الآن صارت داخل main())
-    # تأكد إنو هاي الأسطر تبدي بـ 4 مسافات فراغ من بداية السطر:
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("profit", show_profit))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(الارباح|ارباح)$"), show_profit))
-    app.add_handler(CommandHandler("reset", reset_all))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^تصفير$"), reset_all))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^صفر$"), reset_supplier_report))
-    app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
-    app.add_handler(CommandHandler("report", show_report))
-    app.add_handler(CommandHandler("myreport", show_supplier_report))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تقاريري|تقريري)$"), show_supplier_report))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(التقارير|تقرير|تقارير)$"), show_report))
+# Handlers (تأكد إنو هاي الأسطر تبدي بـ 4 مسافات فراغ من بداية سطر def main():)
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("profit", show_profit))
+app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(الارباح|ارباح)$"), show_profit))
+app.add_handler(CommandHandler("reset", reset_all))
+app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^تصفير$"), reset_all))
+app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^صفر$"), reset_supplier_report))
+app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
+app.add_handler(CommandHandler("report", show_report))
+app.add_handler(CommandHandler("myreport", show_supplier_report))
+app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تقاريري|تقريري)$"), show_supplier_report))
+app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(التقارير|تقرير|تقارير)$"), show_report))
 
-    app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
-    app.add_handler(CallbackQueryHandler(edit_prices, pattern=r"^edit_prices_"))
-    app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern=r"^start_new_order$"))
-    # أمر /zones لعرض المناطق
-    app.add_handler(CommandHandler("zones", list_zones))
-    # استجابة نصية "مناطق" أو "المناطق"
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(مناطق|المناطق)$"), list_zones))
-    # ✅ تم إزالة أمر /add_zones_bulk لأنه لن يتم استخدامه بعد الآن
+app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
+app.add_handler(CallbackQueryHandler(edit_prices, pattern=r"^edit_prices_"))
+app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern=r"^start_new_order$"))
+# أمر /zones لعرض المناطق
+app.add_handler(CommandHandler("zones", list_zones))
+# استجابة نصية "مناطق" أو "المناطق"
+app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(مناطق|المناطق)$"), list_zones))
 
-    # ✅ ConversationHandler لعدد المحلات
-    places_conv_handler = ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(handle_places_count_data, pattern=r"^places_data_[a-f0-9]{8}_\d+$"),
+# ✅ ConversationHandler لعدد المحلات
+places_conv_handler = ConversationHandler(
+    entry_points=[
+        CallbackQueryHandler(handle_places_count_data, pattern=r"^places_data_[a-f0-9]{8}_\d+$"),
+    ],
+    states={
+        ASK_PLACES_COUNT: [
+            MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, handle_places_count_data),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_places_count_data),
         ],
-        states={
-            ASK_PLACES_COUNT: [
-                MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, handle_places_count_data),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_places_count_data),
-            ],
-        },
-        fallbacks=[
-            CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
-        ]
-    )
-    app.add_handler(places_conv_handler)
+    },
+    fallbacks=[
+        CommandHandler("cancel", lambda u, c: ConversationHandler.END),
+        MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
+    ]
+)
+app.add_handler(places_conv_handler)
 
-    # ✅ ConversationHandler لإنشاء وتسعير الطلبات
-    order_creation_conv_handler = ConversationHandler(
-        entry_points=[
-            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
-            CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$")
-        ],
-        states={
+# ✅ ConversationHandler لإنشاء وتسعير الطلبات وإضافة المنتجات
+order_creation_conv_handler = ConversationHandler(
+    entry_points=[
+        MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
+        CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$"),
+        CallbackQueryHandler(add_new_product_callback, pattern=r"^add_product_to_order_.*$") # ✅ إضافة هذا الزر
+    ],
+    states={
         ASK_BUY: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
+        ],
+        ASK_PRODUCT_NAME: [ # ✅ حالة جديدة لطلب اسم المنتج
+            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_product_name),
         ]
     },
-        fallbacks=[
-            CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
-        ]
-    )
-    app.add_handler(order_creation_conv_handler)
+    fallbacks=[
+        CommandHandler("cancel", lambda u, c: ConversationHandler.END),
+        MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
+    ]
+)
+app.add_handler(order_creation_conv_handler)
 
-    # ✅ تشغيل البوت
-    app.run_polling(allowed_updates=Update.ALL_TYPES)  
+# ✅ تشغيل البوت
+app.run_polling(allowed_updates=Update.ALL_TYPES)   
 
 async def show_supplier_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
