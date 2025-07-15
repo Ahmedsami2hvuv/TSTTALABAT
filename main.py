@@ -402,7 +402,8 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
         # ✅ إضافة زر "إضافة منتج جديد"
         buttons_list.append([InlineKeyboardButton("➕ إضافة منتج جديد", callback_data=f"add_product_to_order_{order_id}")])
         delete_product_button = InlineKeyboardButton("🗑️ مسح منتج", callback_data=f"delete_specific_product_{order_id}")
-buttons.append(delete_product_button)
+        buttons_list.append([delete_product_button]) # ✅ هنا تم تصحيح مكان الزر ليكون في نفس الصف أو ينضاف بشكل صحيح لقائمة الأزرار الكبيرة.
+                                                    
 
         markup = InlineKeyboardMarkup(buttons_list)
 
