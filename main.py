@@ -1260,7 +1260,7 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"[{update.effective_chat.id}] Error in show_report: {e}", exc_info=True)
         await update.message.reply_text("😐هذا الظراط ماكدرت ادزلك التقرير .")
         
-        def main():
+def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     # وضع المتغيرات العالمية في bot_data
