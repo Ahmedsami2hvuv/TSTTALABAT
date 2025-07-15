@@ -1650,8 +1650,8 @@ async def receive_customer_phone_for_deletion(update: Update, context: ContextTy
         parse_mode="Markdown"
     )
     return ASK_FOR_DELETION_CONFIRMATION
-
-handle_order_selection_for_deletion
+    
+    handle_order_selection_for_deletion
 
 async def receive_customer_phone_for_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
