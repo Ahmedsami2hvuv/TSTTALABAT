@@ -1661,14 +1661,20 @@ async def handle_order_selection_for_deletion(update: Update, context: ContextTy
 
     if user_id != str(OWNER_ID):
         await query.edit_message_text("عذراً، لا تملك صلاحية لتنفيذ هذا الأمر.")
-        # تنظيف user_data لضمان انتهاء عملية المسح إذا لم يكن المالك
         context.user_data[user_id].pop("matching_order_ids", None)
         context.user_data[user_id].pop("deleting_order", None)
         return ConversationHandler.END
 
-    if data.startswith("select_order_to_delete_"): # عندما يتم اختيار طلبية للمسح من القائمة
+    if data.startswith("select_order_to_delete_"):
         try:
             order_id_selected = data.replace("select_order_to_delete_", "")
+
+            matching_order_ids = context.user_data[user_id].get("matching_order_ids")
+
+            if not matching_order_ids or order_id_selected not in orders.keys(): # تأكد من أن الطلبية لا تزال موجودة
+                logger.warning(f"[{chat_id}] Order ID {order_id_selected} not found or invalid for user {user_id} during selection.")
+                await query.edit_message_text("عذراً، الطلبية التي اخترتها غير موجودة أو تم حذفها مسبقاً. الرجاء المحاولة مرة أخرى.")
+                return ConversationHandler.END
 
             # تأكيد الحذف
             invoice_number_display = invoice_numbers.get(order_id_selected, "غير معروف")
@@ -1681,7 +1687,7 @@ async def handle_order_selection_for_deletion(update: Update, context: ContextTy
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode="Markdown"
             )
-            return ASK_FOR_DELETION_CONFIRMATION # البقاء في حالة التأكيد
+            return ASK_FOR_DELETION_CONFIRMATION
 
         except Exception as e:
             logger.error(f"[{chat_id}] Error selecting order for deletion: {e}", exc_info=True)
@@ -1695,9 +1701,12 @@ async def handle_order_selection_for_deletion(update: Update, context: ContextTy
             invoice_number_to_display = invoice_numbers.get(order_id_to_delete, "غير معروف")
 
             # حذف الطلبية من جميع القواميس
-            if order_id_to_delete in orders: del orders[order_id_to_delete]
-            if order_id_to_delete in pricing: del pricing[order_id_to_delete]
-            if order_id_to_delete in invoice_numbers: del invoice_numbers[order_id_to_delete]
+            if order_id_to_delete in orders: 
+                del orders[order_id_to_delete]
+            if order_id_to_delete in pricing: 
+                del pricing[order_id_to_delete]
+            if order_id_to_delete in invoice_numbers: 
+                del invoice_numbers[order_id_to_delete]
 
             context.application.create_task(save_data_in_background(context))
             await query.edit_message_text(f"تم مسح الطلبية رقم `{invoice_number_to_display}` بنجاح!")
