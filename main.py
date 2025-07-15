@@ -1840,8 +1840,9 @@ async def handle_order_selection_for_deletion(update: Update, context: ContextTy
             logger.error(f"Error selecting order for deletion: {e}")
             await query.edit_message_text("حدث خطأ في اختيار الطلبية")
             return ConversationHandler.END
+            
     elif data.startswith("confirm_delete_"):
-    order_id = data.replace("confirm_delete_", "")
+        order_id = data.replace("confirm_delete_", "")
     try:
         # حذف الطلبية
         if order_id in context.application.bot_data['orders']:
