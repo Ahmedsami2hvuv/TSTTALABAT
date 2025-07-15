@@ -1454,11 +1454,9 @@ def main():
         MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
         CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$"),
         CallbackQueryHandler(add_new_product_callback, pattern=r"^add_product_to_order_.*$"),
-        CallbackQueryHandler(delete_product_callback, pattern=r"^delete_specific_product_.*$"), # زر مسح المنتجات العام
-        CallbackQueryHandler(confirm_delete_product_by_button_callback, pattern=r"^confirm_delete_product_.*$"), # زر تأكيد مسح المنتج
-        # ✅ إضافة أزرار الإلغاء هنا
-        CallbackQueryHandler(cancel_add_product_callback, pattern=r"^cancel_add_product_.*$"),
-        CallbackQueryHandler(cancel_delete_product_callback, pattern=r"^cancel_delete_product_.*$")
+        CallbackQueryHandler(delete_product_callback, pattern=r"^delete_specific_product_.*$"), 
+        CallbackQueryHandler(confirm_delete_product_by_button_callback, pattern=r"^confirm_delete_product_.*$"), 
+        CallbackQueryHandler(cancel_delete_product_callback, pattern=r"^cancel_delete_product_.*$") # زر إلغاء المسح
     ],
     states={
         ASK_BUY: [
@@ -1466,8 +1464,8 @@ def main():
         ],
         ASK_PRODUCT_NAME: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_product_name),
+            CallbackQueryHandler(cancel_add_product_callback, pattern=r"^cancel_add_product_.*$") # ✅ إضافة زر إلغاء الإضافة هنا مباشرة
         ],
-        # ✅ لا نحتاج حالة خاصة للإلغاء، لأن دوال الإلغاء تنهي المحادثة
     },
     fallbacks=[
         CommandHandler("cancel", lambda u, c: ConversationHandler.END),
