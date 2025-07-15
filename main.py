@@ -382,30 +382,25 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
 
         order = orders[order_id]
 
-        completed_products = []
-        pending_products = []
+        # قائمة الأزرار النهائية اللي راح نمليها
+        final_buttons_list = []
 
-        for p in order["products"]:
-            if p in pricing.get(order_id, {}) and 'buy' in pricing[order_id].get(p, {}) and 'sell' in pricing[order_id].get(p, {}):
-                completed_products.append(p)
-                logger.info(f"[{chat_id}] Product '{p}' in order {order_id} is completed.")
+        # ✅ إضافة زر "إضافة منتج جديد" وزر "مسح منتج" (عام) في صف واحد بالأعلى
+        final_buttons_list.append([
+            InlineKeyboardButton("➕ إضافة منتج جديد", callback_data=f"add_product_to_order_{order_id}"),
+            InlineKeyboardButton("🗑️ مسح منتج", callback_data=f"delete_specific_product_{order_id}") # زر مسح منتج عام
+        ])
+
+        # إضافة أزرار المنتجات (المكتملة والتي تنتظر التسعير)
+        for p_name in order["products"]:
+            if p_name in pricing.get(order_id, {}) and 'buy' in pricing[order_id].get(p_name, {}) and 'sell' in pricing[order_id].get(p_name, {}):
+                final_buttons_list.append([InlineKeyboardButton(f"✅ {p_name}", callback_data=f"{order_id}|{p_name}")])
+                logger.info(f"[{chat_id}] Product '{p_name}' in order {order_id} is completed.")
             else:
-                pending_products.append(p)
-                logger.info(f"[{chat_id}] Product '{p}' in order {order_id} is pending. Pricing state for this product: {json.dumps(pricing.get(order_id, {}).get(p, {}), indent=2)}")
+                final_buttons_list.append([InlineKeyboardButton(p_name, callback_data=f"{order_id}|{p_name}")])
+                logger.info(f"[{chat_id}] Product '{p_name}' in order {order_id} is pending. Pricing state for this product: {json.dumps(pricing.get(order_id, {}).get(p_name, {}), indent=2)}")
 
-        # ✅ ارار اضافة ومسح"
-        buttons_list.append([InlineKeyboardButton("➕ إضافة منتج جديد", callback_data=f"add_product_to_order_{order_id}")])
-        delete_product_button = InlineKeyboardButton("🗑️ مسح منتج", callback_data=f"delete_specific_product_{order_id}")
-        buttons_list.append([delete_product_button]) # ✅ هنا تم تصحيح مكان الزر ليكون في نفس الصف أو ينضاف بشكل صحيح لقائمة الأزرار الكبيرة.
-                                                  
-        buttons_list = []
-        for p in completed_products:
-            buttons_list.append([InlineKeyboardButton(f"✅ {p}", callback_data=f"{order_id}|{p}")])
-        for p in pending_products:
-            buttons_list.append([InlineKeyboardButton(p, callback_data=f"{order_id}|{p}")])
-          
-
-        markup = InlineKeyboardMarkup(buttons_list)
+        markup = InlineKeyboardMarkup(final_buttons_list) # استخدام final_buttons_list هنا
 
         message_text = ""
         if confirmation_message:
