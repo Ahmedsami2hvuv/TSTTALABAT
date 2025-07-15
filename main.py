@@ -1650,19 +1650,6 @@ async def receive_customer_phone_for_deletion(update: Update, context: ContextTy
         context.user_data[user_id].pop("deleting_order", None)
         return ConversationHandler.END
 
-    if order_to_delete_id:
-        context.user_data[user_id]["order_id_to_delete"] = order_to_delete_id # نحفظ الـ ID للتأكيد
-        confirm_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ اي، امسحها", callback_data=f"confirm_delete_order_{order_to_delete_id}")],
-            [InlineKeyboardButton("❌ لا، بطلت", callback_data=f"cancel_delete_order")]
-        ])
-        await update.message.reply_text(order_details_text, reply_markup=confirm_keyboard, parse_mode="Markdown")
-        return ASK_FOR_DELETION_CONFIRMATION # ننتقل لحالة المحادثة لانتظار التأكيد
-    else:
-        await update.message.reply_text(order_details_text) # "ما لكييت طلبية..."
-        context.user_data[user_id].pop("deleting_order", None)
-        return ConversationHandler.END
-
 async def confirm_delete_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
