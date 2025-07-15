@@ -1142,7 +1142,11 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         logger.error(f"[{chat_id}] Error in show_final_options: {str(e)}", exc_info=True)
         await context.bot.send_message(
             chat_id=chat_id,
-            text="😏كسها باعلي ماكدرت ادزلك الفاتورة عاجبك تسوي طلبية جديدة اهلا وسهلا ."
+            text="😏كسها باعلي ماكدرت ادزلك الفاتورة عاجبك تسوي طلبية جديدة اهلا وسهلا .")
+
+
+
+            
 async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
