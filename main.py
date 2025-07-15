@@ -846,7 +846,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
                     
                     if order_id_to_process not in orders:
                         logger.error(f"[{chat_id}] Order ID '{order_id_to_process}' from callback data not found in global orders.")
-                        await context.bot.send_message(chat_id=chat_id, text="😐باعلي هيو الطلبية الي ددوس عدد محلاتها ماهيه ولا دكلي وينهيا . تريد سوي طلب جديد")
+                        await context.bot.send_message(chat_id=chat_id, text="باعلي هيو الطلبية الي ددوس عدد محلاتها ماهيه ولا دكلي وينهيا . تريد سوي طلب جديد")
                         if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
                             del context.user_data[user_id]["current_active_order_id"]
                         return ConversationHandler.END 
