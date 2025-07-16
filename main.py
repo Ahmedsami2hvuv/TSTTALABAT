@@ -234,7 +234,8 @@ def get_delivery_price(address):
     delivery_zones = load_delivery_zones()
     for zone, price in delivery_zones.items():
         if zone in address:
-            return price return 0 # إذا لم يتم العثور على العنوان في المناطق
+            return price
+    return 0  # إذا لم يتم العثور على العنوان في المناطق
 
 # دالة مساعدة لحفظ البيانات في الخلفية
 async def save_data_in_background(context: ContextTypes.DEFAULT_TYPE):
