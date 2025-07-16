@@ -224,7 +224,8 @@ async def delete_message_in_background(context: ContextTypes.DEFAULT_TYPE, chat_
 def load_delivery_zones():
     try:
         with open("data/delivery_zones.json", "r") as f:
-            zones = json.load(f) return zones
+            zones = json.load(f)
+            return zones
     except Exception as e:
         print(f"Error loading delivery zones: {e}")
         return {}
