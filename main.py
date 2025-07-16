@@ -220,6 +220,21 @@ async def delete_message_in_background(context: ContextTypes.DEFAULT_TYPE, chat_
     except Exception as e:
         logger.warning(f"Could not delete message {message_id} from chat {chat_id} in background: {e}.")
 
+# تحميل ملف المناطق واسعارها 
+def load_delivery_zones():
+    try:
+        with open("data/delivery_zones.json", "r") as f:
+            zones = json.load(f) return zones
+    except Exception as e:
+        print(f"Error loading delivery zones: {e}")
+        return {}
+        # استخراج سعر التوصيل بناءً على العنوان
+def get_delivery_price(address):
+    delivery_zones = load_delivery_zones()
+    for zone, price in delivery_zones.items():
+        if zone in address:
+            return price return 0 # إذا لم يتم العثور على العنوان في المناطق
+
 # دالة مساعدة لحفظ البيانات في الخلفية
 async def save_data_in_background(context: ContextTypes.DEFAULT_TYPE):
     schedule_save_global()
@@ -949,7 +964,6 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
 
     try:
         logger.info(f"[{chat_id}] Showing final options for order {order_id} to user {user_id}")
-
         if order_id not in orders:
             logger.warning(f"[{chat_id}] Attempted to show final options for non-existent order_id: {order_id}")
             await context.bot.send_message(chat_id=chat_id, text="😐كسهها الطلب مموجود تريد سوي طلب جديد .")
@@ -971,7 +985,9 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         current_places = order.get("places_count", 0)
         extra_cost_value = calculate_extra(current_places)
         delivery_fee = get_delivery_price(order.get('title', ''))
-        original_delivery_fee = delivery_fee # ✅ إضافة هذا السطر الجديد حسب اقتراح DeepSeek
+        original_delivery_fee = delivery_fee  # القيمة الأصلية لسعر التوصيل
+
+        # إجمالي الفاتورة
         final_total = total_sell + extra_cost_value + delivery_fee
 
         # تحديث الربح اليومي
@@ -993,7 +1009,6 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         for i, product_name in enumerate(order["products"]):
             if product_name in pricing.get(order_id, {}) and "sell" in pricing[order_id].get(product_name, {}):
                 sell_price = pricing[order_id][product_name]["sell"]
-
                 if i == 0:
                     customer_invoice_lines.append(f"– {product_name} بـ{format_float(sell_price)}")
                     customer_invoice_lines.append(f"• {format_float(sell_price)} 💵")
@@ -1001,35 +1016,32 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
                     prev_total_for_display = current_display_total_sum
                     customer_invoice_lines.append(f"– {product_name} بـ{format_float(sell_price)}")
                     customer_invoice_lines.append(f"• {format_float(prev_total_for_display)}+{format_float(sell_price)}= {format_float(prev_total_for_display + sell_price)} 💵")
-
                 current_display_total_sum += sell_price
             else:
                 customer_invoice_lines.append(f"– {product_name} (لم يتم تسعيره)")
 
-        # إضافة كلفة التجهيز
+        # إضافة رسوم التجهيز
         if extra_cost_value > 0:
             prev_total_for_display = current_display_total_sum
             customer_invoice_lines.append(f"– 📦 التجهيز: من {current_places} محلات بـ {format_float(extra_cost_value)}")
             customer_invoice_lines.append(f"• {format_float(prev_total_for_display)}+{format_float(extra_cost_value)}= {format_float(prev_total_for_display + extra_cost_value)} 💵")
             current_display_total_sum += extra_cost_value
 
-        # إضافة أجرة التوصيل
+        # إضافة أجرة التوصيل إلى الفاتورة
         display_delivery_fee_customer = original_delivery_fee
         if current_places in [1, 2]:
-            display_delivery_fee_customer = 0
+            display_delivery_fee_customer = original_delivery_fee  # لا نجعله 0 حتى لو عدد المحلات 1 أو 2
 
-        if display_delivery_fee_customer == 0 and original_delivery_fee != 0:
+        if display_delivery_fee_customer > 0:
             prev_total_for_display = current_display_total_sum
             customer_invoice_lines.append(f"– 🚚 التوصيل: بـ {format_float(display_delivery_fee_customer)}")
             customer_invoice_lines.append(f"• {format_float(prev_total_for_display)}+{format_float(display_delivery_fee_customer)}= {format_float(prev_total_for_display + display_delivery_fee_customer)} 💵")
             current_display_total_sum += display_delivery_fee_customer
-        elif original_delivery_fee > 0:
-            prev_total_for_display = current_display_total_sum
-            customer_invoice_lines.append(f"– 🚚 التوصيل: بـ {format_float(original_delivery_fee)}")
-            customer_invoice_lines.append(f"• {format_float(prev_total_for_display)}+{format_float(original_delivery_fee)}= {format_float(prev_total_for_display + original_delivery_fee)} 💵")
-            current_display_total_sum += original_delivery_fee
+        else:
+            customer_invoice_lines.append(f"– 🚚 التوصيل: بـ 0")
+            customer_invoice_lines.append(f"• {format_float(current_display_total_sum)}+0= {format_float(current_display_total_sum)} 💵")
 
-
+        # إضافة المجموع الكلي
         customer_invoice_lines.extend([
             "-----------------------------------",
             "✨ المجموع الكلي: ✨",
@@ -1050,7 +1062,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         except Exception as e:
             logger.error(f"[{chat_id}] Could not send customer invoice: {e}")
 
-        # فاتورة المجهز (نفس الكود السابق...)
+        # فاتورة المجهز
         supplier_invoice = [
             f"**فاتورة الشراء:🧾💸**",
             f"رقم الفاتورة🔢: {invoice}",
@@ -1058,14 +1070,12 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             f"رقم الزبون📞: `{phone_number}`",
             "\n*تفاصيل الشراء:🗒️💸*"
         ]
-
         for p_name in order["products"]:
             if p_name in pricing.get(order_id, {}) and "buy" in pricing[order_id][p_name]:
                 buy = pricing[order_id][p_name]["buy"]
                 supplier_invoice.append(f"  - {p_name}: {format_float(buy)}")
             else:
                 supplier_invoice.append(f"  - {p_name}: (ترا ماحددت بيش اشتريت)")
-
         supplier_invoice.append(f"\n*مجموع كلفة الشراء للطلبية:💸* {format_float(total_buy)}")
 
         try:
@@ -1077,7 +1087,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         except Exception as e:
             logger.error(f"[{chat_id}] Could not send supplier invoice: {e}")
 
-        # فاتورة الإدارة (نفس الكود السابق...)
+        # فاتورة الإدارة
         owner_invoice = [
             f"**فاتورة الإدارة:👨🏻‍💼**",
             f"رقم الفاتورة🔢: {invoice}",
@@ -1085,7 +1095,6 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             f"عنوان الزبون🏠: {order['title']}",
             "\n*تفاصيل الطلبية:🗒*"
         ]
-
         for p_name in order["products"]:
             if p_name in pricing.get(order_id, {}) and "buy" in pricing[order_id][p_name] and "sell" in pricing[order_id][p_name]:
                 buy = pricing[order_id][p_name]["buy"]
@@ -1094,7 +1103,6 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
                 owner_invoice.append(f"- {p_name}: شراء {format_float(buy)} | بيع {format_float(sell)} | ربح {format_float(profit)}")
             else:
                 owner_invoice.append(f"- {p_name}: (غير مسعر)")
-
         owner_invoice.extend([
             f"\n*إجمالي الشراء:💸* {format_float(total_buy)}",
             f"*إجمالي البيع:💵 * {format_float(total_sell)}",
@@ -1117,9 +1125,8 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         encoded_customer_text = quote(customer_final_text, safe='')
         keyboard = [
             [InlineKeyboardButton("1️⃣ تعدل سعر", callback_data=f"edit_prices_{order_id}")],
-            [InlineKeyboardButton("2️⃣ ترفع الطلب", url="https://d.ksebstor.site/client/96f743f604a4baf145939298")], # Fixed URL
+            [InlineKeyboardButton("2️⃣ ترفع الطلب", url="https://d.ksebstor.site/client/96f743f604a4baf145939298 ")],  # Fixed URL
         ]
-
         reply_markup = InlineKeyboardMarkup(keyboard)
         message_text = "صلوات كملت 😏!\nدختار من الخيارات ابو العريف :"
         if message_prefix:
