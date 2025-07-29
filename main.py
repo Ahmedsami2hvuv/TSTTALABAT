@@ -425,6 +425,10 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
         # ✅ ثم إضافة أزرار المنتجات اللي تنتظر التسعير
         final_buttons_list.extend(pending_products_buttons)
 
+        # ✅ إضافة زر إلغاء التعديل في الأسفل إذا كان المستخدم في وضع التعديل
+        if context.user_data.get(user_id, {}).get("editing_mode", False):
+            final_buttons_list.append([InlineKeyboardButton("❌ إلغاء التعديل", callback_data=f"cancel_edit_{order_id}")])
+
         markup = InlineKeyboardMarkup(final_buttons_list)
 
         message_text = ""
@@ -455,7 +459,7 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
             context.user_data[user_id]['messages_to_delete'].clear()
     except Exception as e:
         logger.error(f"[{chat_id}] Error in show_buttons for order {order_id}: {e}", exc_info=True)
-        await context.bot.send_message(chat_id=chat_id, text="ماكدرت اعرض الازرار تريد عدل الطلب .")
+        await context.bot.send_message(chat_id=
         
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
@@ -1168,6 +1172,9 @@ async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("😐ربة الطلب الي تريد تعدلة ماموجود ولا تسالين وين راح .")
             return ConversationHandler.END
 
+        # وضع علامة أن المستخدم في وضع التعديل
+        context.user_data.setdefault(user_id, {})["editing_mode"] = True
+
         if query.message:
             context.user_data.setdefault(user_id, {}).setdefault('messages_to_delete', []).append({
                 'chat_id': query.message.chat_id,
@@ -1183,17 +1190,7 @@ async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.warning(f"[{query.message.chat_id}] Could not clear buttons from edit prices message {query.message.message_id} directly: {e}. Proceeding.")
         
-        # إضافة زر الإلغاء هنا قبل عرض الأزرار
-        cancel_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ إلغاء التعديل", callback_data=f"cancel_edit_{order_id}")]
-        ])
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text="يمكنك الآن تعديل الأسعار أو الضغط على إلغاء التعديل للعودة للفاتورة",
-            reply_markup=cancel_keyboard
-        )
-        
-        await show_buttons(query.message.chat_id, context, user_id, order_id, confirmation_message="يمكنك الآن تعديل أسعار المنتجات أو إضافة/حذف منتجات بتعديل الرسالة الأصلية للطلبية.")
+        await show_buttons(query.message.chat_id, context, user_id, order_id, confirmation_message="يمكنك الآن تعديل أسعار المنتجات أو الضغط على إلغاء التعديل للعودة للفاتورة.")
         logger.info(f"[{query.message.chat_id}] Showing edit buttons for order {order_id}. Exiting conversation for user {user_id}.")
         return ConversationHandler.END
     except Exception as e:
@@ -1208,11 +1205,15 @@ async def cancel_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(query.from_user.id)
     order_id = query.data.replace("cancel_edit_", "")
     
-    # حذف رسالة الزر
+    # إزالة وضع التعديل
+    if user_id in context.user_data:
+        context.user_data[user_id].pop("editing_mode", None)
+    
+    # حذف رسالة الأزرار القديمة
     try:
         await query.message.delete()
     except Exception as e:
-        logger.warning(f"Could not delete cancel edit message: {e}")
+        logger.warning(f"Could not delete edit message: {e}")
     
     # العودة لعرض الفاتورة النهائية
     await show_final_options(query.message.chat_id, context, user_id, order_id, message_prefix="تم إلغاء التعديل والعودة للفاتورة الأصلية.")
