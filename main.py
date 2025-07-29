@@ -1216,7 +1216,7 @@ async def cancel_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.warning(f"Could not delete edit message: {e}")
     
     # العودة لعرض الفاتورة النهائية
-    await show_final_options(query.message.chat_id, context, user_id, order_id, message_prefix="ترا سطرتني عدل الغي عدل الغي لغينه.")
+    await show_final_options(query.message.chat_id, context, user_id, order_id, message_prefix="ترا سطرتني عدل الغي عدل الغي لغيتها.")
     return ConversationHandler.END
     
 
