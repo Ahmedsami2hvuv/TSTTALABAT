@@ -1183,6 +1183,16 @@ async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.warning(f"[{query.message.chat_id}] Could not clear buttons from edit prices message {query.message.message_id} directly: {e}. Proceeding.")
         
+        # إضافة زر الإلغاء هنا قبل عرض الأزرار
+        cancel_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ إلغاء التعديل", callback_data=f"cancel_edit_{order_id}")]
+        ])
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="يمكنك الآن تعديل الأسعار أو الضغط على إلغاء التعديل للعودة للفاتورة",
+            reply_markup=cancel_keyboard
+        )
+        
         await show_buttons(query.message.chat_id, context, user_id, order_id, confirmation_message="يمكنك الآن تعديل أسعار المنتجات أو إضافة/حذف منتجات بتعديل الرسالة الأصلية للطلبية.")
         logger.info(f"[{query.message.chat_id}] Showing edit buttons for order {order_id}. Exiting conversation for user {user_id}.")
         return ConversationHandler.END
@@ -1190,6 +1200,24 @@ async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"[{update.effective_chat.id}] Error in edit_prices: {e}", exc_info=True)
         await update.callback_query.message.reply_text("😏زربة صار خطا بالتعديل دسوي طلبية جديده بدون حجي زايد.")
         return ConversationHandler.END
+
+async def cancel_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = str(query.from_user.id)
+    order_id = query.data.replace("cancel_edit_", "")
+    
+    # حذف رسالة الزر
+    try:
+        await query.message.delete()
+    except Exception as e:
+        logger.warning(f"Could not delete cancel edit message: {e}")
+    
+    # العودة لعرض الفاتورة النهائية
+    await show_final_options(query.message.chat_id, context, user_id, order_id, message_prefix="تم إلغاء التعديل والعودة للفاتورة الأصلية.")
+    return ConversationHandler.END
+    
 
 async def start_new_order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.from_user.id)
@@ -1444,6 +1472,7 @@ def main():
     app.add_handler(CommandHandler("myreport", show_supplier_report))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تقاريري|تقريري)$"), show_supplier_report))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(التقارير|تقرير|تقارير)$"), show_report))
+    app.add_handler(CallbackQueryHandler(cancel_edit, pattern=r"^cancel_edit_.*$"))
 
     app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
     app.add_handler(CallbackQueryHandler(edit_prices, pattern=r"^edit_prices_"))
