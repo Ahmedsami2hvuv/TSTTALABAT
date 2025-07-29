@@ -404,7 +404,7 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
 
         # ✅ إضافة زر "إضافة منتج جديد" وزر "مسح منتج" (عام) في صف واحد بالأعلى
         final_buttons_list.append([
-            InlineKeyboardButton("➕ إضافة منتج جديد", callback_data=f"add_product_to_order_{order_id}"),
+            InlineKeyboardButton("➕ إضافة منتج", callback_data=f"add_product_to_order_{order_id}"),
             InlineKeyboardButton("🗑️ مسح منتج", callback_data=f"delete_specific_product_{order_id}")
         ])
 
@@ -1053,7 +1053,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             "✨ المجموع الكلي: ✨",
             f"بدون التوصيل = {format_float(total_sell + extra_cost_value)} 💵",
             f"مــــع التوصيل = {format_float(final_total)} 💵",
-            "شكراً لاختياركم خدمة أبو الأكبر للتوصيل! ❤️"
+            "شكراً لاختياركم أبو الأكبر للتوصيل! ❤️"
         ])
 
         customer_final_text = "\n".join(customer_invoice_lines)
@@ -1130,8 +1130,8 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         # أزرار التحكم النهائية
         encoded_customer_text = quote(customer_final_text, safe='')
         keyboard = [
-            [InlineKeyboardButton("1️⃣ تعدل سعر", callback_data=f"edit_prices_{order_id}")],
-            [InlineKeyboardButton("2️⃣ ترفع الطلب", url="https://d.ksebstor.site/client/96f743f604a4baf145939298 ")],  # Fixed URL
+            [InlineKeyboardButton("1️⃣ تعديل الاسعار", callback_data=f"edit_prices_{order_id}")],
+            [InlineKeyboardButton("2️⃣ رفع الطلبية", url="https://d.ksebstor.site/client/96f743f604a4baf145939298 ")],  # Fixed URL
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         message_text = "صلوات كملت 😏!\nدختار من الخيارات ابو العريف :"
@@ -1169,7 +1169,7 @@ async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if order_id not in orders:
             logger.warning(f"[{query.message.chat_id}] Edit prices: Order {order_id} not found.")
-            await query.message.reply_text("😐ربة الطلب الي تريد تعدلة ماموجود ولا تسالين وين راح .")
+            await query.message.reply_text("😐زربه الطلب الي تريد تعدلة ماموجود ولا تسالين وين راح .")
             return ConversationHandler.END
 
         # وضع علامة أن المستخدم في وضع التعديل
