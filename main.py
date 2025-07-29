@@ -459,7 +459,7 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
             context.user_data[user_id]['messages_to_delete'].clear()
     except Exception as e:
         logger.error(f"[{chat_id}] Error in show_buttons for order {order_id}: {e}", exc_info=True)
-        await context.bot.send_message(chat_id=
+        await context.bot.send_message(chat_id=chat_id, text="ماكدرت اعرض الازرار تريد عدل الطلب .")
         
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
