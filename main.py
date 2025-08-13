@@ -37,7 +37,7 @@ COUNTER_FILE = os.path.join(DATA_DIR, "invoice_counter.txt")
 LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
 
 # ✅ قراءة التوكن من المتغيرات البيئية (يفترض أنك ضايفه بـ Railway)
-TOKEN = os.getenv("TOKEN")
+TOKEN = "8343768290:AAFp07HNyZH6XoAKL2wber79r551u_5izmw"
 
 # ✅ متغيرات التخزين المؤقت في الذاكرة
 orders = {}
