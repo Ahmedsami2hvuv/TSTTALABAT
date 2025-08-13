@@ -27,7 +27,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ✅ مسارات التخزين داخل Railway أو Replit أو غيره
-DATA_DIR = "/mnt/data/"
+DATA_DIR = "data/"
+
 
 ORDERS_FILE = os.path.join(DATA_DIR, "orders.json")
 PRICING_FILE = os.path.join(DATA_DIR, "pricing.json")
