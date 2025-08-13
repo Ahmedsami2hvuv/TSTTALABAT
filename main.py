@@ -27,8 +27,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ✅ مسارات التخزين داخل Railway أو Replit أو غيره
-DATA_DIR = "data/"
-
+DATA_DIR = "/mnt/data/"
 
 ORDERS_FILE = os.path.join(DATA_DIR, "orders.json")
 PRICING_FILE = os.path.join(DATA_DIR, "pricing.json")
@@ -38,7 +37,7 @@ COUNTER_FILE = os.path.join(DATA_DIR, "invoice_counter.txt")
 LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
 
 # ✅ قراءة التوكن من المتغيرات البيئية (يفترض أنك ضايفه بـ Railway)
-TOKEN = "8343768290:AAFp07HNyZH6XoAKL2wber79r551u_5izmw"
+TOKEN = os.getenv("TOKEN")
 
 # ✅ متغيرات التخزين المؤقت في الذاكرة
 orders = {}
@@ -174,10 +173,9 @@ load_data()
 ASK_BUY, ASK_PLACES_COUNT, ASK_PRODUCT_NAME, ASK_PRODUCT_TO_DELETE, ASK_CUSTOMER_PHONE_NUMBER_FOR_DELETION, ASK_FOR_DELETION_CONFIRMATION = range(6)
 
 # جلب التوكن ومعرف المالك من متغيرات البيئة
-TOKEN = "8343768290:AAFp07HNyZH6XoAKL2wber79r551u_5izmw"
-OWNER_ID = 7032076289
-OWNER_PHONE_NUMBER = "+9647733921468"
-
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+OWNER_ID = int(os.getenv("OWNER_TELEGRAM_ID")) 
+OWNER_PHONE_NUMBER = os.getenv("OWNER_TELEGRAM_PHONE_NUMBER", "+9647733921468")
 
 if TOKEN is None:
     raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set.")
