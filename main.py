@@ -514,8 +514,11 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message_prompt = f"سعر *'{product}'* حالياً هو شراء: {format_float(current_buy)}، بيع: {format_float(current_sell)}.\n" \
                             f"باعلي سعر الشراء الجديد بالسطر الأول، وسعر البيع بالسطر الثاني؟ (أو دز نفس الأسعار إذا ماكو تغيير)"
         else:
-            message_prompt = f"تمام، بيش اشتريت *'{product}'*؟ (بالسطر الأول)\n" \
-                             f"وبييش راح تبيعه؟ (بالسطر الثاني)"
+            message_prompt = (
+                f"تمام، بيش اشتريت *'{product}'*؟ (بالسطر الأول)\n"
+                f"وبييش راح تبيعه؟ (بالسطر الثاني)\n\n" # سطر فارغ للفصل
+                f"💡 **إذا كان سعر الشراء هو نفسه سعر البيع،** اكتب الرقم مرة واحدة فقط."
+            )
 
         msg = await query.message.reply_text(message_prompt, parse_mode="Markdown")
         context.user_data[user_id]['messages_to_delete'].append({
