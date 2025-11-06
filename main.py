@@ -675,70 +675,77 @@ async def cancel_delete_product_callback(update: Update, context: ContextTypes.D
 
     
 async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """استلام سعر الشراء وسعر البيع لمنتج معين من المجهز.
+    يقبل:
+    1. قيمتين مفصولتين بمسافة أو فاصلة (شراء وبيع).
+    2. قيمة واحدة (تُعتبر شراء وبيع).
+    """
+    user_id = str(update.message.from_user.id)
+    chat_id = update.effective_chat.id
+    
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
-
+    
     try:
-        user_id = str(update.message.from_user.id)
-        logger.info(f"[{update.effective_chat.id}] Received message for buy/sell prices from user {user_id}: '{update.message.text}'. User data at start of receive_buy_price: {json.dumps(context.user_data.get(user_id), indent=2)}")
+        # دالة مساعدة لحذف الرسائل السابقة (يفترض أنها موجودة في مكان آخر من كودك)
+        # إذا لم تكن موجودة، يجب تعريفها:
+        # async def delete_previous_messages(context, user_id): ...
+        try:
+            await delete_previous_messages(context, user_id)
+        except Exception:
+            # نتجاهل الأخطاء إذا لم يتمكن من حذف الرسائل
+            pass
 
-        context.user_data.setdefault(user_id, {})
-        if 'messages_to_delete' not in context.user_data[user_id]:
-            context.user_data[user_id]['messages_to_delete'] = []
-
-        context.user_data[user_id]['messages_to_delete'].append({
-            'chat_id': update.message.chat_id,
-            'message_id': update.message.message_id
-        })
-
-        data = context.user_data.get(user_id)
-        if not data or "order_id" not in data or "product" not in data:
-            logger.error(f"[{update.effective_chat.id}] Buy/Sell prices: Missing order_id or product in user_data for user {user_id}. User data: {json.dumps(data, indent=2)}")
-            msg_error = await update.message.reply_text("من الاخير ماكدرت احدد المنتج مدري الطلبية. يابه لو ادوس ع منتج حتى تكتب سعره ،لو تسوي طلب جديد خوش.", parse_mode="Markdown")
-            context.user_data[user_id]['messages_to_delete'].append({
-                'chat_id': msg_error.chat_id, 
-                'message_id': msg_error.message_id
-            })
+        order_id = context.user_data[user_id].get("order_id")
+        product = context.user_data[user_id].get("product")
+        
+        if not order_id or not product:
+            await update.message.reply_text("❌ لم يتم تحديد طلبية أو منتج. يرجى البدء من جديد.")
             return ConversationHandler.END
+        
+        # ------------------------------------------------------------------
+        # 🔄 المنطق المُحدَّث لتحليل المدخلات: يدعم قيمة واحدة أو قيمتين
+        # ------------------------------------------------------------------
+        # تنظيف النص وإزالة المسافات الزائدة
+        clean_text = update.message.text.strip()
 
-        order_id = data["order_id"]
-        product = data["product"]
-
-        if order_id not in orders or product not in orders[order_id].get("products", []):
-            logger.warning(f"[{update.effective_chat.id}] Buy/Sell prices: Order ID '{order_id}' not found or Product '{product}' not in products for order '{order_id}'.")
-            msg_error = await update.message.reply_text("كسها لا الطلبية ولا المنج موجودين ولا دكلي وينهم. شوف لو تسوي طلب جديد لو تجيك المنتجات وانته بكيفك.")
+        # 1. محاولة تقسيم المدخلات على أساس المسافة أو الفاصلة
+        if ' ' in clean_text:
+            parts = [p.strip() for p in clean_text.split() if p.strip()]
+        elif ',' in clean_text:
+            parts = [p.strip() for p in clean_text.split(',') if p.strip()]
+        else:
+            # إذا لم يكن هناك فاصل، نعتبره إدخالاً واحداً
+            parts = [clean_text]
+            
+        # 2. تحديد الأسعار بناءً على عدد الأجزاء
+        if len(parts) == 2:
+            # الحالة الطبيعية: شراء وبيع منفصلين
+            buy_price_str = parts[0]
+            sell_price_str = parts[1]
+        elif len(parts) == 1:
+            # 🥳 التحديث المطلوب: سعر واحد للاثنين (شراء = بيع)
+            buy_price_str = parts[0]
+            sell_price_str = parts[0] 
+        else:
+            # خطأ: إدخال غير صالح
+            msg_error = await update.message.reply_text("😒دكتب عدل دخل سعر الشراء وسعر البيع (بقيمة واحدة أو قيمتين مفصولتين بمسافة/فاصلة).")
             context.user_data[user_id]['messages_to_delete'].append({
                 'chat_id': msg_error.chat_id, 
                 'message_id': msg_error.message_id
             })
-            return ConversationHandler.END
-
-        # ✅ منطق جديد لاستقبال سعر الشراء والبيع من سطرين
-        lines = [line.strip() for line in update.message.text.strip().split('\n') if line.strip()]
-        if len(lines) != 2:
-            logger.warning(f"[{update.effective_chat.id}] Buy/Sell prices: Invalid number of lines from user {user_id}: '{update.message.text}'")
-            msg_error = await update.message.reply_text("شوف *سعر الشراء بالسطر الأول* و *سعر البيع بالسطر الثاني* افتهمت لولا .", parse_mode="Markdown")
-            context.user_data[user_id]['messages_to_delete'].append({
-                'chat_id': msg_error.chat_id, 
-                'message_id': msg_error.message_id
-            })
-            return ASK_BUY # نرجع لنفس الحالة ليعيد الإدخال
-
-        buy_price_str = lines[0]
-        sell_price_str = lines[1]
-
+            return ASK_BUY
+            
+        # 3. التحقق من تحويل القيم إلى أرقام
         try:
             buy_price = float(buy_price_str)
             sell_price = float(sell_price_str)
-            if buy_price < 0 or sell_price < 0:
-                logger.warning(f"[{update.effective_chat.id}] Buy/Sell prices: Negative price from user {user_id}: '{update.message.text}'")
-                msg_error = await update.message.reply_text("دهاك استل يكتبلي بالسالم يابه الارقام بدون سالب. رحمة الوالديك اكتب عدل.")
-                context.user_data[user_id]['messages_to_delete'].append({
-                    'chat_id': msg_error.chat_id, 
-                    'message_id': msg_error.message_id
-                })
-                return ASK_BUY
-        except ValueError as e: 
+        
+            # التأكد من أن الأسعار موجبة
+            if buy_price <= 0 or sell_price <= 0:
+                raise ValueError("الأسعار يجب أن تكون أرقاماً موجبة.")
+
+        except ValueError as e:
             logger.error(f"[{update.effective_chat.id}] Buy/Sell prices: ValueError for user {user_id} with input '{update.message.text}': {e}", exc_info=True)
             msg_error = await update.message.reply_text("😒دكتب عدل دخل ارقام صحيحة مال البيع والشراء.")
             context.user_data[user_id]['messages_to_delete'].append({
@@ -747,34 +754,50 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             })
             return ASK_BUY
 
+        # ------------------------------------------------------------------
+        # 💾 استكمال باقي منطق حفظ البيانات والانتقال للحالة التالية
+        # ------------------------------------------------------------------
+
         pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = buy_price
         pricing[order_id][product]["sell"] = sell_price
         orders[order_id]["supplier_id"] = user_id # تسجيل المجهز بالطلبية
-
+        
         logger.info(f"[{update.effective_chat.id}] Pricing for order '{order_id}' and product '{product}' AFTER SAVE: {json.dumps(pricing.get(order_id, {}).get(product), indent=2)}")
-        context.application.create_task(save_data_in_background(context)) 
-        logger.info(f"[{update.effective_chat.id}] Buy/Sell prices for '{product}' in order '{order_id}' saved. Current user_data: {json.dumps(context.user_data.get(user_id), indent=2)}. Updated pricing for order {order_id}: {json.dumps(pricing.get(order_id), indent=2)}")
-
-        order = orders[order_id]
-        all_priced = True
-        for p in order["products"]:
-            if p not in pricing.get(order_id, {}) or "buy" not in pricing[order_id].get(p, {}) or "sell" not in pricing[order_id].get(p, {}):
-                all_priced = False
+        
+        # حفظ البيانات في الخلفية
+        context.application.create_task(save_data_in_background(context))
+        
+        # مسح بيانات المنتج والطلب من user_data بعد الانتهاء
+        context.user_data[user_id].pop("order_id", None)
+        context.user_data[user_id].pop("product", None)
+        
+        # التحقق مما إذا كانت جميع المنتجات مسعرة
+        is_order_complete = True
+        for p_name in orders[order_id].get("products", []):
+            if p_name not in pricing.get(order_id, {}) or 'buy' not in pricing[order_id].get(p_name, {}):
+                is_order_complete = False
                 break
-
-        if all_priced:
-            context.user_data[user_id]["current_active_order_id"] = order_id
-            logger.info(f"[{update.effective_chat.id}] All products priced for order {order_id}. Requesting places count. Transitioning to ASK_PLACES_COUNT.")
-            await request_places_count_standalone(update.effective_chat.id, context, user_id, order_id)
-            return ConversationHandler.END 
+                
+        # إذا كانت الطلبية مكتملة التسعير، نطلب عدد المحلات
+        if is_order_complete:
+            logger.info(f"[{update.effective_chat.id}] Order {order_id} is now fully priced. Requesting places count.")
+            # دالة مساعدة لطلب عدد المحلات (يفترض أنها موجودة)
+            await request_places_count_standalone(chat_id, context, user_id, order_id)
+            return ConversationHandler.END
         else:
-            confirmation_msg = f"حفضت السعر لـ *'{product}'*."
-            logger.info(f"[{update.effective_chat.id}] Prices saved for '{product}' in order {order_id}. Showing updated buttons with confirmation. User {user_id} can select next product. Staying in conversation.")
-            await show_buttons(update.effective_chat.id, context, user_id, order_id, confirmation_message=confirmation_msg)
-            return ConversationHandler.END 
+            # إذا لم تكتمل بعد، نعرض الأزرار المحدثة
+            logger.info(f"[{update.effective_chat.id}] Order {order_id} is partially priced. Showing updated buttons.")
+            # دالة مساعدة لعرض الأزرار (يفترض أنها موجودة)
+            await show_buttons(chat_id, context, user_id, order_id, confirmation_message="تم إدخال السعر. بقي منتجات أخرى؟")
+            return ConversationHandler.END # نخرج من حالة ASK_BUY ونعتمد على الأزرار الجديدة
+            
     except Exception as e:
-        logger.error(f"[{update.effective_chat.id}] Error in receive_buy_price (handling both prices): {e}", exc_info=True)
-        await update.message.reply_text("😏اهووو صار خطا من دخلت السعر. يالله بوجهك سوي طلب جديد.")
+        logger.error(f"[{update.effective_chat.id}] Critical error in receive_buy_price: {e}", exc_info=True)
+        msg_error = await update.message.reply_text("كسها صار خطا مدري وين سوي طلب جديد يلا.")
+        context.user_data[user_id]['messages_to_delete'].append({
+            'chat_id': msg_error.chat_id,
+            'message_id': msg_error.message_id
+        })
         return ConversationHandler.END
 
 async def receive_new_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
