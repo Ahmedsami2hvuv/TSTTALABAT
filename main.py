@@ -687,7 +687,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pricing = context.application.bot_data['pricing']
     
     try:
-        # حذف الرسالة السابقة التي تطلب السعر إن وجدت (نتركها كما هي)
+        # 1. محاولة حذف الرسائل السابقة التي تطلب السعر
         try:
             await delete_previous_messages(context, user_id)
         except Exception:
@@ -699,6 +699,12 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not order_id or not product:
             await update.message.reply_text("❌ لم يتم تحديد طلبية أو منتج. يرجى البدء من جديد.")
             return ConversationHandler.END
+
+        # ✅ الإضافة الجديدة: حفظ رسالة المستخدم الحالية للحذف (هذا هو الحل!)
+        context.user_data.setdefault(user_id, {}).setdefault('messages_to_delete', []).append({
+            'chat_id': update.message.chat_id, 
+            'message_id': update.message.message_id
+        })
         
         # ------------------------------------------------------------------
         # 🔄 المنطق المُحدَّث لتحليل المدخلات: يدعم سطرين أو سطر واحد
@@ -714,25 +720,18 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # الحالة الطبيعية: سطرين منفصلين (شراء ثم بيع)
             buy_price_str = lines[0]
             sell_price_str = lines[1]
-            logger.info(f"[{chat_id}] Prices entered on two lines: Buy={buy_price_str}, Sell={sell_price_str}")
         elif len(lines) == 1:
-            # 🥳 التعديل المطلوب: سطر واحد (شراء = بيع)
-            # الآن يجب أن نتحقق ما إذا كان السطر الواحد يحتوي على قيمتين مفصولتين بمسافة
+            # التعديل المطلوب: سطر واحد (شراء = بيع) أو (شراء وبيع مفصولين بمسافة)
             parts = [p.strip() for p in lines[0].split() if p.strip()]
             
             if len(parts) == 2:
-                 # إذا أدخل سطر واحد لكن فيه مسافة (مثل: 5000 6000)
                 buy_price_str = parts[0]
                 sell_price_str = parts[1]
-                logger.info(f"[{chat_id}] Prices entered on one line (space separated): Buy={buy_price_str}, Sell={sell_price_str}")
             elif len(parts) == 1:
-                # إذا أدخل قيمة واحدة فقط (مثل: 5000)
                 buy_price_str = parts[0]
-                sell_price_str = parts[0] # تعيين سعر البيع مساوياً لسعر الشراء
-                logger.info(f"[{chat_id}] Price entered as single value: Buy/Sell={buy_price_str}")
+                sell_price_str = parts[0] 
             else:
-                 # خطأ: سطر واحد يحتوي على أكثر من قيمتين
-                buy_price_str = None # لضمان عرض رسالة الخطأ
+                 buy_price_str = None 
         
         # التحقق من أننا حصلنا على القيمتين
         if not buy_price_str or not sell_price_str:
@@ -748,7 +747,6 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             buy_price = float(buy_price_str)
             sell_price = float(sell_price_str)
         
-            # التأكد من أن الأسعار موجبة
             if buy_price <= 0 or sell_price <= 0:
                 raise ValueError("الأسعار يجب أن تكون أرقاماً موجبة.")
 
@@ -767,31 +765,26 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = buy_price
         pricing[order_id][product]["sell"] = sell_price
-        orders[order_id]["supplier_id"] = user_id # تسجيل المجهز بالطلبية
+        orders[order_id]["supplier_id"] = user_id
         
         logger.info(f"[{update.effective_chat.id}] Pricing for order '{order_id}' and product '{product}' AFTER SAVE: {json.dumps(pricing.get(order_id, {}).get(product), indent=2)}")
         
-        # حفظ البيانات في الخلفية
         context.application.create_task(save_data_in_background(context))
         
-        # مسح بيانات المنتج والطلب من user_data بعد الانتهاء
         context.user_data[user_id].pop("order_id", None)
         context.user_data[user_id].pop("product", None)
         
-        # التحقق مما إذا كانت جميع المنتجات مسعرة
         is_order_complete = True
         for p_name in orders[order_id].get("products", []):
             if p_name not in pricing.get(order_id, {}) or 'buy' not in pricing[order_id].get(p_name, {}):
                 is_order_complete = False
                 break
                 
-        # إذا كانت الطلبية مكتملة التسعير، نطلب عدد المحلات
         if is_order_complete:
             logger.info(f"[{update.effective_chat.id}] Order {order_id} is now fully priced. Requesting places count.")
             await request_places_count_standalone(chat_id, context, user_id, order_id)
             return ConversationHandler.END
         else:
-            # إذا لم تكتمل بعد، نعرض الأزرار المحدثة
             logger.info(f"[{update.effective_chat.id}] Order {order_id} is partially priced. Showing updated buttons.")
             await show_buttons(chat_id, context, user_id, order_id, confirmation_message="تم إدخال السعر. بقي منتجات أخرى؟")
             return ConversationHandler.END
