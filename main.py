@@ -677,8 +677,8 @@ async def cancel_delete_product_callback(update: Update, context: ContextTypes.D
 async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """استلام سعر الشراء وسعر البيع لمنتج معين من المجهز.
     يقبل:
-    1. قيمتين مفصولتين بمسافة أو فاصلة (شراء وبيع).
-    2. قيمة واحدة (تُعتبر شراء وبيع).
+    1. سطرين منفصلين (سطر للشراء، سطر للبيع).
+    2. سطر واحد (يُعتبر شراء وبيع).
     """
     user_id = str(update.message.from_user.id)
     chat_id = update.effective_chat.id
@@ -687,13 +687,10 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pricing = context.application.bot_data['pricing']
     
     try:
-        # دالة مساعدة لحذف الرسائل السابقة (يفترض أنها موجودة في مكان آخر من كودك)
-        # إذا لم تكن موجودة، يجب تعريفها:
-        # async def delete_previous_messages(context, user_id): ...
+        # حذف الرسالة السابقة التي تطلب السعر إن وجدت (نتركها كما هي)
         try:
             await delete_previous_messages(context, user_id)
         except Exception:
-            # نتجاهل الأخطاء إذا لم يتمكن من حذف الرسائل
             pass
 
         order_id = context.user_data[user_id].get("order_id")
@@ -704,32 +701,42 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return ConversationHandler.END
         
         # ------------------------------------------------------------------
-        # 🔄 المنطق المُحدَّث لتحليل المدخلات: يدعم قيمة واحدة أو قيمتين
+        # 🔄 المنطق المُحدَّث لتحليل المدخلات: يدعم سطرين أو سطر واحد
         # ------------------------------------------------------------------
-        # تنظيف النص وإزالة المسافات الزائدة
-        clean_text = update.message.text.strip()
+        # تقسيم النص المدخل على أساس فواصل الأسطر ثم تصفية الأسطر الفارغة
+        lines = [line.strip() for line in update.message.text.split('\n') if line.strip()]
+        
+        # محاولة تحليل القيم
+        buy_price_str = None
+        sell_price_str = None
 
-        # 1. محاولة تقسيم المدخلات على أساس المسافة أو الفاصلة
-        if ' ' in clean_text:
-            parts = [p.strip() for p in clean_text.split() if p.strip()]
-        elif ',' in clean_text:
-            parts = [p.strip() for p in clean_text.split(',') if p.strip()]
-        else:
-            # إذا لم يكن هناك فاصل، نعتبره إدخالاً واحداً
-            parts = [clean_text]
+        if len(lines) == 2:
+            # الحالة الطبيعية: سطرين منفصلين (شراء ثم بيع)
+            buy_price_str = lines[0]
+            sell_price_str = lines[1]
+            logger.info(f"[{chat_id}] Prices entered on two lines: Buy={buy_price_str}, Sell={sell_price_str}")
+        elif len(lines) == 1:
+            # 🥳 التعديل المطلوب: سطر واحد (شراء = بيع)
+            # الآن يجب أن نتحقق ما إذا كان السطر الواحد يحتوي على قيمتين مفصولتين بمسافة
+            parts = [p.strip() for p in lines[0].split() if p.strip()]
             
-        # 2. تحديد الأسعار بناءً على عدد الأجزاء
-        if len(parts) == 2:
-            # الحالة الطبيعية: شراء وبيع منفصلين
-            buy_price_str = parts[0]
-            sell_price_str = parts[1]
-        elif len(parts) == 1:
-            # 🥳 التحديث المطلوب: سعر واحد للاثنين (شراء = بيع)
-            buy_price_str = parts[0]
-            sell_price_str = parts[0] 
-        else:
-            # خطأ: إدخال غير صالح
-            msg_error = await update.message.reply_text("😒دكتب عدل دخل سعر الشراء وسعر البيع (بقيمة واحدة أو قيمتين مفصولتين بمسافة/فاصلة).")
+            if len(parts) == 2:
+                 # إذا أدخل سطر واحد لكن فيه مسافة (مثل: 5000 6000)
+                buy_price_str = parts[0]
+                sell_price_str = parts[1]
+                logger.info(f"[{chat_id}] Prices entered on one line (space separated): Buy={buy_price_str}, Sell={sell_price_str}")
+            elif len(parts) == 1:
+                # إذا أدخل قيمة واحدة فقط (مثل: 5000)
+                buy_price_str = parts[0]
+                sell_price_str = parts[0] # تعيين سعر البيع مساوياً لسعر الشراء
+                logger.info(f"[{chat_id}] Price entered as single value: Buy/Sell={buy_price_str}")
+            else:
+                 # خطأ: سطر واحد يحتوي على أكثر من قيمتين
+                buy_price_str = None # لضمان عرض رسالة الخطأ
+        
+        # التحقق من أننا حصلنا على القيمتين
+        if not buy_price_str or not sell_price_str:
+            msg_error = await update.message.reply_text("😒دكتب عدل دخل سعر الشراء بالسطر الأول وسعر البيع بالسطر الثاني.\nأو سعر واحد فقط في سطر واحد إذا كانا متساويين.")
             context.user_data[user_id]['messages_to_delete'].append({
                 'chat_id': msg_error.chat_id, 
                 'message_id': msg_error.message_id
@@ -755,7 +762,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return ASK_BUY
 
         # ------------------------------------------------------------------
-        # 💾 استكمال باقي منطق حفظ البيانات والانتقال للحالة التالية
+        # 💾 منطق حفظ البيانات والانتقال للحالة التالية
         # ------------------------------------------------------------------
 
         pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = buy_price
@@ -781,15 +788,13 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # إذا كانت الطلبية مكتملة التسعير، نطلب عدد المحلات
         if is_order_complete:
             logger.info(f"[{update.effective_chat.id}] Order {order_id} is now fully priced. Requesting places count.")
-            # دالة مساعدة لطلب عدد المحلات (يفترض أنها موجودة)
             await request_places_count_standalone(chat_id, context, user_id, order_id)
             return ConversationHandler.END
         else:
             # إذا لم تكتمل بعد، نعرض الأزرار المحدثة
             logger.info(f"[{update.effective_chat.id}] Order {order_id} is partially priced. Showing updated buttons.")
-            # دالة مساعدة لعرض الأزرار (يفترض أنها موجودة)
             await show_buttons(chat_id, context, user_id, order_id, confirmation_message="تم إدخال السعر. بقي منتجات أخرى؟")
-            return ConversationHandler.END # نخرج من حالة ASK_BUY ونعتمد على الأزرار الجديدة
+            return ConversationHandler.END
             
     except Exception as e:
         logger.error(f"[{update.effective_chat.id}] Critical error in receive_buy_price: {e}", exc_info=True)
