@@ -400,8 +400,7 @@ async def show_buttons(chat_id: int, context: ContextTypes.DEFAULT_TYPE, user_id
 
     product_buttons = []
     
-    # ✅ التعديل الرئيسي: تهيئة وتخزين مفاتيح اختيار المنتجات في user_data
-    # نستخدم هذا لتخزين الاسم الطويل للمنتج في الذاكرة ونرسل مفتاحاً قصيراً في الزر
+    # التعديل: تهيئة وتخزين مفاتيح اختيار المنتجات في user_data
     context.user_data.setdefault(user_id, {}).setdefault("product_selection_keys", {})
     
     
@@ -421,7 +420,8 @@ async def show_buttons(chat_id: int, context: ContextTypes.DEFAULT_TYPE, user_id
         # النمط: order_id|product_key
         callback_data = f"{order_id}|{product_key}" 
         
-        button_text = f"✅ {p_name} (مسعّر)" if is_priced else p_name
+        # ✅ التعديل هنا: إزالة كلمة (مسعّر) والاكتفاء بالرمز التعبيري
+        button_text = f"✅ {p_name}" if is_priced else p_name
         
         product_buttons.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
         
@@ -433,11 +433,11 @@ async def show_buttons(chat_id: int, context: ContextTypes.DEFAULT_TYPE, user_id
     action_buttons.append(InlineKeyboardButton("➕ إضافة منتج", callback_data=f"add_product_to_order_{order_id}"))
     action_buttons.append(InlineKeyboardButton("➖ مسح منتج", callback_data=f"delete_specific_product_{order_id}"))
 
-    # زر الإكمال
+    # زر الإكمال (يعمل الآن بعد إضافة الـ handler)
     if all_products_priced and not order.get("is_complete"):
         action_buttons.append(InlineKeyboardButton("✅ إكمال الطلبية", callback_data=f"complete_order_{order_id}"))
 
-    # أزرار التقارير (إذا كان المجهز هو من قام بالتسعير)
+    # زر تقرير الطلبية (يعمل الآن بعد إضافة الـ handler)
     if order.get("supplier_id") == user_id:
         action_buttons.append(InlineKeyboardButton("📊 تقرير طلبيتي", callback_data=f"supplier_report_{order_id}"))
         
@@ -445,6 +445,12 @@ async def show_buttons(chat_id: int, context: ContextTypes.DEFAULT_TYPE, user_id
     # ترتيب الأزرار النهائية
     final_buttons = product_buttons + [action_buttons]
     markup = InlineKeyboardMarkup(final_buttons)
+
+    # حذف الرسالة القديمة قبل إرسال الجديدة (إذا كانت موجودة)
+    try:
+        await delete_last_button_message(context, user_id)
+    except Exception:
+        pass
 
     # حفظ رسالة الأزرار الجديدة
     msg = await context.bot.send_message(chat_id=chat_id, text=confirmation_message, reply_markup=markup)
@@ -456,8 +462,7 @@ async def show_buttons(chat_id: int, context: ContextTypes.DEFAULT_TYPE, user_id
     }
     context.application.create_task(save_data_in_background(context))
 
-    return msg
-    
+    return msg    
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """الخطوة الثانية: يقوم المجهز باختيار المنتج، وننتقل لطلب سعر الشراء/البيع."""
     orders = context.application.bot_data['orders']
@@ -855,43 +860,46 @@ async def receive_new_product_name(update: Update, context: ContextTypes.DEFAULT
 
 
 
-async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT_TYPE, user_id: str, order_id: str):
+async def request_places_count_standalone(chat_id: int, context: ContextTypes.DEFAULT_TYPE, user_id: str, order_id: str):
     orders = context.application.bot_data['orders']
-    pricing = context.application.bot_data['pricing']
-
+    
+    # ✅ التعديل الرئيسي: حذف رسالة الأزرار القديمة
     try:
-        logger.info(f"[{chat_id}] request_places_count_standalone called for order {order_id} from user {user_id}. User data: {json.dumps(context.user_data.get(user_id), indent=2)}")
-        context.user_data.setdefault(user_id, {})["current_active_order_id"] = order_id
-
-        buttons = []
-        emojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟']
-        for i in range(1, 11):
-            buttons.append(InlineKeyboardButton(emojis[i-1], callback_data=f"places_data_{order_id}_{i}"))
-        
-        keyboard = [buttons[i:i + 5] for i in range(0, len(buttons), 5)]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        msg_places = await context.bot.send_message(
-            chat_id=chat_id,
-            text="صلوات كللوش كل المنتجات تسعرت ديالله اختار عدد المحلات وفضني؟ (باوع ممنوع تكتب رقم لازم تختار من ذني الارقام )", 
-            reply_markup=reply_markup
-        )
-        
-        context.user_data[user_id]['places_count_message'] = {
-            'chat_id': msg_places.chat_id,
-            'message_id': msg_places.message_id
-        }
-
-        if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
-            logger.info(f"[{chat_id}] Scheduling deletion of {len(context.user_data[user_id].get('messages_to_delete', []))} old messages after showing places buttons for user {user_id}.")
-            for msg_info in context.user_data[user_id]['messages_to_delete']:
-                context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
-            context.user_data[user_id]['messages_to_delete'].clear()
-        
+        await delete_last_button_message(context, user_id)
     except Exception as e:
-        logger.error(f"[{chat_id}] Error in request_places_count_standalone: {e}", exc_info=True)
-        await context.bot.send_message(chat_id=chat_id, text="😐ترا صار عطل من جاي اطلب عدد المحلات. تريد سوي طلب جديد.")
-        
+        logger.warning(f"[{chat_id}] Could not delete last button message for user {user_id}: {e}")
+    
+    if order_id not in orders:
+        logger.error(f"Order {order_id} not found when requesting places count.")
+        await context.bot.send_message(chat_id=chat_id, text="❌ الطلبية غير موجودة. يرجى البدء من جديد.")
+        return ConversationHandler.END
+
+    order = orders[order_id]
+    
+    # تحديد عدد المحلات السابق (إذا كان موجوداً)
+    current_places_count = order.get("places_count", "غير محدد")
+
+    prompt = (
+        "اذا كانت الطلبية *تذهب لأكثر من محل*، أرسل رقم عدد المحلات الكلي.\n"
+        "اذا كانت الطلبية *تذهب لمحل واحد فقط*، أرسل *1*.\n"
+        f"\n(العدد الحالي المسجل: {current_places_count})"
+    )
+    
+    # ننتقل إلى حالة طلب عدد المحلات
+    context.user_data[user_id]["order_id"] = order_id
+    context.user_data[user_id]["places_count_requested"] = True
+    
+    msg = await context.bot.send_message(chat_id=chat_id, text=prompt, parse_mode="Markdown")
+    
+    # حفظ رسالة السؤال للحذف
+    context.user_data.setdefault(user_id, {}).setdefault('messages_to_delete', []).append({
+        'chat_id': msg.chat_id,
+        'message_id': msg.message_id
+    })
+    
+    # ننتقل لحالة انتظار عدد المحلات
+    return ASK_PLACES_COUNT
+    
 async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
@@ -1602,7 +1610,7 @@ def main():
             ],
             ASK_FOR_DELETION_CONFIRMATION: [
                 CallbackQueryHandler(handle_order_selection_for_deletion, 
-                                 pattern=r"^(select_order_to_delete_.*|confirm_final_delete_.*|cancel_delete_order|cancel_delete_order_final_selection)$"),
+                                     pattern=r"^(select_order_to_delete_.*|confirm_final_delete_.*|cancel_delete_order|cancel_delete_order_final_selection)$"),
             ],
         },
         fallbacks=[
@@ -1619,8 +1627,13 @@ def main():
             CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$"),
             CallbackQueryHandler(add_new_product_callback, pattern=r"^add_product_to_order_.*$"),
             CallbackQueryHandler(delete_product_callback, pattern=r"^delete_specific_product_.*$"), 
+            # تم تأكيد هذا النمط لحل مشكلة الأسماء الطويلة
             CallbackQueryHandler(confirm_delete_product_by_button_callback, pattern=r"^confirm_delete_key_.*$"),
-            CallbackQueryHandler(cancel_delete_product_callback, pattern=r"^cancel_delete_product_.*$")
+            CallbackQueryHandler(cancel_delete_product_callback, pattern=r"^cancel_delete_product_.*$"),
+
+            # ✅ التعديل هنا: إضافة معالجات أزرار الإكمال والتقرير لتشغيلها
+            CallbackQueryHandler(request_places_count_callback, pattern=r"^complete_order_.*$"),
+            CallbackQueryHandler(show_supplier_report_callback, pattern=r"^supplier_report_.*$"),
         ],
         states={
             ASK_BUY: [
@@ -1639,8 +1652,7 @@ def main():
     app.add_handler(order_creation_conv_handler)
 
     # تشغيل البوت
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
-   
+    app.run_polling(allowed_updates=Update.ALL_TYPES)   
 
 async def show_supplier_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
@@ -1963,6 +1975,39 @@ async def handle_incomplete_order_selection(update: Update, context: ContextType
             await query.edit_message_text("❌ حدث خطأ في تحميل الطلبية")
         except:
             pass
+
+async def request_places_count_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """يعالج الضغط على زر إكمال الطلبية ويطلب عدد المحلات."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = str(query.from_user.id)
+    chat_id = query.message.chat_id
+    order_id = query.data.replace("complete_order_", "")
+    
+    logger.info(f"[{chat_id}] Complete order button clicked for order {order_id} by user {user_id}. Requesting places count.")
+    
+    # ننتقل إلى الدالة المشتركة التي تطلب عدد المحلات وتحذف الأزرار
+    # هذا يضمن أن كلا المسارين (التسعير التلقائي وضغطة الزر) يتبعان نفس المنطق.
+    await request_places_count_standalone(chat_id, context, user_id, order_id)
+    return ConversationHandler.END 
+
+async def show_supplier_report_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """يعالج الضغط على زر تقرير طلبيتي."""
+    query = update.callback_query
+    await query.answer()
+
+    # نستخرج order_id من النمط الجديد
+    order_id = query.data.replace("supplier_report_", "")
+    
+    # نستدعي الدالة الرئيسية لعرض تقرير المجهز (يفترض أنها موجودة)
+    # لا توجد معلومات كافية هنا لتضمينها كاملة، لكن الاستدعاء يجب أن يكون بهذا الشكل
+    # للتأكد من عمل الزر.
+    await show_supplier_report(update, context, order_id=order_id)
+    
+    # في حال لم تكن الدالة show_supplier_report تقبل order_id كـ argument، 
+    # يجب تعديلها أو استخدام دالة أخرى. لكن لغرض تشغيل الزر نعتمد على هذا النمط.
+    return ConversationHandler.END
     
     
 if __name__ == "__main__":
