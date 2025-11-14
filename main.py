@@ -1372,7 +1372,7 @@ async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         overall_cumulative_profit = total_net_profit_products_all_orders + total_extra_profit_all_orders
 
         logger.info(f"Overall cumulative profit requested by user {update.message.from_user.id}: {overall_cumulative_profit}")
-        await update.message.reply_text(f"ربح البيع والتجهيز💵: *{format_float(overall_cumulative_profit)}* دينار", parse_mode="Markdown")
+        await update.message.reply_text(f"ربح البيع والتجهيز💵: *{format_float(overall_cumulative_profit)}* الف", parse_mode="Markdown")
     except Exception as e:
         logger.error(f"[{update.effective_chat.id}] Error in show_profit: {e}", exc_info=True)
         await update.message.reply_text("😐كسها ماكدرت اطلعلك الارباح")
