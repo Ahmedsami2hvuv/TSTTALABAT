@@ -415,7 +415,6 @@ async def process_order(update, context, message, edited=False):
 async def show_buttons(chat_id, context: ContextTypes.DEFAULT_TYPE, user_id, order_id, confirmation_message=None):
     """
     تظهر أزرار الطلبية (المنتجات، الإجراءات).
-    ✅ التعديل: تستخدم get_short_id في callback_data بدلاً من الاسم الكامل.
     """
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
@@ -423,14 +422,15 @@ async def show_buttons(chat_id, context: ContextTypes.DEFAULT_TYPE, user_id, ord
     # 1. تحديد الطلبية النشطة
     context.user_data.setdefault(user_id, {})["active_order"] = order_id
     order = orders.get(order_id, {})
-    product_names = list(order.get('products', {}).keys())
+    
+    # ✅✅✅ التعديل هنا: نحصل على قائمة الأسماء مباشرةً بدلاً من محاولة استخدام .keys() على قائمة.
+    product_names = order.get('products', []) 
     
     # 2. بناء أزرار المنتجات
     keyboard = []
     current_row = []
     
     for i, product_name in enumerate(product_names):
-        # ✅ التعديل هنا: نستخدم المعرّف القصير بدلاً من الاسم الكامل
         short_id = get_short_id(context, product_name)
         
         price_data = pricing.get(order_id, {}).get(product_name)
@@ -453,7 +453,6 @@ async def show_buttons(chat_id, context: ContextTypes.DEFAULT_TYPE, user_id, ord
     ]
     keyboard.append(action_buttons)
     
-    # ... (بقية الأزرار مثل عرض الإجمالي وإنهاء الطلبية)
     keyboard.append([
         InlineKeyboardButton("عرض الإجمالي 📊", callback_data=f"show_total:{order_id}"),
         InlineKeyboardButton("إنهاء الطلبية ✅", callback_data=f"finalize_order:{order_id}"),
@@ -477,8 +476,7 @@ async def show_buttons(chat_id, context: ContextTypes.DEFAULT_TYPE, user_id, ord
     except Exception as e:
         logger.error(f"Error sending main buttons for order {order_id}: {e}")
         await context.bot.send_message(chat_id, "❌ حدث خطأ في عرض الأزرار الرئيسية.")
-
-
+        
 # ------------------------------------
 
 async def start_delete_product_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
