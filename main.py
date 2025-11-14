@@ -929,18 +929,22 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
     orders = context.application.bot_data['orders']
     user_id = str(update.effective_user.id)
     chat_id = update.effective_chat.id
+    # يجب أن يكون order_id موجوداً في user_data بناءً على الدوال السابقة
     order_id = context.user_data.get(user_id, {}).get("order_id")
     
     places_count = None
+    is_callback_query = False
 
     if update.callback_query:
+        is_callback_query = True
         query = update.callback_query
         await query.answer()
         
         # 1. معالجة زر الإلغاء/التخطي
         if query.data.endswith("_cancel"):
+            # ✅ التنفيذ الصحيح عند الإلغاء: إنشاء الفاتورة النهائية
             await query.edit_message_text("تم إلغاء عملية تحديد عدد المحلات. جارٍ إنشاء الفاتورة النهائية...")
-            await generate_invoice_final(chat_id, context, user_id, order_id) # يفترض وجود هذه الدالة
+            await generate_invoice_final(chat_id, context, user_id, order_id) # استدعاء الدالة
             return ConversationHandler.END
             
         # 2. استخراج الرقم من ضغطة الزر
@@ -952,7 +956,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
             await query.edit_message_text("❌ خطأ في قراءة عدد المحلات من الزر. يرجى المحاولة كتابةً.")
             return ASK_PLACES_COUNT 
 
-        # حذف رسالة الأزرار
+        # ✅ (إصلاح النقص) حذف رسالة الأزرار بعد الضغط عليها بنجاح
         try:
             await query.message.delete()
         except:
@@ -979,6 +983,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
 
     # 4. المنطق المشترك للحفظ وإكمال الطلبية
     if places_count is None:
+        # هذه الحالة يجب أن تحدث فقط عند فشل القراءة، وقد تمت معالجتها أعلاه
         await context.bot.send_message(chat_id=chat_id, text="❌ لم يتم تحديد عدد المحلات. يرجى المحاولة مرة أخرى.")
         return ASK_PLACES_COUNT
         
@@ -990,11 +995,11 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
     orders[order_id]["places_count"] = places_count
     logger.info(f"[{chat_id}] Places count saved: {places_count} for order {order_id}.")
     
-    # حفظ البيانات وإنشاء الفاتورة النهائية
+    # حفظ البيانات
     context.application.create_task(save_data_in_background(context))
     
-    # استدعاء الدالة التي تكمل عملية الفاتورة
-    await generate_invoice_final(chat_id, context, user_id, order_id) # يفترض وجود هذه الدالة
+    # ✅ الاستدعاء النهائي لدالة إنشاء الفاتورة (يجب أن يتم هذا في كلا الحالتين)
+    await generate_invoice_final(chat_id, context, user_id, order_id) 
 
     return ConversationHandler.END
     
