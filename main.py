@@ -560,6 +560,7 @@ async def add_new_product_callback(update: Update, context: ContextTypes.DEFAULT
     return ASK_PRODUCT_NAME # حالة محادثة جديدة لطلب اسم المنتج
 
 async def delete_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    orders = context.application.bot_data['orders']
     query = update.callback_query
     await query.answer()
 
@@ -577,20 +578,29 @@ async def delete_product_callback(update: Update, context: ContextTypes.DEFAULT_
 
     order = orders[order_id]
 
-    if not order["products"]: # إذا الطلبية ما بيها منتجات أصلاً
+    if not order["products"]:
         await context.bot.send_message(chat_id=chat_id, text="ترا الطلبية ما بيها أي منتجات حتى تمسح منها.")
         return ConversationHandler.END
 
     products_to_delete_buttons = []
+    
+    # 🌟 التعديل هنا: تهيئة مكان تخزين المفاتيح في user_data
+    context.user_data.setdefault(user_id, {}).setdefault("product_delete_keys", {})
+    
     for p_name in order["products"]:
-        products_to_delete_buttons.append([InlineKeyboardButton(p_name, callback_data=f"confirm_delete_product_{order_id}_{p_name}")])
-
-    # ✅ إضافة زر الإلغاء هنا
+        # إنشاء مفتاح فريد وقصير (8 أحرف)
+        product_key = str(uuid.uuid4())[:8] 
+        # تخزين اسم المنتج الكامل (مهما كان طوله) في ذاكرة المستخدم
+        context.user_data[user_id]["product_delete_keys"][product_key] = p_name
+        
+        # استخدام المفتاح القصير في callback_data (آمن ضد حد الـ 64 بايت)
+        callback_data = f"confirm_delete_key_{order_id}_{product_key}"
+        products_to_delete_buttons.append([InlineKeyboardButton(p_name, callback_data=callback_data)])
+        
     products_to_delete_buttons.append([InlineKeyboardButton("❌ إلغاء المسح", callback_data=f"cancel_delete_product_{order_id}")])
 
     markup = InlineKeyboardMarkup(products_to_delete_buttons)
 
-    # حذف رسالة الأزرار القديمة (إذا كانت موجودة)
     if query.message:
         context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
 
@@ -598,17 +608,38 @@ async def delete_product_callback(update: Update, context: ContextTypes.DEFAULT_
     return ConversationHandler.END
     
 async def confirm_delete_product_by_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    orders = context.application.bot_data['orders']
+    pricing = context.application.bot_data['pricing']
+    
     query = update.callback_query
     await query.answer()
 
     user_id = str(query.from_user.id)
     chat_id = query.message.chat_id
 
-    # استخراج الـ order_id والـ product_name من الـ callback_data
-    # مثلاً: "confirm_delete_product_order_123_product_بيبسي"
+    # 🌟 التعديل هنا: طريقة استخراج البيانات الجديدة (تعتمد على المفتاح القصير)
     data_parts = query.data.split('_')
-    order_id = data_parts[3] # الجزء الرابع هو الـ order_id
-    product_name_to_delete = "_".join(data_parts[4:]) # اسم المنتج ممكن يكون بأكثر من كلمة، ناخذه من الجزء الرابع للنهاية
+    
+    # التحقق من صحة صيغة الـ callback_data الجديدة
+    if len(data_parts) < 5 or data_parts[0] != "confirm" or data_parts[1] != "delete" or data_parts[2] != "key":
+        logger.error(f"[{chat_id}] Invalid callback data received: {query.data}")
+        await context.bot.send_message(chat_id=chat_id, text="حدث خطأ في قراءة الزر، يرجى المحاولة مرة أخرى.")
+        return ConversationHandler.END
+
+    order_id = data_parts[3] 
+    product_key = data_parts[4] 
+    
+    # استرداد اسم المنتج الكامل من user_data باستخدام المفتاح القصير
+    product_name_to_delete = context.user_data.get(user_id, {}).get("product_delete_keys", {}).get(product_key)
+    
+    if not product_name_to_delete:
+        logger.warning(f"[{chat_id}] Product name not found in user_data for key {product_key} (Order {order_id}).")
+        await context.bot.send_message(chat_id=chat_id, text="❌ لم يتم العثور على اسم المنتج الكامل. قد تكون الجلسة انتهت أو تم تصفيرها. يرجى المحاولة من جديد.")
+        return ConversationHandler.END
+        
+    # تنظيف المفتاح من user_data بعد استخدامه
+    context.user_data[user_id]["product_delete_keys"].pop(product_key, None) 
+
 
     logger.info(f"[{chat_id}] Product '{product_name_to_delete}' confirmed for deletion from order {order_id} by user {user_id}.")
 
@@ -633,10 +664,9 @@ async def confirm_delete_product_by_button_callback(update: Update, context: Con
     else:
         await context.bot.send_message(chat_id=chat_id, text=f"ترا المنتج '{product_name_to_delete}' مو موجود بالطلبية أصلاً. تأكد من الاسم.")
 
-    # نرجع نعرض الأزرار المحدثة
     await show_buttons(chat_id, context, user_id, order_id) 
     return ConversationHandler.END
-
+    
 async def cancel_add_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
