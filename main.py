@@ -185,27 +185,31 @@ if not os.path.exists(COUNTER_FILE):
         f.write("1")
 
 def get_invoice_number():
-    with open(COUNTER_FILE, "r") as f:
-        current = int(f.read().strip())
-    with open(COUNTER_FILE, "w") as f:
-        f.write(str(current + 1))
-    return current
+    # 1. محاولة قراءة آخر رقم فاتورة تم استخدامه
+    last_used_number = 0
+    try:
+        with open(COUNTER_FILE, "r") as f:
+            content = f.read().strip()
+            if content:
+                last_used_number = int(content)
+    except (FileNotFoundError, ValueError):
+        # إذا كان الملف غير موجود أو فارغ/تالف، نبدأ العداد من 0
+        last_used_number = 0 
 
-# ✅ استدعاء دالة load_data() هنا، بعد تعريفها
-load_data()
+    # 2. حساب رقم الفاتورة الجديد (الرقم الحالي + 1)
+    new_invoice_number = last_used_number + 1
 
-# حالات المحادثة
-ASK_BUY, ASK_PLACES_COUNT, ASK_PRODUCT_NAME, ASK_PRODUCT_TO_DELETE, ASK_CUSTOMER_PHONE_NUMBER_FOR_DELETION, ASK_FOR_DELETION_CONFIRMATION = range(6)
+    # 3. كتابة الرقم الجديد مرة أخرى للمرة القادمة
+    try:
+        with open(COUNTER_FILE, "w") as f:
+            f.write(str(new_invoice_number))
+    except Exception as e:
+        # تسجيل الخطأ إذا فشل الحفظ (ولكن لا يتوقف البوت)
+        logger.error(f"Failed to write invoice number to file: {e}")
+    
+    # 4. إرجاع رقم الفاتورة الجديد
+    return new_invoice_number
 
-# جلب التوكن ومعرف المالك من متغيرات البيئة
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-OWNER_ID = int(os.getenv("OWNER_TELEGRAM_ID")) 
-OWNER_PHONE_NUMBER = os.getenv("OWNER_TELEGRAM_PHONE_NUMBER", "+9647733921468")
-
-if TOKEN is None:
-    raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set.")
-if OWNER_ID is None:
-    raise ValueError("OWNER_TELEGRAM_ID environment variable not set.")
 
 # دالة لتنسيق الأرقام العشرية
 def format_float(value):
