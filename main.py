@@ -387,82 +387,8 @@ async def process_order(update, context, message, edited=False):
     else:
         await show_buttons(message.chat_id, context, user_id, order_id, confirmation_message="دهاك حدثنه الطلب. عيني دخل الاسعار الاستاذ حدث الطلب.")
         
-async def show_buttons(chat_id: int, context: ContextTypes.DEFAULT_TYPE, user_id: str, order_id: str, confirmation_message: str = "اختار المنتج التالي للتسعير، أو اضف منتج جديد:") -> Message:
-    """عرض الأزرار التفاعلية للطلبية: المنتجات، الإضافة، المسح، الإكمال."""
-    orders = context.application.bot_data['orders']
-    pricing = context.application.bot_data['pricing']
-    last_button_message = context.application.bot_data['last_button_message']
-    
-    order = orders.get(order_id)
-    if not order:
-        logger.warning(f"[{chat_id}] Order {order_id} not found for show_buttons.")
-        return
+show_buttons
 
-    product_buttons = []
-    
-    # التعديل: تهيئة وتخزين مفاتيح اختيار المنتجات في user_data
-    context.user_data.setdefault(user_id, {}).setdefault("product_selection_keys", {})
-    
-    
-    all_products_priced = True
-    
-    # أزرار المنتجات
-    for p_name in order["products"]:
-        is_priced = p_name in pricing.get(order_id, {}) and 'buy' in pricing[order_id][p_name]
-        
-        # 1. إنشاء مفتاح فريد وقصير (8 أحرف)
-        product_key = str(uuid.uuid4())[:8] 
-        
-        # 2. تخزين اسم المنتج الكامل في ذاكرة المستخدم
-        context.user_data[user_id]["product_selection_keys"][product_key] = p_name
-        
-        # 3. استخدام المفتاح القصير في callback_data (آمن)
-        # النمط: order_id|product_key
-        callback_data = f"{order_id}|{product_key}" 
-        
-        # ✅ التعديل هنا: إزالة كلمة (مسعّر) والاكتفاء بالرمز التعبيري
-        button_text = f"✅ {p_name}" if is_priced else p_name
-        
-        product_buttons.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
-        
-        if not is_priced:
-            all_products_priced = False
-
-    # أزرار العمليات
-    action_buttons = []
-    action_buttons.append(InlineKeyboardButton("➕ إضافة منتج", callback_data=f"add_product_to_order_{order_id}"))
-    action_buttons.append(InlineKeyboardButton("➖ مسح منتج", callback_data=f"delete_specific_product_{order_id}"))
-
-    # زر الإكمال (يعمل الآن بعد إضافة الـ handler)
-    if all_products_priced and not order.get("is_complete"):
-        action_buttons.append(InlineKeyboardButton("✅ إكمال الطلبية", callback_data=f"complete_order_{order_id}"))
-
-    # زر تقرير الطلبية (يعمل الآن بعد إضافة الـ handler)
-    if order.get("supplier_id") == user_id:
-        action_buttons.append(InlineKeyboardButton("📊 تقرير طلبيتي", callback_data=f"supplier_report_{order_id}"))
-        
-    
-    # ترتيب الأزرار النهائية
-    final_buttons = product_buttons + [action_buttons]
-    markup = InlineKeyboardMarkup(final_buttons)
-
-    # حذف الرسالة القديمة قبل إرسال الجديدة (إذا كانت موجودة)
-    try:
-        await delete_last_button_message(context, user_id)
-    except Exception:
-        pass
-
-    # حفظ رسالة الأزرار الجديدة
-    msg = await context.bot.send_message(chat_id=chat_id, text=confirmation_message, reply_markup=markup)
-    
-    # حفظ معرف رسالة الأزرار (لتحديثها لاحقاً)
-    last_button_message[user_id] = {
-        'chat_id': chat_id,
-        'message_id': msg.message_id
-    }
-    context.application.create_task(save_data_in_background(context))
-
-    return msg    
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """الخطوة الثانية: يقوم المجهز باختيار المنتج، وننتقل لطلب سعر الشراء/البيع."""
     orders = context.application.bot_data['orders']
@@ -705,127 +631,84 @@ async def cancel_delete_product_callback(update: Update, context: ContextTypes.D
     return ConversationHandler.END
 
 async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """استلام سعر الشراء وسعر البيع لمنتج معين من المجهز.
-    يقبل:
-    1. سطرين منفصلين (سطر للشراء، سطر للبيع).
-    2. سطر واحد (يُعتبر شراء وبيع).
-    3. القيمة صفر (0) لتسجيل المنتج كغير متوفر.
-    """
-    user_id = str(update.message.from_user.id)
-    chat_id = update.effective_chat.id
-    
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
+    user_id = str(update.message.from_user.id)
+    chat_id = update.effective_chat.id
+    order_id = context.user_data.get(user_id, {}).get("order_id")
+    product = context.user_data.get(user_id, {}).get("product")
     
+    # 1. تنظيف رسائل المحادثة (السؤال والجواب)
     try:
-        # 1. محاولة حذف الرسائل السابقة التي تطلب السعر
-        try:
-            await delete_previous_messages(context, user_id)
-        except Exception:
-            pass
+        # حذف رسالة السؤال السابقة ورسالة المستخدم الحالية
+        for msg_info in context.user_data.get(user_id, {}).get('messages_to_delete', []):
+            await context.bot.delete_message(chat_id=msg_info['chat_id'], message_id=msg_info['message_id'])
+        context.user_data[user_id]['messages_to_delete'] = [] # مسح القائمة
+        await update.message.delete()
+    except Exception as e:
+        logger.warning(f"[{chat_id}] Could not delete messages in receive_buy_price: {e}")
+        
+    if not order_id or not product:
+        await update.message.reply_text("❌ لم يتم العثور على معلومات الطلبية أو المنتج. يرجى البدء من جديد.")
+        return ConversationHandler.END
 
-        order_id = context.user_data[user_id].get("order_id")
-        product = context.user_data[user_id].get("product")
-        
-        if not order_id or not product:
-            await update.message.reply_text("❌ لم يتم تحديد طلبية أو منتج. يرجى البدء من جديد.")
-            return ConversationHandler.END
+    # 2. محاولة قراءة الأسعار (من سطر واحد أو سطرين)
+    lines = [line.strip() for line in update.message.text.split('\n') if line.strip()]
+    buy_price_str, sell_price_str = None, None
 
-        # حفظ رسالة المستخدم الحالية للحذف
-        context.user_data.setdefault(user_id, {}).setdefault('messages_to_delete', []).append({
-            'chat_id': update.message.chat_id, 
-            'message_id': update.message.message_id
-        })
-        
-        # ------------------------------------------------------------------
-        # 🔄 المنطق لتحليل المدخلات: يدعم سطرين أو سطر واحد
-        # ------------------------------------------------------------------
-        lines = [line.strip() for line in update.message.text.split('\n') if line.strip()]
-        
-        buy_price_str = None
-        sell_price_str = None
+    if len(lines) == 2:
+        buy_price_str, sell_price_str = lines[0], lines[1]
+    elif len(lines) == 1:
+        parts = [p.strip() for p in lines[0].split() if p.strip()]
+        if len(parts) == 2:
+            buy_price_str, sell_price_str = parts[0], parts[1]
+        elif len(parts) == 1:
+            buy_price_str, sell_price_str = parts[0], parts[0]
+    
+    if not buy_price_str or not sell_price_str:
+        msg_error = await update.message.reply_text("😒دكتب عدل دخل سعر الشراء بالسطر الأول وسعر البيع بالسطر الثاني.\nأو سعر واحد فقط في سطر واحد إذا كانا متساويين.")
+        context.user_data[user_id].setdefault('messages_to_delete', []).append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
+        return ASK_BUY # ابق في نفس الحالة
 
-        if len(lines) == 2:
-            # الحالة الطبيعية: سطرين منفصلين
-            buy_price_str = lines[0]
-            sell_price_str = lines[1]
-        elif len(lines) == 1:
-            # حالة سطر واحد: قيمة واحدة (شراء=بيع) أو قيمتين بمسافة
-            parts = [p.strip() for p in lines[0].split() if p.strip()]
-            
-            if len(parts) == 2:
-                buy_price_str = parts[0]
-                sell_price_str = parts[1]
-            elif len(parts) == 1:
-                buy_price_str = parts[0]
-                sell_price_str = parts[0] 
-            else:
-                 buy_price_str = None 
-        
-        if not buy_price_str or not sell_price_str:
-            msg_error = await update.message.reply_text("😒دكتب عدل دخل سعر الشراء بالسطر الأول وسعر البيع بالسطر الثاني.\nأو سعر واحد فقط في سطر واحد إذا كانا متساويين.")
-            context.user_data[user_id]['messages_to_delete'].append({
-                'chat_id': msg_error.chat_id, 
-                'message_id': msg_error.message_id
-            })
-            return ASK_BUY
-            
-        # 3. التحقق من تحويل القيم إلى أرقام
-        try:
-            buy_price = float(buy_price_str)
-            sell_price = float(sell_price_str)
-        
-            # ✅ التعديل هنا: السماح بالصفر لكن منع القيم السالبة
-            if buy_price < 0 or sell_price < 0:
-                raise ValueError("الأسعار لا يمكن أن تكون سالبة.")
+    # 3. التحقق من تحويل القيم إلى أرقام
+    try:
+        buy_price = float(buy_price_str)
+        sell_price = float(sell_price_str)
+        if buy_price < 0 or sell_price < 0:
+            raise ValueError("الأسعار لا يمكن أن تكون سالبة.")
+    except ValueError:
+        msg_error = await update.message.reply_text("❌ دخل ارقام صحيحة بدون حروف و لا فوارز. دخل سعر الشراء بالسطر الأول وسعر البيع بالسطر الثاني.")
+        context.user_data[user_id].setdefault('messages_to_delete', []).append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
+        return ASK_BUY # ابق في نفس الحالة
 
-        except ValueError as e:
-            logger.error(f"[{update.effective_chat.id}] Buy/Sell prices: ValueError for user {user_id} with input '{update.message.text}': {e}", exc_info=True)
-            msg_error = await update.message.reply_text("😒دكتب عدل دخل ارقام صحيحة مال البيع والشراء.")
-            context.user_data[user_id]['messages_to_delete'].append({
-                'chat_id': msg_error.chat_id, 
-                'message_id': msg_error.message_id
-            })
-            return ASK_BUY
+    # 4. حفظ الأسعار
+    pricing.setdefault(order_id, {})[product] = {"buy": buy_price, "sell": sell_price}
+    orders[order_id]["supplier_id"] = user_id # تحديد المجهز الذي قام بالتسعير
+    context.application.create_task(save_data_in_background(context))
+    logger.info(f"[{chat_id}] Saved pricing for '{product}': Buy={buy_price}, Sell={sell_price}. Order {order_id}.")
+    
+    # 5. التحقق من اكتمال التسعير (المنطق الحاسم)
+    order = orders[order_id]
+    all_products_priced_now = all(
+        p in pricing.get(order_id, {}) and 'buy' in pricing[order_id].get(p, {})
+        for p in order["products"]
+    )
 
-        # ------------------------------------------------------------------
-        # 💾 منطق حفظ البيانات والانتقال للحالة التالية
-        # ------------------------------------------------------------------
-
-        pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = buy_price
-        pricing[order_id][product]["sell"] = sell_price
-        orders[order_id]["supplier_id"] = user_id
-        
-        logger.info(f"[{update.effective_chat.id}] Pricing for order '{order_id}' and product '{product}' AFTER SAVE: {json.dumps(pricing.get(order_id, {}).get(product), indent=2)}")
-        
-        context.application.create_task(save_data_in_background(context))
-        
+    if all_products_priced_now:
+        # ✅ الانتقال التلقائي لخطوة عدد المحلات
+        await context.bot.send_message(chat_id=chat_id, text=f"🎉 تمت تسعير جميع المنتجات في الطلبية. جاري الانتقال لخطوة عدد المحلات...")
+        await request_places_count_standalone(chat_id, context, user_id, order_id) 
+        # مسح بيانات المحادثة المؤقتة
         context.user_data[user_id].pop("order_id", None)
         context.user_data[user_id].pop("product", None)
-        
-        is_order_complete = True
-        for p_name in orders[order_id].get("products", []):
-            if p_name not in pricing.get(order_id, {}) or 'buy' not in pricing[order_id].get(p_name, {}):
-                is_order_complete = False
-                break
-                
-        if is_order_complete:
-            logger.info(f"[{update.effective_chat.id}] Order {order_id} is now fully priced. Requesting places count.")
-            await request_places_count_standalone(chat_id, context, user_id, order_id)
-            return ConversationHandler.END
-        else:
-            logger.info(f"[{update.effective_chat.id}] Order {order_id} is partially priced. Showing updated buttons.")
-            await show_buttons(chat_id, context, user_id, order_id, confirmation_message="تم إدخال السعر. بقي منتجات أخرى؟")
-            return ConversationHandler.END
-            
-    except Exception as e:
-        logger.error(f"[{update.effective_chat.id}] Critical error in receive_buy_price: {e}", exc_info=True)
-        msg_error = await update.message.reply_text("كسها صار خطا مدري وين سوي طلب جديد يلا.")
-        context.user_data[user_id]['messages_to_delete'].append({
-            'chat_id': msg_error.chat_id,
-            'message_id': msg_error.message_id
-        })
-        return ConversationHandler.END
+        return ConversationHandler.END # إنهاء المحادثة الحالية (ASK_BUY)
+    else:
+        # ✅ عرض أزرار المنتجات المتبقية
+        await show_buttons(chat_id, context, user_id, order_id, confirmation_message="تم تسعير المنتج. أكمل تسعير باقي المنتجات:")
+        # مسح بيانات المحادثة المؤقتة
+        context.user_data[user_id].pop("order_id", None)
+        context.user_data[user_id].pop("product", None)
+        return ConversationHandler.END # إنهاء المحادثة الحالية (ASK_BUY)
         
 async def receive_new_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
@@ -1513,6 +1396,155 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"[{update.effective_chat.id}] Error in show_report: {e}", exc_info=True)
         await update.message.reply_text("😐هذا الظراط ماكدرت ادزلك التقرير .")
+
+async def generate_invoice_final(chat_id: int, context: ContextTypes.DEFAULT_TYPE, user_id: str, order_id: str):
+    orders = context.application.bot_data['orders']
+    pricing = context.application.bot_data['pricing']
+    invoice_numbers = context.application.bot_data['invoice_numbers']
+    daily_profit_data = context.application.bot_data['daily_profit']
+    
+    # التأكد من وجود الطلبية
+    if order_id not in orders:
+        await context.bot.send_message(chat_id=chat_id, text="❌ الطلبية غير موجودة لإنشاء الفاتورة.")
+        return
+
+    order = orders[order_id]
+    invoice = invoice_numbers.get(order_id, get_invoice_number())
+    phone_number = order.get("phone_number", "لا يوجد رقم")
+    current_places = order.get("places_count", 0)
+
+    total_buy = 0.0
+    total_sell = 0.0
+    
+    # 1. تجميع الأسعار والمصاريف
+    for p_name in order["products"]:
+        if p_name in pricing.get(order_id, {}) and "buy" in pricing[order_id][p_name] and "sell" in pricing[order_id][p_name]:
+            buy = pricing[order_id][p_name]["buy"]
+            sell = pricing[order_id][p_name]["sell"]
+            total_buy += buy
+            total_sell += sell
+    
+    net_profit_products = total_sell - total_buy
+    # 💡 يجب أن تكون دالة calculate_extra موجودة في ملفك.
+    extra_cost_value = calculate_extra(current_places)
+    
+    # جلب سعر التوصيل بناءً على العنوان
+    # 💡 يجب أن تكون دالة get_delivery_price موجودة في ملفك.
+    delivery_fee = get_delivery_price(order['title'])
+    
+    # صافي الربح الكلي
+    net_profit_total = net_profit_products + extra_cost_value
+    
+    # 2. بناء فاتورة الزبون
+    customer_invoice = [
+        f"**فاتورة الزبون:🧾**",
+        f"رقم الفاتورة🔢: {invoice}",
+        f"رقم الزبون📞: `{phone_number}`",
+        f"عنوان الزبون🏠: {order['title']}",
+        f"\n*تفاصيل الطلبية:🗒*"
+    ]
+    # 💡 يجب أن تكون دالة format_float موجودة في ملفك.
+    for p_name in order["products"]:
+        sell = pricing.get(order_id, {}).get(p_name, {}).get("sell")
+        customer_invoice.append(f"- {p_name}: {format_float(sell)} دينار")
+    
+    customer_invoice.extend([
+        f"\n*إجمالي الطلب:💵 * {format_float(total_sell)}",
+        f"*أجرة التوصيل:🚚* {format_float(delivery_fee)}",
+        f"\n*المجموع الكلي:💰* {format_float(total_sell + delivery_fee)}"
+    ])
+    
+    # 3. بناء فاتورة المجهز (الشراء/الربح)
+    supplier_invoice = [
+        f"**فاتورة المجهز:👷🏻‍♂️**",
+        f"رقم الفاتورة🔢: {invoice}",
+        f"رقم الزبون📞: `{phone_number}`",
+        f"عنوان الزبون🏠: {order['title']}",
+        f"\n*ربح المنتجات:💲* {format_float(net_profit_products)}",
+        f"*ربح المحلات ({current_places} محل):🏪* {format_float(extra_cost_value)}",
+        f"*صافي الربح الكلي لك:💎* {format_float(net_profit_total)}"
+    ]
+
+    # 4. بناء فاتورة الإدارة
+    owner_invoice = [
+        f"**فاتورة الإدارة:👨🏻‍💼**",
+        f"رقم الفاتورة🔢: {invoice}",
+        f"رقم الزبون📞: `{phone_number}`",
+        f"عنوان الزبون🏠: {order['title']}",
+        f"\n*تفاصيل الطلبية:🗒*"
+    ]
+    for p_name in order["products"]:
+        if p_name in pricing.get(order_id, {}) and "buy" in pricing[order_id][p_name] and "sell" in pricing[order_id][p_name]:
+            buy = pricing[order_id][p_name]["buy"]
+            sell = pricing[order_id][p_name]["sell"]
+            profit = sell - buy
+            owner_invoice.append(f"- {p_name}: شراء {format_float(buy)} | بيع {format_float(sell)} | ربح {format_float(profit)}")
+        else:
+            owner_invoice.append(f"- {p_name}: (غير مسعر)")
+    
+    owner_invoice.extend([
+        f"\n*إجمالي الشراء:💸* {format_float(total_buy)}",
+        f"*إجمالي البيع:💵 * {format_float(total_sell)}",
+        f"*ربح المنتجات:💲* {format_float(net_profit_products)}",
+        f"*ربح المحلات ({current_places} محل):🏪* {format_float(extra_cost_value)}",
+        f"*أجرة التوصيل:🚚* {format_float(delivery_fee)}",
+        f"*صافي الربح الكلي:🌟* {format_float(net_profit_total)}"
+    ])
+
+    # 5. إرسال الفواتير وحفظ البيانات
+    
+    # زر تحرير الأسعار (لإعادة التوجيه)
+    edit_keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✍️ تحرير الأسعار", callback_data=f"edit_prices_{order_id}")]
+    ])
+    
+    # إرسال فاتورة الزبون للمجهز
+    try:
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text="\n".join(customer_invoice), 
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.error(f"[{chat_id}] Could not send customer invoice: {e}")
+        
+    # إرسال فاتورة المجهز للمجهز
+    try:
+        msg = await context.bot.send_message(
+            chat_id=chat_id, 
+            text="\n".join(supplier_invoice), 
+            parse_mode="Markdown",
+            reply_markup=edit_keyboard # إضافة زر تحرير الأسعار هنا
+        )
+        # حفظ رسالة المجهز لغرض تحريرها
+        context.user_data.setdefault(user_id, {})["last_supplier_invoice_msg"] = {
+            'chat_id': msg.chat_id,
+            'message_id': msg.message_id
+        }
+    except Exception as e:
+        logger.error(f"[{chat_id}] Could not send supplier invoice: {e}")
+        
+    # إرسال فاتورة الإدارة للمالك
+    try:
+        # 💡 يجب أن يكون OWNER_ID معرفاً في بداية الملف (مثل 12345678)
+        await context.bot.send_message(
+            chat_id=OWNER_ID, 
+            text="\n".join(owner_invoice), 
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.error(f"[{chat_id}] Could not send supplier invoice to owner: {e}")
+
+    # تحديث الربح اليومي وحفظ الحالة
+    try:
+        context.application.bot_data['daily_profit'] += net_profit_total 
+    except Exception as e:
+        logger.error(f"Error updating daily profit: {e}")
+        
+    order["is_complete"] = True
+    context.application.create_task(save_data_in_background(context))
+
+
         
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
@@ -1606,13 +1638,10 @@ def main():
             CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$"),
             CallbackQueryHandler(add_new_product_callback, pattern=r"^add_product_to_order_.*$"),
             CallbackQueryHandler(delete_product_callback, pattern=r"^delete_specific_product_.*$"), 
-            # تم تأكيد هذا النمط لحل مشكلة الأسماء الطويلة
             CallbackQueryHandler(confirm_delete_product_by_button_callback, pattern=r"^confirm_delete_key_.*$"),
             CallbackQueryHandler(cancel_delete_product_callback, pattern=r"^cancel_delete_product_.*$"),
-
-            # ✅ التعديل هنا: إضافة معالجات أزرار الإكمال والتقرير لتشغيلها
-            CallbackQueryHandler(request_places_count_callback, pattern=r"^complete_order_.*$"),
-            CallbackQueryHandler(show_supplier_report_callback, pattern=r"^supplier_report_.*$"),
+            
+            # ❌ تم حذف الـ handlers لـ "إكمال الطلبية" و "تقرير طلبيتي" 
         ],
         states={
             ASK_BUY: [
@@ -1631,8 +1660,8 @@ def main():
     app.add_handler(order_creation_conv_handler)
 
     # تشغيل البوت
-    app.run_polling(allowed_updates=Update.ALL_TYPES)   
-
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    
 async def show_supplier_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
@@ -1954,39 +1983,6 @@ async def handle_incomplete_order_selection(update: Update, context: ContextType
             await query.edit_message_text("❌ حدث خطأ في تحميل الطلبية")
         except:
             pass
-
-async def request_places_count_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """يعالج الضغط على زر إكمال الطلبية ويطلب عدد المحلات."""
-    query = update.callback_query
-    await query.answer()
-
-    user_id = str(query.from_user.id)
-    chat_id = query.message.chat_id
-    order_id = query.data.replace("complete_order_", "")
-    
-    logger.info(f"[{chat_id}] Complete order button clicked for order {order_id} by user {user_id}. Requesting places count.")
-    
-    # ننتقل إلى الدالة المشتركة التي تطلب عدد المحلات وتحذف الأزرار
-    # هذا يضمن أن كلا المسارين (التسعير التلقائي وضغطة الزر) يتبعان نفس المنطق.
-    await request_places_count_standalone(chat_id, context, user_id, order_id)
-    return ConversationHandler.END 
-
-async def show_supplier_report_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """يعالج الضغط على زر تقرير طلبيتي."""
-    query = update.callback_query
-    await query.answer()
-
-    # نستخرج order_id من النمط الجديد
-    order_id = query.data.replace("supplier_report_", "")
-    
-    # نستدعي الدالة الرئيسية لعرض تقرير المجهز (يفترض أنها موجودة)
-    # لا توجد معلومات كافية هنا لتضمينها كاملة، لكن الاستدعاء يجب أن يكون بهذا الشكل
-    # للتأكد من عمل الزر.
-    await show_supplier_report(update, context, order_id=order_id)
-    
-    # في حال لم تكن الدالة show_supplier_report تقبل order_id كـ argument، 
-    # يجب تعديلها أو استخدام دالة أخرى. لكن لغرض تشغيل الزر نعتمد على هذا النمط.
-    return ConversationHandler.END
     
     
 if __name__ == "__main__":
