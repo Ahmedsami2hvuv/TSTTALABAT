@@ -386,8 +386,73 @@ async def process_order(update, context, message, edited=False):
         await show_buttons(message.chat_id, context, user_id, order_id)
     else:
         await show_buttons(message.chat_id, context, user_id, order_id, confirmation_message="دهاك حدثنه الطلب. عيني دخل الاسعار الاستاذ حدث الطلب.")
+
+async def show_buttons(chat_id: int, context: ContextTypes.DEFAULT_TYPE, user_id: str, order_id: str, confirmation_message: str = "اختار المنتج التالي للتسعير، أو اضف منتج جديد:") -> Message:
+    """عرض الأزرار التفاعلية للطلبية: المنتجات، الإضافة، المسح."""
+    orders = context.application.bot_data['orders']
+    pricing = context.application.bot_data['pricing']
+    last_button_message = context.application.bot_data['last_button_message']
+    
+    order = orders.get(order_id)
+    if not order:
+        logger.warning(f"[{chat_id}] Order {order_id} not found for show_buttons.")
+        return
+
+    product_buttons = []
+    
+    # التعديل: تهيئة وتخزين مفاتيح اختيار المنتجات في user_data
+    context.user_data.setdefault(user_id, {}).setdefault("product_selection_keys", {})
+    
+    all_products_priced = True
+    
+    # أزرار المنتجات
+    for p_name in order["products"]:
+        is_priced = p_name in pricing.get(order_id, {}) and 'buy' in pricing[order_id][p_name]
         
-show_buttons
+        # 1. إنشاء مفتاح فريد وقصير (8 أحرف)
+        product_key = str(uuid.uuid4())[:8] 
+        
+        # 2. تخزين اسم المنتج الكامل في ذاكرة المستخدم
+        context.user_data[user_id]["product_selection_keys"][product_key] = p_name
+        
+        # 3. استخدام المفتاح القصير في callback_data
+        # النمط: order_id|product_key
+        callback_data = f"{order_id}|{product_key}" 
+        
+        button_text = f"✅ {p_name}" if is_priced else p_name
+        
+        product_buttons.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
+        
+        if not is_priced:
+            all_products_priced = False
+
+    # أزرار العمليات (إضافة ومسح فقط)
+    action_buttons = []
+    action_buttons.append(InlineKeyboardButton("➕ إضافة منتج", callback_data=f"add_product_to_order_{order_id}"))
+    action_buttons.append(InlineKeyboardButton("➖ مسح منتج", callback_data=f"delete_specific_product_{order_id}"))
+
+    # ترتيب الأزرار النهائية
+    final_buttons = product_buttons + [action_buttons]
+    markup = InlineKeyboardMarkup(final_buttons)
+
+    # حذف الرسالة القديمة قبل إرسال الجديدة (إذا كانت موجودة)
+    try:
+        await delete_last_button_message(context, user_id)
+    except Exception:
+        pass
+
+    # حفظ رسالة الأزرار الجديدة
+    msg = await context.bot.send_message(chat_id=chat_id, text=confirmation_message, reply_markup=markup)
+    
+    # حفظ معرف رسالة الأزرار (لتحديثها لاحقاً)
+    context.application.bot_data['last_button_message'][user_id] = {
+        'chat_id': chat_id,
+        'message_id': msg.message_id
+    }
+    context.application.create_task(save_data_in_background(context))
+
+    return msg
+    
 
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """الخطوة الثانية: يقوم المجهز باختيار المنتج، وننتقل لطلب سعر الشراء/البيع."""
