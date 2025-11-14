@@ -623,13 +623,15 @@ async def confirm_delete_product_by_button_callback(update: Update, context: Con
     # التحقق من صحة صيغة الـ callback_data الجديدة
     if len(data_parts) < 5 or data_parts[0] != "confirm" or data_parts[1] != "delete" or data_parts[2] != "key":
         logger.error(f"[{chat_id}] Invalid callback data received: {query.data}")
-        await context.bot.send_message(chat_id=chat_id, text="حدث خطأ في قراءة الزر، يرجى المحاولة مرة أخرى.")
+        # رسالة للمستخدم في حالة فشل قراءة نمط الزر
+        await context.bot.send_message(chat_id=chat_id, text="حدث خطأ في قراءة زر الحذف. يرجى المحاولة مرة أخرى من قائمة المنتجات.")
         return ConversationHandler.END
 
     order_id = data_parts[3] 
     product_key = data_parts[4] 
     
     # استرداد اسم المنتج الكامل من user_data باستخدام المفتاح القصير
+    # هذا هو الجزء الذي يحل مشكلة الاسم الطويل
     product_name_to_delete = context.user_data.get(user_id, {}).get("product_delete_keys", {}).get(product_key)
     
     if not product_name_to_delete:
@@ -1626,7 +1628,7 @@ def main():
             CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$"),
             CallbackQueryHandler(add_new_product_callback, pattern=r"^add_product_to_order_.*$"),
             CallbackQueryHandler(delete_product_callback, pattern=r"^delete_specific_product_.*$"), 
-            CallbackQueryHandler(confirm_delete_product_by_button_callback, pattern=r"^confirm_delete_product_.*$"), 
+            CallbackQueryHandler(confirm_delete_product_by_button_callback, pattern=r"^confirm_delete_key_.*$"), 
             CallbackQueryHandler(cancel_delete_product_callback, pattern=r"^cancel_delete_product_.*$")
         ],
         states={
