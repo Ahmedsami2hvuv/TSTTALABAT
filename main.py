@@ -1536,7 +1536,7 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"[{update.effective_chat.id}] Error in show_report: {e}", exc_info=True)
         await update.message.reply_text("😐هذا الظراط ماكدرت ادزلك التقرير .")
-        
+
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
@@ -1612,7 +1612,7 @@ def main():
             ],
             ASK_FOR_DELETION_CONFIRMATION: [
                 CallbackQueryHandler(handle_order_selection_for_deletion, 
-                                 pattern=r"^(select_order_to_delete_.*|confirm_final_delete_.*|cancel_delete_order|cancel_delete_order_final_selection)$"),
+                                     pattern=r"^(select_order_to_delete_.*|confirm_final_delete_.*|cancel_delete_order|cancel_delete_order_final_selection)$"),
             ],
         },
         fallbacks=[
@@ -1623,23 +1623,23 @@ def main():
     app.add_handler(delete_order_conv_handler)
 
     # ConversationHandler لإنشاء وتسعير الطلبات وإضافة المنتجات
-    order_creation_conv_handler = ConversationHandler(
-        entry_points=[
-            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
-            
-            # ✅ NEW: معالجة ضغط زر اختيار المنتج (للتسعير)
-            CallbackQueryHandler(product_selected, pattern=r"^product_id:[a-f0-9]{8}$"), 
-            # ✅ NEW: معالجة ضغط زر البدء بمسح المنتج (لعرض القائمة)
-            CallbackQueryHandler(start_delete_product_list_callback, pattern=r"^delete_product_start:"),
-            # ✅ NEW: معالجة ضغط زر تأكيد مسح المنتج 
-            CallbackQueryHandler(confirm_delete_product_by_button_callback, pattern=r"^confirm_del_prod:[a-f0-9]{8}$"),
-            
-            # الأزرار الأخرى المتعلقة بإضافة وإلغاء المنتج (إذا كنت لا تزال تستخدمها)
-            CallbackQueryHandler(add_new_product_callback, pattern=r"^add_product_to_order_.*$"),
-            CallbackQueryHandler(delete_product_callback, pattern=r"^delete_specific_product_.*$"),
-            CallbackQueryHandler(cancel_delete_product_callback, pattern=r"^cancel_delete_product_.*$")
-        ],
-        states={
+    order_creation_conv_handler = ConversationHandler(
+        entry_points=[
+            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
+            
+            # ✅ NEW: معالجة ضغط زر اختيار المنتج (للتسعير)
+            CallbackQueryHandler(product_selected, pattern=r"^product_id:[a-f0-9]{8}$"), 
+            # ✅ NEW: معالجة ضغط زر البدء بمسح المنتج (لعرض القائمة)
+            CallbackQueryHandler(start_delete_product_list_callback, pattern=r"^delete_product_start:"),
+            # ✅ NEW: معالجة ضغط زر تأكيد مسح المنتج 
+            CallbackQueryHandler(confirm_delete_product_by_button_callback, pattern=r"^confirm_del_prod:[a-f0-9]{8}$"),
+            
+            # الأزرار الأخرى المتعلقة بإضافة وإلغاء المنتج (إذا كنت لا تزال تستخدمها)
+            CallbackQueryHandler(add_new_product_callback, pattern=r"^add_product_to_order_.*$"),
+            CallbackQueryHandler(delete_product_callback, pattern=r"^delete_specific_product_.*$"),
+            CallbackQueryHandler(cancel_delete_product_callback, pattern=r"^cancel_delete_product_.*$")
+        ],
+        states={
             ASK_BUY: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
             ],
@@ -1657,7 +1657,7 @@ def main():
 
     # تشغيل البوت
     app.run_polling(allowed_updates=Update.ALL_TYPES)
-   
+    
 
 async def show_supplier_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
