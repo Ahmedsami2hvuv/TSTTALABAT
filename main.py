@@ -1460,7 +1460,99 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"[{update.effective_chat.id}] Error in show_report: {e}", exc_info=True)
         await update.message.reply_text("😐هذا الظراط ماكدرت ادزلك التقرير .")
         
-main
+def main():
+    # 💡 يتم افتراض أن المتغيرات TOKEN و orders و pricing و ASK_BUY و ASK_PLACES_COUNT
+    # تم تعريفها كمتغيرات عامة في بداية ملفك.
+    
+    # 1. إعداد التطبيق (يجب أن يكون TOKEN متوفراً)
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    # 2. وضع البيانات العالمية في bot_data
+    app.bot_data['orders'] = orders
+    app.bot_data['pricing'] = pricing
+    app.bot_data['invoice_numbers'] = invoice_numbers
+    app.bot_data['daily_profit'] = daily_profit
+    app.bot_data['last_button_message'] = last_button_message
+    app.bot_data['supplier_report_timestamps'] = supplier_report_timestamps
+    
+    # 3. Handlers العامة (أوامر الـ /)
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("profit", show_profit))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(الارباح|ارباح)$"), show_profit))
+    app.add_handler(CommandHandler("reset", reset_all))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^تصفير$"), reset_all))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^صفر$"), reset_supplier_report))
+    app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
+    app.add_handler(CommandHandler("report", show_report))
+    app.add_handler(CommandHandler("myreport", show_supplier_report))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تقاريري|تقريري)$"), show_supplier_report))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(التقارير|تقرير|تقارير)$"), show_report))
+    app.add_handler(CallbackQueryHandler(cancel_edit, pattern=r"^cancel_edit_.*$"))
+
+    # الطلبات غير المكتملة
+    app.add_handler(CommandHandler("incomplete", show_incomplete_orders))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(طلبات|الطلبات|طلبات غير مكتملة|طلبات ناقصة)$"), show_incomplete_orders))
+    app.add_handler(CallbackQueryHandler(handle_incomplete_order_selection, pattern=r"^(load_incomplete_|cancel_incomplete)"))
+    app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
+    app.add_handler(CallbackQueryHandler(edit_prices, pattern=r"^edit_prices_"))
+    app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern=r"^start_new_order$"))
+    
+    # أمر /zones
+    app.add_handler(CommandHandler("zones", list_zones))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(مناطق|المناطق)$"), list_zones))
+
+    # ConversationHandler لعدد المحلات (يستخدم نمط places_data|{order_id}|{number})
+    # هذا يحل مشكلة "الطلبية غير موجودة" عند الضغط على الأزرار
+    places_conv_handler = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(handle_places_count_data, pattern=r"^places_data\|[^|]+\|[^|]+$"),
+        ],
+        states={
+            ASK_PLACES_COUNT: [
+                MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, handle_places_count_data),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_places_count_data),
+            ],
+        },
+        fallbacks=[
+            CommandHandler("cancel", lambda u, c: ConversationHandler.END),
+            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
+        ]
+    )
+    app.add_handler(places_conv_handler)
+
+    # ConversationHandler لإنشاء وتسعير الطلبات وإضافة المنتجات
+    order_creation_conv_handler = ConversationHandler(
+        entry_points=[
+            # 🌟 السطر الحاسم: يلتقط أي نص ليس أمراً لبدء طلبية جديدة
+            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
+            
+            # Callbacks لعملية التسعير والإضافة (تستخدم نمط المفتاح القصير UUID)
+            CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$"), 
+            CallbackQueryHandler(add_new_product_callback, pattern=r"^add_product_to_order_.*$"),
+            CallbackQueryHandler(delete_product_callback, pattern=r"^delete_specific_product_.*$"), 
+            CallbackQueryHandler(confirm_delete_product_by_button_callback, pattern=r"^confirm_delete_key_.*$"),
+            CallbackQueryHandler(cancel_delete_product_callback, pattern=r"^cancel_delete_product_.*$"),
+        ],
+        states={
+            ASK_BUY: [
+                # يستدعي receive_buy_price الذي تم تعديله ليسمح بالصفر وينتقل تلقائياً
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
+            ],
+            ASK_PRODUCT_NAME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_product_name),
+                CallbackQueryHandler(cancel_add_product_callback, pattern=r"^cancel_add_product_.*$")
+            ],
+        },
+        fallbacks=[
+            CommandHandler("cancel", lambda u, c: ConversationHandler.END),
+            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
+        ]
+    )
+    app.add_handler(order_creation_conv_handler)
+    
+    # 4. تشغيل البوت
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    
 
 
 async def show_supplier_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1788,6 +1880,9 @@ async def handle_incomplete_order_selection(update: Update, context: ContextType
     
 if __name__ == '__main__':
     try:
-        main()
+        # 🌟 هذا هو السطر الذي ينفذ دالة main() 🌟
+        main() 
     except Exception as e:
-        logger.critical(f"A critical error occurred in main execution: {e}", exc_info=True)
+        # تأكد من أن جملة الطباعة مكتملة (كما يلي)
+        import logging
+        logging.critical(f"A critical error occurred in main execution: {e}", exc_info=True)
