@@ -863,7 +863,7 @@ async def receive_new_product_name(update: Update, context: ContextTypes.DEFAULT
 async def request_places_count_standalone(chat_id: int, context: ContextTypes.DEFAULT_TYPE, user_id: str, order_id: str):
     orders = context.application.bot_data['orders']
     
-    # ✅ التعديل الرئيسي: حذف رسالة الأزرار القديمة
+    # ✅ (إصلاح مشكلة حذف الأزرار): حذف رسالة الأزرار القديمة
     try:
         await delete_last_button_message(context, user_id)
     except Exception as e:
@@ -879,9 +879,10 @@ async def request_places_count_standalone(chat_id: int, context: ContextTypes.DE
     # تحديد عدد المحلات السابق (إذا كان موجوداً)
     current_places_count = order.get("places_count", "غير محدد")
 
+    # 🌟 التعديل هنا: نص الرسالة حسب المعنى الذي تريده لـ "عدد المحلات"
     prompt = (
-        "اذا كانت الطلبية *تذهب لأكثر من محل*، أرسل رقم عدد المحلات الكلي.\n"
-        "اذا كانت الطلبية *تذهب لمحل واحد فقط*، أرسل *1*.\n"
+        "الرجاء إرسال *عدد المحلات* التي قمت بزيارتها لإكمال هذه الطلبية.\n"
+        "هذا العدد يمثل اللفات التي قمت بها.\n"
         f"\n(العدد الحالي المسجل: {current_places_count})"
     )
     
