@@ -1786,5 +1786,8 @@ async def handle_incomplete_order_selection(update: Update, context: ContextType
             pass
     
     
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception as e:
+        logger.critical(f"A critical error occurred in main execution: {e}", exc_info=True)
