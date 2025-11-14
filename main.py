@@ -1619,7 +1619,7 @@ def main():
             CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$"),
             CallbackQueryHandler(add_new_product_callback, pattern=r"^add_product_to_order_.*$"),
             CallbackQueryHandler(delete_product_callback, pattern=r"^delete_specific_product_.*$"), 
-            CallbackQueryHandler(confirm_delete_product_by_button_callback, pattern=r"^confirm_delete_key_.*$"), 
+            CallbackQueryHandler(confirm_delete_product_by_button_callback, pattern=r"^confirm_delete_key_.*$"),
             CallbackQueryHandler(cancel_delete_product_callback, pattern=r"^cancel_delete_product_.*$")
         ],
         states={
