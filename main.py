@@ -1622,7 +1622,7 @@ def main():
     )
     app.add_handler(delete_order_conv_handler)
 
-    # ConversationHandler لإنشاء وتسعير الطلبات وإضافة المنتجات
+    # ConversationHandler لإنشاء وتسعير الطلبات وإضافة المنتجات
     order_creation_conv_handler = ConversationHandler(
         entry_points=[
             MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
