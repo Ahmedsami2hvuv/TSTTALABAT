@@ -811,7 +811,7 @@ async def receive_new_product_name(update: Update, context: ContextTypes.DEFAULT
 async def request_places_count_standalone(chat_id: int, context: ContextTypes.DEFAULT_TYPE, user_id: str, order_id: str):
     orders = context.application.bot_data['orders']
     
-    # ✅ (إصلاح مشكلة حذف الأزرار): حذف رسالة الأزرار القديمة
+    # حذف رسالة الأزرار القديمة
     try:
         await delete_last_button_message(context, user_id)
     except Exception as e:
@@ -832,15 +832,13 @@ async def request_places_count_standalone(chat_id: int, context: ContextTypes.DE
         f"\n(العدد الحالي المسجل: {current_places_count})"
     )
     
-    # 🌟 التعديل الرئيسي: إنشاء أزرار الأرقام من 1 إلى 10
     buttons = []
-    # مفتاح فريد لتحديد الطلبية عند ضغط الزر (للتأكد من مطابقة النمط في main)
-    unique_key = str(uuid.uuid4())[:8] 
+    # 🌟 التعديل هنا: نستخدم order_id مباشرة في النمط
     
     # إنشاء الأزرار من 1 إلى 10
     for i in range(1, 11):
-        # النمط: places_data_{unique_key}_{number}
-        callback_data = f"places_data_{unique_key}_{i}"
+        # النمط الجديد: places_data|{order_id}|{number}
+        callback_data = f"places_data|{order_id}|{i}"
         buttons.append(InlineKeyboardButton(str(i), callback_data=callback_data))
         
     # ترتيب الأزرار في صفوف (5 أزرار في كل صف)
@@ -849,12 +847,12 @@ async def request_places_count_standalone(chat_id: int, context: ContextTypes.DE
         keyboard.append(buttons[i:i+5])
 
     # إضافة زر إلغاء/تخطي
-    keyboard.append([InlineKeyboardButton("❌ إلغاء / تخطي", callback_data=f"places_data_{unique_key}_cancel")])
+    # النمط الجديد لزر الإلغاء: places_data|{order_id}|cancel
+    keyboard.append([InlineKeyboardButton("❌ إلغاء / تخطي", callback_data=f"places_data|{order_id}|cancel")])
 
     markup = InlineKeyboardMarkup(keyboard)
     
-    # ننتقل إلى حالة طلب عدد المحلات
-    context.user_data[user_id]["order_id"] = order_id
+    # ❌ تم إزالة: context.user_data[user_id]["order_id"] = order_id (سنقرأه من الزر)
     context.user_data[user_id]["places_count_requested"] = True
     
     msg = await context.bot.send_message(chat_id=chat_id, text=prompt, reply_markup=markup, parse_mode="Markdown")
@@ -871,47 +869,61 @@ async def request_places_count_standalone(chat_id: int, context: ContextTypes.DE
 async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     معالجة مدخلات عدد المحلات:
-    1. عند ضغط زر (CallbackQuery)
-    2. عند إدخال رقم نصياً (Message)
+    1. عند ضغط زر (CallbackQuery) - يقرأ order_id من الزر.
+    2. عند إدخال رقم نصياً (Message) - يقرأ order_id من user_data (لأن هذه هي الحالة الوحيدة المتبقية لقراءته من الذاكرة).
     """
     orders = context.application.bot_data['orders']
     user_id = str(update.effective_user.id)
     chat_id = update.effective_chat.id
-    # يجب أن يكون order_id موجوداً في user_data بناءً على الدوال السابقة
-    order_id = context.user_data.get(user_id, {}).get("order_id")
     
     places_count = None
-    is_callback_query = False
+    order_id = None # يجب تعيينه هنا
 
     if update.callback_query:
-        is_callback_query = True
         query = update.callback_query
         await query.answer()
         
+        # 🌟 التعديل الرئيسي: استخراج order_id من بيانات الزر الجديد: places_data|{order_id}|{number}
+        try:
+            # البيانات مفصولة بعلامة "|"
+            parts = query.data.split('|')
+            order_id = parts[1] 
+            count_or_cancel_str = parts[2]
+        except IndexError:
+            logger.error(f"[{chat_id}] Failed to parse order_id from button data: {query.data}")
+            await query.edit_message_text("❌ خطأ في قراءة معلومات الطلبية من الزر. يرجى المحاولة كتابةً.")
+            return ConversationHandler.END # إنهاء العملية في حالة فشل القراءة
+
         # 1. معالجة زر الإلغاء/التخطي
-        if query.data.endswith("_cancel"):
-            # ✅ التنفيذ الصحيح عند الإلغاء: إنشاء الفاتورة النهائية
+        if count_or_cancel_str == "cancel":
             await query.edit_message_text("تم إلغاء عملية تحديد عدد المحلات. جارٍ إنشاء الفاتورة النهائية...")
-            await generate_invoice_final(chat_id, context, user_id, order_id) # استدعاء الدالة
+            await generate_invoice_final(chat_id, context, user_id, order_id) 
             return ConversationHandler.END
             
         # 2. استخراج الرقم من ضغطة الزر
         try:
-            count_str = query.data.split('_')[-1]
-            places_count = int(count_str)
+            places_count = int(count_or_cancel_str)
         except Exception:
-            logger.error(f"[{chat_id}] Failed to parse places count from button data: {query.data}")
+            # يجب أن لا يحدث هذا إذا كان الزر يحمل رقماً صحيحاً
             await query.edit_message_text("❌ خطأ في قراءة عدد المحلات من الزر. يرجى المحاولة كتابةً.")
             return ASK_PLACES_COUNT 
 
-        # ✅ (إصلاح النقص) حذف رسالة الأزرار بعد الضغط عليها بنجاح
+        # حذف رسالة الأزرار
         try:
             await query.message.delete()
         except:
             pass
             
     elif update.message:
-        # 3. معالجة إدخال الرقم يدوياً
+        # 3. معالجة إدخال الرقم يدوياً: نقرأ order_id من الذاكرة (وهذا هو المسار البديل)
+        # ⚠️ يجب أن يكون order_id لا يزال في الذاكرة لتنجح هذه الخطوة في حالة الكتابة يدوياً ⚠️
+        order_id = context.user_data.get(user_id, {}).get("order_id")
+
+        # إذا كانت الطلبية غير موجودة في الذاكرة (user_data)، لا يمكن إكمال العملية يدوياً
+        if not order_id:
+             await update.message.reply_text("❌ الطلبية غير موجودة في الذاكرة. يرجى البدء من جديد.")
+             return ConversationHandler.END
+        
         text = update.message.text.strip()
         
         if text.isdigit():
@@ -930,14 +942,14 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
             logger.warning(f"[{chat_id}] Could not delete messages in places count handler: {e}")
 
     # 4. المنطق المشترك للحفظ وإكمال الطلبية
+    if order_id not in orders:
+        await context.bot.send_message(chat_id=chat_id, text="❌ الطلبية غير موجودة في قاعدة البيانات.")
+        return ConversationHandler.END
+        
     if places_count is None:
-        # هذه الحالة يجب أن تحدث فقط عند فشل القراءة، وقد تمت معالجتها أعلاه
+        # يجب أن لا يصل هنا بعد معالجة الأخطاء
         await context.bot.send_message(chat_id=chat_id, text="❌ لم يتم تحديد عدد المحلات. يرجى المحاولة مرة أخرى.")
         return ASK_PLACES_COUNT
-        
-    if order_id not in orders:
-        await context.bot.send_message(chat_id=chat_id, text="❌ الطلبية غير موجودة.")
-        return ConversationHandler.END
         
     # حفظ عدد المحلات
     orders[order_id]["places_count"] = places_count
@@ -946,7 +958,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
     # حفظ البيانات
     context.application.create_task(save_data_in_background(context))
     
-    # ✅ الاستدعاء النهائي لدالة إنشاء الفاتورة (يجب أن يتم هذا في كلا الحالتين)
+    # الاستدعاء النهائي لدالة إنشاء الفاتورة
     await generate_invoice_final(chat_id, context, user_id, order_id) 
 
     return ConversationHandler.END
@@ -1659,7 +1671,8 @@ def main():
     # ConversationHandler لعدد المحلات
     places_conv_handler = ConversationHandler(
         entry_points=[
-            CallbackQueryHandler(handle_places_count_data, pattern=r"^places_data_[a-f0-9]{8}_\d+$"),
+            # النمط الجديد: places_data|{أي نص}|{أي نص أو رقم}
+            CallbackQueryHandler(handle_places_count_data, pattern=r"^places_data\|[^|]+\|[^|]+$"),
         ],
         states={
             ASK_PLACES_COUNT: [
