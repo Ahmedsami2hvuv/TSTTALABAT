@@ -876,21 +876,40 @@ async def request_places_count_standalone(chat_id: int, context: ContextTypes.DE
 
     order = orders[order_id]
     
-    # تحديد عدد المحلات السابق (إذا كان موجوداً)
     current_places_count = order.get("places_count", "غير محدد")
 
-    # 🌟 التعديل هنا: نص الرسالة حسب المعنى الذي تريده لـ "عدد المحلات"
     prompt = (
-        "الرجاء إرسال *عدد المحلات* التي قمت بزيارتها لإكمال هذه الطلبية.\n"
+        "الرجاء تحديد أو إرسال *عدد المحلات* التي قمت بزيارتها لإكمال هذه الطلبية.\n"
         "هذا العدد يمثل اللفات التي قمت بها.\n"
         f"\n(العدد الحالي المسجل: {current_places_count})"
     )
+    
+    # 🌟 التعديل الرئيسي: إنشاء أزرار الأرقام من 1 إلى 10
+    buttons = []
+    # مفتاح فريد لتحديد الطلبية عند ضغط الزر (للتأكد من مطابقة النمط في main)
+    unique_key = str(uuid.uuid4())[:8] 
+    
+    # إنشاء الأزرار من 1 إلى 10
+    for i in range(1, 11):
+        # النمط: places_data_{unique_key}_{number}
+        callback_data = f"places_data_{unique_key}_{i}"
+        buttons.append(InlineKeyboardButton(str(i), callback_data=callback_data))
+        
+    # ترتيب الأزرار في صفوف (5 أزرار في كل صف)
+    keyboard = []
+    for i in range(0, len(buttons), 5):
+        keyboard.append(buttons[i:i+5])
+
+    # إضافة زر إلغاء/تخطي
+    keyboard.append([InlineKeyboardButton("❌ إلغاء / تخطي", callback_data=f"places_data_{unique_key}_cancel")])
+
+    markup = InlineKeyboardMarkup(keyboard)
     
     # ننتقل إلى حالة طلب عدد المحلات
     context.user_data[user_id]["order_id"] = order_id
     context.user_data[user_id]["places_count_requested"] = True
     
-    msg = await context.bot.send_message(chat_id=chat_id, text=prompt, parse_mode="Markdown")
+    msg = await context.bot.send_message(chat_id=chat_id, text=prompt, reply_markup=markup, parse_mode="Markdown")
     
     # حفظ رسالة السؤال للحذف
     context.user_data.setdefault(user_id, {}).setdefault('messages_to_delete', []).append({
@@ -902,129 +921,83 @@ async def request_places_count_standalone(chat_id: int, context: ContextTypes.DE
     return ASK_PLACES_COUNT
     
 async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    معالجة مدخلات عدد المحلات:
+    1. عند ضغط زر (CallbackQuery)
+    2. عند إدخال رقم نصياً (Message)
+    """
     orders = context.application.bot_data['orders']
-    pricing = context.application.bot_data['pricing']
-    daily_profit = context.application.bot_data['daily_profit']
+    user_id = str(update.effective_user.id)
+    chat_id = update.effective_chat.id
+    order_id = context.user_data.get(user_id, {}).get("order_id")
     
-    try:
-        places = None
-        chat_id = update.effective_chat.id
-        user_id = str(update.effective_user.id) 
-        logger.info(f"[{chat_id}] handle_places_count_data triggered by user {user_id}. Update type: {'CallbackQuery' if update.callback_query else 'Message'}. User data: {json.dumps(context.user_data.get(user_id), indent=2)}")
+    places_count = None
 
-        context.user_data.setdefault(user_id, {})
-        if 'messages_to_delete' not in context.user_data[user_id]:
-            context.user_data[user_id]['messages_to_delete'] = []
-
-        order_id_to_process = None 
-
-        if update.callback_query:
-            query = update.callback_query
-            logger.info(f"[{chat_id}] Places count callback query received: {query.data}")
-            await query.answer()
-            
-            try:
-                parts = query.data.split('_')
-                if len(parts) == 4 and parts[0] == "places" and parts[1] == "data":
-                    order_id_to_process = parts[2] 
-                    
-                    if order_id_to_process not in orders:
-                        logger.error(f"[{chat_id}] Order ID '{order_id_to_process}' from callback data not found in global orders.")
-                        await context.bot.send_message(chat_id=chat_id, text="باعلي هيو الطلبية الي ددوس عدد محلاتها ماهيه ولا دكلي وينهيا . تريد سوي طلب جديد")
-                        if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
-                            del context.user_data[user_id]["current_active_order_id"]
-                        return ConversationHandler.END 
-
-                    places = int(parts[3])
-                    if query.message:
-                        try:
-                            await context.bot.delete_message(chat_id=query.message.chat_id, message_id=query.message.message_id)
-                        except Exception as e:
-                            logger.warning(f"[{chat_id}] Could not delete places message {query.message.message_id} directly: {e}. Proceeding.")
-
-                else:
-                    raise ValueError(f"Unexpected callback_data format for places count: {query.data}")
-            except (ValueError, IndexError) as e:
-                logger.error(f"[{chat_id}] Failed to parse places count from callback data '{query.data}': {e}", exc_info=True)
-                await context.bot.send_message(chat_id=chat_id, text="😐الدكمة زربت سوي طلب جديد.")
-                return ConversationHandler.END 
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
         
-        elif update.message: 
-            context.user_data[user_id]['messages_to_delete'].append({'chat_id': update.message.chat_id, 'message_id': update.message.message_id})
-            logger.info(f"[{chat_id}] Received text message for places count from user {user_id}: '{update.message.text}'")
+        # 1. معالجة زر الإلغاء/التخطي
+        if query.data.endswith("_cancel"):
+            await query.edit_message_text("تم إلغاء عملية تحديد عدد المحلات. جارٍ إنشاء الفاتورة النهائية...")
+            await generate_invoice_final(chat_id, context, user_id, order_id) # يفترض وجود هذه الدالة
+            return ConversationHandler.END
             
-            order_id_to_process = context.user_data[user_id].get("current_active_order_id")
+        # 2. استخراج الرقم من ضغطة الزر
+        try:
+            count_str = query.data.split('_')[-1]
+            places_count = int(count_str)
+        except Exception:
+            logger.error(f"[{chat_id}] Failed to parse places count from button data: {query.data}")
+            await query.edit_message_text("❌ خطأ في قراءة عدد المحلات من الزر. يرجى المحاولة كتابةً.")
+            return ASK_PLACES_COUNT 
 
-            if not order_id_to_process or order_id_to_process not in orders:
-                 logger.warning(f"[{chat_id}] Places count text input: No current active order for user {user_id} or order {order_id_to_process} is invalid.")
-                 msg_error = await context.bot.send_message(chat_id=chat_id, text="عذراً، ماكو طلبية حالية منتظر عدد محلاتها أو الطلبية قديمة جداً. الرجاء استخدم الأزرار لتحديد عدد المحلات، أو بدء طلبية جديدة.", parse_mode="Markdown")
-                 context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
-                 if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
-                            del context.user_data[user_id]["current_active_order_id"]
-                 return ConversationHandler.END 
-
-            if not update.message.text.strip().isdigit(): 
-                logger.warning(f"[{chat_id}] Places count text input: Non-integer input from user {user_id}: '{update.message.text}'")
-                msg_error = await context.bot.send_message(chat_id=chat_id, text="😐يابه دوس رقم صحيح.")
-                context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
-                return ASK_PLACES_COUNT 
+        # حذف رسالة الأزرار
+        try:
+            await query.message.delete()
+        except:
+            pass
             
-            try:
-                places = int(update.message.text.strip())
-                if places < 0:
-                    logger.warning(f"[{chat_id}] Places count text input: Negative value from user {user_id}: '{update.message.text}'")
-                    msg_error = await context.bot.send_message(chat_id=chat_id, text="عدد المحلات يجب أن يكون رقماً موجباً. الرجاء إدخال عدد المحلات بشكل صحيح.")
-                    context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
-                    return ASK_PLACES_COUNT 
-            except ValueError as e: 
-                logger.error(f"[{chat_id}] Places count text input: ValueError for user {user_id} with input '{update.message.text}': {e}", exc_info=True)
-                msg_error = await context.bot.send_message(chat_id=chat_id, text="😐يابه ددوس عدل.")
-                context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
-                return ASK_PLACES_COUNT 
+    elif update.message:
+        # 3. معالجة إدخال الرقم يدوياً
+        text = update.message.text.strip()
         
-        if places is None or order_id_to_process is None:
-            logger.warning(f"[{chat_id}] handle_places_count_data: No valid places count or order ID to process.")
-            await context.bot.send_message(chat_id=chat_id, text="عذراً، لم أتمكن من فهم عدد المحلات أو الطلبية. الرجاء إدخال رقم صحيح أو البدء بطلبية جديدة.")
-            if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
-                            del context.user_data[user_id]["current_active_order_id"]
-            return ConversationHandler.END 
+        if text.isdigit():
+            places_count = int(text)
+        else:
+            await update.message.reply_text("الرجاء إرسال رقم صحيح لعدد المحلات.")
+            return ASK_PLACES_COUNT # ابق في نفس الحالة
 
-        if 'places_count_message' in context.user_data[user_id]:
-            msg_info = context.user_data[user_id]['places_count_message']
-            try:
+        # حذف رسالة السؤال ورسالة المستخدم لتنظيف المحادثة
+        try:
+            for msg_info in context.user_data.get(user_id, {}).get('messages_to_delete', []):
                 await context.bot.delete_message(chat_id=msg_info['chat_id'], message_id=msg_info['message_id'])
-            except Exception as e:
-                logger.warning(f"[{chat_id}] Could not delete places count message: {e}")
-            del context.user_data[user_id]['places_count_message']
+            context.user_data[user_id]['messages_to_delete'] = [] # مسح القائمة
+            await update.message.delete()
+        except Exception as e:
+            logger.warning(f"[{chat_id}] Could not delete messages in places count handler: {e}")
 
-        orders[order_id_to_process]["places_count"] = places
-        # هنا لازم نحفظ daily_profit المحدثة
-        # نحدث daily_profit مباشرة في bot_data أو عبر دالة حفظ عامة
-        context.application.bot_data['daily_profit'] = daily_profit # تحديث القيمة في bot_data
-        context.application.create_task(save_data_in_background(context))
-
-        logger.info(f"[{chat_id}] Places count {places} saved for order {order_id_to_process}. Current user_data: {json.dumps(context.user_data.get(user_id), indent=2)}")
-
-        if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
-            logger.info(f"[{chat_id}] Scheduling deletion of {len(context.user_data[user_id].get('messages_to_delete', []))} old messages after showing final options for user {user_id}.")
-            for msg_info in context.user_data[user_id]['messages_to_delete']:
-                context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
-            context.user_data[user_id]['messages_to_delete'].clear()
+    # 4. المنطق المشترك للحفظ وإكمال الطلبية
+    if places_count is None:
+        await context.bot.send_message(chat_id=chat_id, text="❌ لم يتم تحديد عدد المحلات. يرجى المحاولة مرة أخرى.")
+        return ASK_PLACES_COUNT
         
-        await show_final_options(chat_id, context, user_id, order_id_to_process, message_prefix="هلهل كللوش.")
-        
-        if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
-            del context.user_data[user_id]["current_active_order_id"]
-            logger.info(f"[{chat_id}] Cleared current_active_order_id for user {user_id} after processing places count.")
-
-        return ConversationHandler.END 
-    except Exception as e:
-        logger.error(f"[{chat_id}] Error in handle_places_count_data: {e}", exc_info=True)
-        await context.bot.send_message(chat_id=chat_id, text="عذراً، حدث خطأ أثناء معالجة عدد المحلات. الرجاء بدء طلبية جديدة.", parse_mode="Markdown")
+    if order_id not in orders:
+        await context.bot.send_message(chat_id=chat_id, text="❌ الطلبية غير موجودة.")
         return ConversationHandler.END
+        
+    # حفظ عدد المحلات
+    orders[order_id]["places_count"] = places_count
+    logger.info(f"[{chat_id}] Places count saved: {places_count} for order {order_id}.")
+    
+    # حفظ البيانات وإنشاء الفاتورة النهائية
+    context.application.create_task(save_data_in_background(context))
+    
+    # استدعاء الدالة التي تكمل عملية الفاتورة
+    await generate_invoice_final(chat_id, context, user_id, order_id) # يفترض وجود هذه الدالة
 
-from urllib.parse import quote
-
+    return ConversationHandler.END
+    
 async def show_final_options(chat_id, context, user_id, order_id, message_prefix=None):
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
