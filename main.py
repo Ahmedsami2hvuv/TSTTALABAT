@@ -267,39 +267,60 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def receive_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    تستقبل الطلبية بالتنسيق:
+    السطر الأول: اسم المنطقة
+    السطر الثاني: رقم الزبون
+    السطر الثالث+: المنتجات
+    """
     orders = context.application.bot_data['orders']
     user_id = str(update.message.from_user.id)
     chat_id = update.effective_chat.id
-    
     message_text = update.message.text
+    
+    # تقسيم الرسالة إلى سطور
     lines = [line.strip() for line in message_text.split('\n') if line.strip()]
     
-    # يجب أن تحتوي الرسالة على سطرين على الأقل (عنوان ومنتج)
-    if len(lines) < 2:
+    # 1. التحقق من التنسيق: يجب أن يكون هناك 3 أسطر على الأقل
+    if len(lines) < 3:
+        # نخرج بصمت إذا كانت الرسالة غير كافية
         return 
 
-    title = lines[0]
-    products = lines[1:]
-    
-    # 1. استخراج رقم الهاتف
-    phone_match = re.search(r"(\d{10,})", title)
+    # 2. استخراج البيانات حسب السطر
+    raw_zone_name = lines[0]
+    raw_phone_number = lines[1]
+    products = lines[2:] # المنتجات تبدأ من السطر الثالث فصاعداً
+
+    # 3. معالجة رقم الهاتف وتنظيفه
+    phone_match = re.search(r"(\d{10,})", raw_phone_number)
     phone_number = phone_match.group(1) if phone_match else "غير متوفر"
+
+    if phone_number == "غير متوفر":
+        await update.message.reply_text("❌ لم نتمكن من العثور على رقم زبون صالح (10 أرقام أو أكثر) في السطر المخصص.")
+        return 
+
+    # 4. معالجة المنطقة وحساب سعر التوصيل
+    zone_name = raw_zone_name 
     
-    if phone_match:
-        # إزالة الرقم من العنوان وتنظيف العنوان
-        title = title.replace(phone_match.group(0), "").strip()
-        title = re.sub(r"[\(\)\[\]\{\}-/\\,;]+", "", title).strip()
-
-    if not title:
-         await update.message.reply_text("❌ الرجاء التأكد من كتابة العنوان في السطر الأول.")
-         return 
-
-    # 2. إنشاء الطلبية وحفظها
+    # استدعاء الدالة لحساب سعر التوصيل (المفترض وجودها ضمن الواردات)
+    try:
+        delivery_price, is_valid_zone = get_delivery_price(zone_name)
+    except NameError:
+        # هذا الخطأ يعني أن get_delivery_price غير مستوردة في بداية ملفك
+        await update.message.reply_text("❌ خطأ برمجي: دالة 'get_delivery_price' غير مستوردة. يرجى مراجعة بداية الملف.")
+        return
+    
+    if not is_valid_zone:
+        await update.message.reply_text(f"❌ لم نجد المنطقة: *{zone_name}* في قائمة المناطق. الرجاء التأكد من اسم المنطقة.", parse_mode="Markdown")
+        return
+    
+    # 5. إنشاء معرف فريد للطلبية وحفظها
     order_id = uuid.uuid4().hex[:8] 
 
     orders[order_id] = {
         "order_id": order_id,
-        "title": title,
+        "zone_name": zone_name,
+        "delivery_price": delivery_price, 
         "phone_number": phone_number,
         "products": products,
         "customer_id": user_id,
@@ -310,11 +331,15 @@ async def receive_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     context.application.create_task(save_data_in_background(context))
 
-    logger.info(f"[{chat_id}] New order created: {order_id}. Title: {title}. Products: {len(products)}")
+    logger.info(f"[{chat_id}] New order created: {order_id}. Zone: {zone_name}. Products: {len(products)}")
 
-    # 3. عرض أزرار المنتجات (باستخدام مفاتيح قصيرة)
+    # 6. إرسال الاستجابة وعرض الأزرار
     await show_buttons(chat_id, context, user_id, order_id, 
-                       confirmation_message=f"✅ تم إنشاء الطلبية: *{title}* (رقم الزبون: {phone_number})\nالآن، ابدأ بتسعير المنتجات:")
+                       confirmation_message=(
+                           f"✅ تم إنشاء الطلبية للمنطقة: *{zone_name}* (توصيل: {delivery_price} د.ع)\n"
+                           f"رقم الزبون المُصحح: {phone_number}\n"
+                           "الآن، ابدأ بتسعير المنتجات:"
+                       ))
 
     return
     
