@@ -421,13 +421,18 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
         completed_products_buttons = []
         pending_products_buttons = []
 
-        for p_name in order["products"]:
+        # ✅ التغيير هنا: استخدمنا enumerate حتى نجيب الـ index (i) مال كل منتج
+        for i, p_name in enumerate(order["products"]):
+            # ✅ التغيير هنا: الـ callback_data صار بي الـ index (i) بدل p_name
+            # هذا يحل مشكلة الاسم الطويل
+            callback_data_for_product = f"{order_id}|{i}" 
+            
             if p_name in pricing.get(order_id, {}) and 'buy' in pricing[order_id].get(p_name, {}) and 'sell' in pricing[order_id].get(p_name, {}):
-                completed_products_buttons.append([InlineKeyboardButton(f"✅ {p_name}", callback_data=f"{order_id}|{p_name}")])
-                logger.info(f"[{chat_id}] Product '{p_name}' in order {order_id} is completed.")
+                completed_products_buttons.append([InlineKeyboardButton(f"✅ {p_name}", callback_data=callback_data_for_product)])
+                logger.info(f"[{chat_id}] Product '{p_name}' (index {i}) in order {order_id} is completed.")
             else:
-                pending_products_buttons.append([InlineKeyboardButton(p_name, callback_data=f"{order_id}|{p_name}")])
-                logger.info(f"[{chat_id}] Product '{p_name}' in order {order_id} is pending. Pricing state for this product: {json.dumps(pricing.get(order_id, {}).get(p_name, {}), indent=2)}")
+                pending_products_buttons.append([InlineKeyboardButton(p_name, callback_data=callback_data_for_product)])
+                logger.info(f"[{chat_id}] Product '{p_name}' (index {i}) in order {order_id} is pending.")
 
         # ✅ إضافة أزرار المنتجات المكتملة أولاً
         final_buttons_list.extend(completed_products_buttons)
@@ -468,7 +473,9 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
             context.user_data[user_id]['messages_to_delete'].clear()
     except Exception as e:
         logger.error(f"[{chat_id}] Error in show_buttons for order {order_id}: {e}", exc_info=True)
-        await context.bot.send_message(chat_id=chat_id, text="ماكدرت اعرض الازرار تريد عدل الطلب .")
+        # ✅ هنا كلش مهم: نطبع الخطأ حتى نعرف إذا المشكلة بعدها بالـ 64 بايت
+        logger.error(f"[{chat_id}] More details on show_buttons error: {e}. This might be a 'Callback data too long' error if product names are extremely long (even as labels).")
+        await context.bot.send_message(chat_id=chat_id, text="ماكدرت اعرض الازرار، يمكن اسم واحد من المنتجات كلش طويل. حاول تعدل الطلب.")
         
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
@@ -488,8 +495,9 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         })
         logger.info(f"[{query.message.chat_id}] Added product selection button message {query.message.message_id} to delete queue.")
 
-        order_id, product = query.data.split('|', 1)
-
+        # ✅ التغيير هنا: راح نقسم الـ callback_data حتى نطلع الـ index
+        order_id, product_index_str = query.data.split('|', 1)
+        
         if order_id not in orders:
             logger.warning(f"[{query.message.chat_id}] Product selected: Order ID '{order_id}' not found.")
             msg_error = await query.edit_message_text("زربت الطلبية مموجوده دديالله سوي طلب جديد.")
@@ -499,12 +507,25 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             })
             return ConversationHandler.END
 
+        # ✅ التغيير هنا: نجيب اسم المنتج من القائمة باستخدام الـ index
+        try:
+            product_index = int(product_index_str)
+            product = orders[order_id]["products"][product_index]
+        except (ValueError, IndexError, KeyError) as e:
+            logger.error(f"[{query.message.chat_id}] Failed to get product from index {product_index_str} for order {order_id}: {e}")
+            msg_error = await query.edit_message_text("ما لكيت هذا المنتج بالطلبية (يمكن الطلب تعدل؟). حاول مرة ثانية.")
+            context.user_data[user_id]['messages_to_delete'].append({
+                'chat_id': msg_error.chat_id,
+                'message_id': msg_error.message_id
+            })
+            return ConversationHandler.END
+
         context.user_data[user_id]["order_id"] = order_id
-        context.user_data[user_id]["product"] = product
+        context.user_data[user_id]["product"] = product # نخزن اسم المنتج الصحيح
 
-        context.user_data[user_id].pop("buy_price", None) # ما نحتاج نمسح buy_price بعد، لأنها راح تنحفظ بنفس المرة
+        context.user_data[user_id].pop("buy_price", None) 
 
-        logger.info(f"[{query.message.chat_id}] Product '{product}' selected for order '{order_id}'. User data after product selection: {json.dumps(context.user_data.get(user_id), indent=2)}")
+        logger.info(f"[{query.message.chat_id}] Product '{product}' (from index {product_index}) selected for order '{order_id}'.")
 
         current_buy = pricing.get(order_id, {}).get(product, {}).get("buy")
         current_sell = pricing.get(order_id, {}).get(product, {}).get("sell")
@@ -1612,7 +1633,7 @@ def main():
     order_creation_conv_handler = ConversationHandler(
         entry_points=[
             MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
-            CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|.+$"),
+            CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|\d+$"),
             CallbackQueryHandler(add_new_product_callback, pattern=r"^add_product_to_order_.*$"),
             CallbackQueryHandler(delete_product_callback, pattern=r"^delete_specific_product_.*$"), 
             CallbackQueryHandler(confirm_delete_product_by_button_callback, pattern=r"^confirm_delete_idx_.*$"), 
