@@ -468,40 +468,109 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
+    last_button_message = context.application.bot_data.get('last_button_message', {})
 
     try:
         query = update.callback_query
         await query.answer()
 
+        # user id كـ string عشان نستخدمه كمفتاح ثابت
         user_id = str(query.from_user.id)
-        order_id, product_id = query.data.split("|", 1)
 
+        # تأكد إن user_data مهيأ
+        context.user_data.setdefault(user_id, {})
+        context.user_data[user_id].setdefault('messages_to_delete', [])
+
+        logger.info(f"[{query.message.chat_id}] Product selected callback from user {user_id}: {query.data}. User data at product_selected start: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
+
+        # إضافة رسالة الأزرار الحالية لقائمة الحذف لاحقاً
+        context.user_data[user_id]['messages_to_delete'].append({
+            'chat_id': query.message.chat_id,
+            'message_id': query.message.message_id
+        })
+
+        # تقسيم callback_data إلى order_id و product_id (أخذ كل شيء بعد الفاصل كـ id)
+        order_id, product_id = query.data.split('|', 1)
+
+        # تحقق من وجود الطلبية
         if order_id not in orders:
-            await query.edit_message_text("الطلبية مموجودة.")
-            return
+            logger.warning(f"[{query.message.chat_id}] Product selected: Order ID '{order_id}' not found.")
+            msg_error = await query.edit_message_text("زربت الطلبية مموجوده دديالله سوي طلب جديد.")
+            # سجيل رسالة الخطأ للحذف المؤقت لو نحتاج
+            context.user_data[user_id]['messages_to_delete'].append({
+                'chat_id': msg_error.chat_id,
+                'message_id': msg_error.message_id
+            })
+            return ConversationHandler.END
 
-        # الحصول على بيانات المنتج
-        product = next((p for p in orders[order_id]["products"] if p["id"] == product_id), None)
-        if not product:
-            await query.edit_message_text("هذا المنتج مموجود.")
-            return
+        # الآن نحاول نجيب المنتج داخل الطلبية
+        # لأننا نعمل تحول تلقائي سابقاً، بعض المنتجات قد تكون strings (قديمة)
+        product_obj = None
+        for p in orders[order_id].get("products", []):
+            # إذا العنصر dict وفيه id
+            if isinstance(p, dict) and p.get("id") == product_id:
+                product_obj = p
+                break
+            # إذا العنصر string (لم يتم تحويله لحد الآن) وافترضوا callback احتوى الاسم كاملاً
+            if isinstance(p, str) and p == product_id:
+                # نعتبر product_id هنا هو الاسم الفعلي
+                # نحوله الآن dict لكي يبقى النظام موحّد
+                import uuid
+                new_p = {"id": uuid.uuid4().hex[:8], "name": p}
+                # استبدل العنصر القديم بالقيمة الجديدة
+                idx = orders[order_id]["products"].index(p)
+                orders[order_id]["products"][idx] = new_p
+                product_obj = new_p
+                # مهم: لأن callback_data كان اسم المنتج القديم، نحتاج نضع ID جديد لهذا السياق
+                product_id = new_p["id"]
+                break
 
-        p_name = product["name"]
+        if not product_obj:
+            # لم نجد المنتج — ردي للمستخدم واطبع لوق للمساعدة
+            logger.error(f"[{query.message.chat_id}] Product with id/name '{product_id}' not found in order {order_id}. Order products: {orders[order_id].get('products')}")
+            await query.edit_message_text("هذا المنتج مموجود أو صار خلل. حاول مرة ثانية أو حمل الطلبية من جديد.")
+            return ConversationHandler.END
 
-        # 🔥 إصلاح: تهيئة user_data[user_id] إذا مموجود
-        if user_id not in context.user_data:
-            context.user_data[user_id] = {}
+        p_name = product_obj.get("name", str(product_id))
 
-        # تخزين البيانات
+        # تأكد نستخدم مفاتيح ثابتة داخل user_data
         context.user_data[user_id]["order_id"] = order_id
         context.user_data[user_id]["product"] = product_id
+        # مسح أي buy_price قديمة
+        context.user_data[user_id].pop("buy_price", None)
 
-        await query.message.reply_text(f"دز سعر الشراء والبيع للمنتج: {p_name}")
+        logger.info(f"[{query.message.chat_id}] Product '{p_name}' (id={product_id}) selected for order '{order_id}'. User data after product selection: {json.dumps(context.user_data.get(user_id), indent=2)}")
+
+        # الآن نقرأ الأسعار الحالية إن وُجدت (نستخدم product_id كمفتاح في pricing)
+        current_buy = pricing.get(order_id, {}).get(product_id, {}).get("buy")
+        current_sell = pricing.get(order_id, {}).get(product_id, {}).get("sell")
+
+        if current_buy is not None and current_sell is not None:
+            message_prompt = f"سعر *'{p_name}'* حالياً هو شراء: {format_float(current_buy)}، بيع: {format_float(current_sell)}.\n" \
+                             f"باعلي سعر الشراء الجديد بالسطر الأول، وسعر البيع بالسطر الثاني؟ (أو دز نفس الأسعار إذا ماكو تغيير)"
+        else:
+            message_prompt = (
+                f"تمام، بيش اشتريت *'{p_name}'*؟ (بالسطر الأول)\n"
+                f"وبييش راح تبيعه؟ (بالسطر الثاني)\n\n"
+                f"💡 **إذا كان سعر الشراء هو نفسه سعر البيع،** اكتب الرقم مرة واحدة فقط."
+            )
+
+        msg = await query.message.reply_text(message_prompt, parse_mode="Markdown")
+        # سجل رسالة الاستجابة للحذف لاحقاً
+        context.user_data[user_id]['messages_to_delete'].append({
+            'chat_id': msg.chat_id,
+            'message_id': msg.message_id
+        })
+
         return ASK_BUY
 
     except Exception as e:
         logger.error(f"product_selected error: {e}", exc_info=True)
-        await query.message.reply_text("خطأ.")
+        # رد لطيف للمستخدم
+        try:
+            await query.message.reply_text("ههه صار خطا باختيار المنتج. دياللة سوي طلب جديد.")
+        except:
+            pass
         return ConversationHandler.END
         
 async def add_new_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
