@@ -16,7 +16,7 @@ from telegram.ext import (
 
 # ✅ استيراد الدوال الخاصة بالمناطق من الملف الجديد
 from features.delivery_zones import (
-    list_zones
+    list_zones # تم حذف get_delivery_price لحل مشكلة ImportError
 )
 
 # ✅ تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
@@ -36,8 +36,30 @@ DAILY_PROFIT_FILE = os.path.join(DATA_DIR, "daily_profit.json")
 COUNTER_FILE = os.path.join(DATA_DIR, "invoice_counter.txt")
 LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
 
-# ✅ قراءة التوكن من المتغيرات البيئية (يفترض أنك ضايفه بـ Railway)
-TOKEN = os.getenv("TOKEN")
+# ----------------------------------------------------------------------
+# ⭐⭐ جلب التوكن ومعرّف المالك (حل مشاكل InvalidToken) ⭐⭐
+# ----------------------------------------------------------------------
+
+# ✅ قراءة التوكن من المتغيرات البيئية (تم تصحيح اسم المتغير إلى TELEGRAM_BOT_TOKEN)
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+OWNER_ID = os.getenv("OWNER_TELEGRAM_ID") 
+OWNER_PHONE_NUMBER = os.getenv("OWNER_TELEGRAM_PHONE_NUMBER", "+9647733921468")
+
+if TOKEN:
+    # الحل: إزالة أي مسافات مخفية قد تسبب خطأ InvalidToken
+    TOKEN = TOKEN.strip() 
+else:
+    raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set.")
+
+if OWNER_ID is None:
+    raise ValueError("OWNER_TELEGRAM_ID environment variable not set.")
+    
+try:
+    OWNER_ID = int(OWNER_ID)
+except ValueError:
+    raise ValueError("OWNER_TELEGRAM_ID must be a number.")
+
+# ----------------------------------------------------------------------
 
 # ✅ متغيرات التخزين المؤقت في الذاكرة
 orders = {}
@@ -51,7 +73,6 @@ supplier_report_timestamps = {}
 save_lock = threading.Lock()
 save_timer = None
 save_pending = False
-
 # دالة تحميل JSON بشكل آمن (يمكن نقلها إلى ملف utils/data_manager لاحقاً)
 def load_json_file(filepath, default_value, var_name):
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
