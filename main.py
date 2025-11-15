@@ -1108,7 +1108,7 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
 
 from urllib.parse import quote
 
-async def show_final_options(chat_id, context, order_id):
+async def show_final_options(chat_id, context, user_id, order_id, message_prefix=None):
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
 
@@ -1120,7 +1120,13 @@ async def show_final_options(chat_id, context, order_id):
         order = orders[order_id]
         products = order["products"]
 
-        text = f"📦 *الطلب:* {order['title']}\n"
+        text = ""
+
+        # إضافة المقدمة إذا موجودة
+        if message_prefix:
+            text += f"{message_prefix}\n\n"
+
+        text += f"📦 *الطلب:* {order['title']}\n"
         text += "━━━━━━━━━━━━━━\n"
 
         total_profit = 0
@@ -1129,7 +1135,6 @@ async def show_final_options(chat_id, context, order_id):
             p_id = product["id"]
             p_name = product["name"]
 
-            # التأكد من وجود التسعير وفق النظام الجديد
             if p_id in pricing.get(order_id, {}):
                 pr = pricing[order_id][p_id]
 
