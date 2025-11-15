@@ -73,6 +73,10 @@ supplier_report_timestamps = {}
 save_lock = threading.Lock()
 save_timer = None
 save_pending = False
+
+# حالات المحادثة (Conversation States)
+ASK_BUY, ASK_PLACES_COUNT, ASK_PRODUCT_NAME, ASK_PRODUCT_TO_DELETE, ASK_CUSTOMER_PHONE_NUMBER_FOR_DELETION, ASK_FOR_DELETION_CONFIRMATION = range(6)
+
 # دالة تحميل JSON بشكل آمن (يمكن نقلها إلى ملف utils/data_manager لاحقاً)
 def load_json_file(filepath, default_value, var_name):
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
