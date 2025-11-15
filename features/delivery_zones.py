@@ -1,13 +1,40 @@
 import json
 import os
 import logging
-
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-# ✅ إعداد الـ logging لهذا الملف (للتتبع)
+# ✅ تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
+# ----------------------------------------------------------------------
+# ⭐⭐ تصحيح جلب التوكن ومعرّف المالك (حل مشكلة InvalidToken) ⭐⭐
+# ----------------------------------------------------------------------
+
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+OWNER_ID = os.getenv("OWNER_TELEGRAM_ID") 
+OWNER_PHONE_NUMBER = os.getenv("OWNER_TELEGRAM_PHONE_NUMBER", "+9647733921468")
+
+if TOKEN:
+    # الحل الدائم: إزالة أي مسافات مخفية قد تسبب خطأ InvalidToken
+    TOKEN = TOKEN.strip() 
+else:
+    raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set.")
+
+if OWNER_ID is None:
+    raise ValueError("OWNER_TELEGRAM_ID environment variable not set.")
+    
+# التأكد من تحويل الـ OWNER_ID إلى رقم بعد التحقق
+try:
+    OWNER_ID = int(OWNER_ID)
+except ValueError:
+    raise ValueError("OWNER_TELEGRAM_ID must be a number.")
+
+# ----------------------------------------------------------------------
 # ✅ تعريف مسار الملف المحلي للمناطق
 # بما أن الملف هو data/delivery_zones.json، سنبني المسار إليه
 # os.path.dirname(__file__) يعطي مسار الملف الحالي (features)
@@ -15,8 +42,6 @@ logger = logging.getLogger(__name__)
 CURRENT_DIR = os.path.dirname(__file__)
 PARENT_DIR = os.path.dirname(CURRENT_DIR) # هذا يرجع للمجلد الرئيسي (اللي بيه data folder)
 DELIVERY_ZONES_FILE_PATH = os.path.join(PARENT_DIR, "data", "delivery_zones.json")
-
-
 # دالة لتحميل بيانات المناطق من الملف المحلي.
 def load_zones():
     logger.info(f"Attempting to load zones from local file: {DELIVERY_ZONES_FILE_PATH}")
