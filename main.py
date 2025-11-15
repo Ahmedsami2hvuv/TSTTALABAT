@@ -16,7 +16,7 @@ from telegram.ext import (
 
 # ✅ استيراد الدوال الخاصة بالمناطق من الملف الجديد
 from features.delivery_zones import (
-    list_zones # تم إزالة get_delivery_price لحل مشكلة الاستيراد
+    list_zones
 )
 
 # ✅ تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
