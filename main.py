@@ -398,6 +398,23 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
             return
 
         order = orders[order_id]
+
+        # 🔥 إصلاح المنتجات القديمة (string → dict)
+        new_products = []
+        import uuid
+
+        for product in order["products"]:
+            if isinstance(product, str):
+                new_products.append({
+                    "id": uuid.uuid4().hex[:8],
+                    "name": product
+                })
+            else:
+                new_products.append(product)
+
+        order["products"] = new_products
+        # 🔥 انتهى إصلاح المنتجات
+
         final_buttons_list = []
 
         completed = []
@@ -408,8 +425,10 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
             p_id = product["id"]
             p_name = product["name"]
 
-            # تحقق من التسعير
-            if p_id in pricing.get(order_id, {}) and "buy" in pricing[order_id][p_id] and "sell" in pricing[order_id][p_id]:
+            # تحقق من اكتمال التسعير
+            if p_id in pricing.get(order_id, {}) and \
+               "buy" in pricing[order_id][p_id] and \
+               "sell" in pricing[order_id][p_id]:
                 completed.append([InlineKeyboardButton(f"✅ {p_name}", callback_data=f"{order_id}|{p_id}")])
             else:
                 pending.append([InlineKeyboardButton(f"{p_name}", callback_data=f"{order_id}|{p_id}")])
@@ -417,7 +436,7 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
         final_buttons_list.extend(completed)
         final_buttons_list.extend(pending)
 
-        # أزرار ثابتة للتحرير والإضافة والحذف
+        # أزرار ثابتة
         final_buttons_list.append([InlineKeyboardButton("➕ إضافة منتج", callback_data=f"add_product_to_order_{order_id}")])
         final_buttons_list.append([InlineKeyboardButton("🗑️ حذف منتج", callback_data=f"delete_specific_product_{order_id}")])
 
@@ -430,9 +449,14 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
 
         msg_info = last_button_message.get(order_id)
         if msg_info:
-            context.application.create_task(delete_message_in_background(context, chat_id, msg_info["message_id"]))
+            context.application.create_task(
+                delete_message_in_background(context, chat_id, msg_info["message_id"])
+            )
 
-        msg = await context.bot.send_message(chat_id, text, reply_markup=markup, parse_mode="Markdown")
+        msg = await context.bot.send_message(
+            chat_id, text, reply_markup=markup, parse_mode="Markdown"
+        )
+
         last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
 
         context.application.create_task(save_data_in_background(context))
