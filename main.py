@@ -393,145 +393,88 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
     last_button_message = context.application.bot_data['last_button_message']
 
     try:
-        logger.info(f"[{chat_id}] show_buttons called for order {order_id}. User: {user_id}.")
-        logger.info(f"[{chat_id}] Current pricing data for order {order_id} in show_buttons: {json.dumps(pricing.get(order_id), indent=2)}")
-
         if order_id not in orders:
-            logger.warning(f"[{chat_id}] Attempted to show buttons for non-existent order_id: {order_id}")
-            await context.bot.send_message(chat_id=chat_id, text="ترا الطلب مموجود تري سوي طلب جديد.")
-            if user_id in context.user_data:
-                context.user_data[user_id].pop("order_id", None)
-                context.user_data[user_id].pop("product", None)
-                context.user_data[user_id].pop("current_active_order_id", None)
-                context.user_data[user_id].pop("messages_to_delete", None)
+            await context.bot.send_message(chat_id, "الطلبية مموجودة.")
             return
 
         order = orders[order_id]
-
-        # قائمة الأزرار النهائية اللي راح نمليها
         final_buttons_list = []
 
-        # ✅ إضافة زر "إضافة منتج جديد" وزر "مسح منتج" (عام) في صف واحد بالأعلى
-        final_buttons_list.append([
-            InlineKeyboardButton("➕ إضافة منتج", callback_data=f"add_product_to_order_{order_id}"),
-            InlineKeyboardButton("🗑️ مسح منتج", callback_data=f"delete_specific_product_{order_id}")
-        ])
+        completed = []
+        pending = []
 
-        # فصل المنتجات المكتملة عن المنتجات اللي تنتظر التسعير
-        completed_products_buttons = []
-        pending_products_buttons = []
+        # النظام الجديد للمنتجات
+        for product in order["products"]:
+            p_id = product["id"]
+            p_name = product["name"]
 
-        for p_name in order["products"]:
-            if p_name in pricing.get(order_id, {}) and 'buy' in pricing[order_id].get(p_name, {}) and 'sell' in pricing[order_id].get(p_name, {}):
-                completed_products_buttons.append([InlineKeyboardButton(f"✅ {p_name}", callback_data=f"{order_id}|{p_name}")])
-                logger.info(f"[{chat_id}] Product '{p_name}' in order {order_id} is completed.")
+            # تحقق من التسعير
+            if p_id in pricing.get(order_id, {}) and "buy" in pricing[order_id][p_id] and "sell" in pricing[order_id][p_id]:
+                completed.append([InlineKeyboardButton(f"✅ {p_name}", callback_data=f"{order_id}|{p_id}")])
             else:
-                pending_products_buttons.append([InlineKeyboardButton(p_name, callback_data=f"{order_id}|{p_name}")])
-                logger.info(f"[{chat_id}] Product '{p_name}' in order {order_id} is pending. Pricing state for this product: {json.dumps(pricing.get(order_id, {}).get(p_name, {}), indent=2)}")
+                pending.append([InlineKeyboardButton(f"{p_name}", callback_data=f"{order_id}|{p_id}")])
 
-        # ✅ إضافة أزرار المنتجات المكتملة أولاً
-        final_buttons_list.extend(completed_products_buttons)
-        # ✅ ثم إضافة أزرار المنتجات اللي تنتظر التسعير
-        final_buttons_list.extend(pending_products_buttons)
+        final_buttons_list.extend(completed)
+        final_buttons_list.extend(pending)
 
-        # ✅ إضافة زر إلغاء التعديل في الأسفل إذا كان المستخدم في وضع التعديل
-        if context.user_data.get(user_id, {}).get("editing_mode", False):
-            final_buttons_list.append([InlineKeyboardButton("❌ إلغاء التعديل", callback_data=f"cancel_edit_{order_id}")])
+        # أزرار ثابتة للتحرير والإضافة والحذف
+        final_buttons_list.append([InlineKeyboardButton("➕ إضافة منتج", callback_data=f"add_product_to_order_{order_id}")])
+        final_buttons_list.append([InlineKeyboardButton("🗑️ حذف منتج", callback_data=f"delete_specific_product_{order_id}")])
 
         markup = InlineKeyboardMarkup(final_buttons_list)
 
-        message_text = ""
+        text = ""
         if confirmation_message:
-            message_text += f"{confirmation_message}\n\n"
-        message_text += f"دوس على منتج واكتب سعره *{order['title']}*:"
+            text += confirmation_message + "\n\n"
+        text += f"دوس على منتج واكتب سعره *{order['title']}*:"
 
         msg_info = last_button_message.get(order_id)
         if msg_info:
-            logger.info(f"[{chat_id}] Deleting old button message {msg_info['message_id']} for order {order_id} before sending new one.")
-            context.application.create_task(delete_message_in_background(context, chat_id=msg_info["chat_id"], message_id=msg_info["message_id"]))
-            # No del last_button_message[order_id] here, it's updated after new message is sent
+            context.application.create_task(delete_message_in_background(context, chat_id, msg_info["message_id"]))
 
-        msg = await context.bot.send_message(
-            chat_id=chat_id,
-            text=message_text,
-            reply_markup=markup,
-            parse_mode="Markdown"
-        )
-        logger.info(f"[{chat_id}] Sent new button message {msg.message_id} for order {order_id}")
+        msg = await context.bot.send_message(chat_id, text, reply_markup=markup, parse_mode="Markdown")
         last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
-        context.application.create_task(save_data_in_background(context)) 
 
-        if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
-            logger.info(f"[{chat_id}] Scheduling deletion of {len(context.user_data[user_id].get('messages_to_delete', []))} old messages after showing new buttons for user {user_id}.")
-            for msg_info in context.user_data[user_id]['messages_to_delete']:
-                context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
-            context.user_data[user_id]['messages_to_delete'].clear()
+        context.application.create_task(save_data_in_background(context))
+
     except Exception as e:
-        logger.error(f"[{chat_id}] Error in show_buttons for order {order_id}: {e}", exc_info=True)
-        await context.bot.send_message(chat_id=chat_id, text="ماكدرت اعرض الازرار تريد عدل الطلب .")
+        logger.error(f"[{chat_id}] Error in show_buttons: {e}", exc_info=True)
+        await context.bot.send_message(chat_id, "خطأ بعرض الأزرار.")
         
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
-    last_button_message = context.application.bot_data['last_button_message']
 
-    try: 
+    try:
         query = update.callback_query
         await query.answer()
 
         user_id = str(query.from_user.id)
-        logger.info(f"[{query.message.chat_id}] Product selected callback from user {user_id}: {query.data}. User data at product_selected start: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
-
-        context.user_data.setdefault(user_id, {}).setdefault('messages_to_delete', []).append({
-            'chat_id': query.message.chat_id,
-            'message_id': query.message.message_id
-        })
-        logger.info(f"[{query.message.chat_id}] Added product selection button message {query.message.message_id} to delete queue.")
-
-        order_id, product = query.data.split('|', 1)
+        order_id, product_id = query.data.split("|", 1)
 
         if order_id not in orders:
-            logger.warning(f"[{query.message.chat_id}] Product selected: Order ID '{order_id}' not found.")
-            msg_error = await query.edit_message_text("زربت الطلبية مموجوده دديالله سوي طلب جديد.")
-            context.user_data[user_id]['messages_to_delete'].append({
-                'chat_id': msg_error.chat_id,
-                'message_id': msg_error.message_id
-            })
-            return ConversationHandler.END
+            await query.edit_message_text("الطلبية مموجودة.")
+            return
+
+        # الحصول على اسم المنتج عبر ID
+        product = next((p for p in orders[order_id]["products"] if p["id"] == product_id), None)
+        if not product:
+            await query.edit_message_text("هذا المنتج مموجود.")
+            return
+
+        p_name = product["name"]
 
         context.user_data[user_id]["order_id"] = order_id
-        context.user_data[user_id]["product"] = product
+        context.user_data[user_id]["product"] = product_id
 
-        context.user_data[user_id].pop("buy_price", None) # ما نحتاج نمسح buy_price بعد، لأنها راح تنحفظ بنفس المرة
+        await query.message.reply_text(f"دز سعر الشراء والبيع للمنتج: {p_name}")
+        return ASK_BUY
 
-        logger.info(f"[{query.message.chat_id}] Product '{product}' selected for order '{order_id}'. User data after product selection: {json.dumps(context.user_data.get(user_id), indent=2)}")
-
-        current_buy = pricing.get(order_id, {}).get(product, {}).get("buy")
-        current_sell = pricing.get(order_id, {}).get(product, {}).get("sell")
-
-        message_prompt = ""
-        if current_buy is not None and current_sell is not None:
-            message_prompt = f"سعر *'{product}'* حالياً هو شراء: {format_float(current_buy)}، بيع: {format_float(current_sell)}.\n" \
-                            f"باعلي سعر الشراء الجديد بالسطر الأول، وسعر البيع بالسطر الثاني؟ (أو دز نفس الأسعار إذا ماكو تغيير)"
-        else:
-            message_prompt = (
-                f"تمام، بيش اشتريت *'{product}'*؟ (بالسطر الأول)\n"
-                f"وبييش راح تبيعه؟ (بالسطر الثاني)\n\n" # سطر فارغ للفصل
-                f"💡 **إذا كان سعر الشراء هو نفسه سعر البيع،** اكتب الرقم مرة واحدة فقط."
-            )
-
-        msg = await query.message.reply_text(message_prompt, parse_mode="Markdown")
-        context.user_data[user_id]['messages_to_delete'].append({
-            'chat_id': msg.chat_id, 
-            'message_id': msg.message_id
-        })
-        return ASK_BUY # راح نستخدم ASK_BUY لجمع السعرين
-
-    except Exception as e: 
-        logger.error(f"[{update.effective_chat.id}] Error in product_selected: {e}", exc_info=True)
-        await update.callback_query.message.reply_text("ههه صار خطا باختيار المنتج. دياللة سوي طلب جديد.")
+    except Exception as e:
+        logger.error(f"product_selected error: {e}", exc_info=True)
+        await query.message.reply_text("خطأ.")
         return ConversationHandler.END
-
+        
 async def add_new_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer() 
@@ -559,43 +502,6 @@ async def add_new_product_callback(update: Update, context: ContextTypes.DEFAULT
     await context.bot.send_message(chat_id=chat_id, text="تمام، شنو اسم المنتج الجديد اللي تريد تضيفه؟", reply_markup=cancel_keyboard)
     return ASK_PRODUCT_NAME # حالة محادثة جديدة لطلب اسم المنتج
 
-async def delete_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    user_id = str(query.from_user.id)
-    chat_id = query.message.chat_id
-
-    order_id = query.data.replace("delete_specific_product_", "") 
-
-    logger.info(f"[{chat_id}] General delete product button clicked for order {order_id} by user {user_id}.")
-
-    if order_id not in orders:
-        logger.warning(f"[{chat_id}] No active order found or order_id invalid for user {user_id} when trying to display delete products.")
-        await context.bot.send_message(chat_id=chat_id, text="ترا ماكو طلب فعال حتى أظهرلك منتجات للمسح. سوي طلب جديد أول.")
-        return ConversationHandler.END
-
-    order = orders[order_id]
-
-    if not order["products"]: # إذا الطلبية ما بيها منتجات أصلاً
-        await context.bot.send_message(chat_id=chat_id, text="ترا الطلبية ما بيها أي منتجات حتى تمسح منها.")
-        return ConversationHandler.END
-
-    products_to_delete_buttons = []
-    for p_name in order["products"]:
-        products_to_delete_buttons.append([InlineKeyboardButton(p_name, callback_data=f"confirm_delete_product_{order_id}_{p_name}")])
-
-    # ✅ إضافة زر الإلغاء هنا
-    products_to_delete_buttons.append([InlineKeyboardButton("❌ إلغاء المسح", callback_data=f"cancel_delete_product_{order_id}")])
-
-    markup = InlineKeyboardMarkup(products_to_delete_buttons)
-
-    # حذف رسالة الأزرار القديمة (إذا كانت موجودة)
-    if query.message:
-        context.application.create_task(delete_message_in_background(context, chat_id=query.message.chat_id, message_id=query.message.message_id))
-
-    await context.bot.send_message(chat_id=chat_id, text="تمام، دوس على المنتج اللي تريد تمسحه من الطلبية:", reply_markup=markup)
-    return ConversationHandler.END
     
 async def confirm_delete_product_by_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -656,6 +562,50 @@ async def cancel_add_product_callback(update: Update, context: ContextTypes.DEFA
     await show_buttons(chat_id, context, user_id, order_id)
     return ConversationHandler.END
 
+async def delete_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = str(query.from_user.id)
+    order_id = query.data.replace("delete_specific_product_", "")
+
+    if order_id not in orders:
+        await query.message.reply_text("ماكو طلب.")
+        return
+
+    order = orders[order_id]
+
+    buttons = []
+    for product in order["products"]:
+        buttons.append([InlineKeyboardButton(product["name"], callback_data=f"delprod_{order_id}_{product['id']}")])
+
+    buttons.append([InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel_delete_product_{order_id}")])
+    markup = InlineKeyboardMarkup(buttons)
+
+    await query.message.reply_text("اختر المنتج الذي تريد حذفه:", reply_markup=markup)
+    return ConversationHandler.END
+
+
+async def delete_specific_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    _, order_id, p_id = query.data.split("_", 2)
+
+    if order_id not in orders:
+        await query.message.reply_text("ماكو طلب.")
+        return
+
+    order = orders[order_id]
+
+    order["products"] = [p for p in order["products"] if p["id"] != p_id]
+
+    if order_id in pricing and p_id in pricing[order_id]:
+        del pricing[order_id][p_id]
+
+    await query.message.reply_text("تم حذف المنتج.")
+    await show_buttons(query.message.chat_id, context, str(query.from_user.id), order_id)
+    
 
 async def cancel_delete_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -809,27 +759,28 @@ async def receive_new_product_name(update: Update, context: ContextTypes.DEFAULT
     order_id = context.user_data[user_id].get("current_active_order_id")
 
     if not order_id or order_id not in orders:
-        logger.warning(f"[{chat_id}] No active order found or order_id invalid for user {user_id} when adding new product.")
-        await update.message.reply_text("ترا ماكو طلب فعال حتى أضيفله منتج. سوي طلب جديد أول.")
+        await update.message.reply_text("ماكو طلب فعال حتى أضيفله منتج. سوي طلب جديد.")
         context.user_data[user_id].pop("adding_new_product", None)
         return ConversationHandler.END
 
     order = orders[order_id]
 
-    if new_product_name in order["products"]:
-        await update.message.reply_text(f"ترا المنتج '{new_product_name}' موجود بالطلبية أصلاً. اختار منتج ثاني أو كمل تسعير الموجودات.")
-    else:
-        order["products"].append(new_product_name)
-        logger.info(f"[{chat_id}] Added new product '{new_product_name}' to order {order_id}.")
-        await update.message.reply_text(f"تمت إضافة المنتج '{new_product_name}' للطلبية بنجاح.")
-        context.application.create_task(save_data_in_background(context)) # حفظ البيانات بعد إضافة المنتج
+    # إنشاء ID للمنتج
+    import uuid
+    product_id = uuid.uuid4().hex[:8]
 
-    context.user_data[user_id].pop("adding_new_product", None) # إزالة العلامة
-    context.user_data[user_id].pop("current_active_order_id", None) # إزالة الـ order_id بعد الانتهاء
+    # إضافة المنتج بصيغة dict
+    order["products"].append({"id": product_id, "name": new_product_name})
 
-    await show_buttons(chat_id, context, user_id, order_id) # عرض الأزرار المحدثة
+    await update.message.reply_text(f"تمت إضافة المنتج '{new_product_name}' للطلبية.")
+
+    context.application.create_task(save_data_in_background(context))
+
+    context.user_data[user_id].pop("adding_new_product", None)
+    context.user_data[user_id].pop("current_active_order_id", None)
+
+    await show_buttons(chat_id, context, user_id, order_id)
     return ConversationHandler.END
-
 
 
 async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT_TYPE, user_id: str, order_id: str):
