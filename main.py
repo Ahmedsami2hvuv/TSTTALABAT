@@ -480,7 +480,7 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("الطلبية مموجودة.")
             return
 
-        # الحصول على اسم المنتج عبر ID
+        # الحصول على بيانات المنتج
         product = next((p for p in orders[order_id]["products"] if p["id"] == product_id), None)
         if not product:
             await query.edit_message_text("هذا المنتج مموجود.")
@@ -488,6 +488,11 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         p_name = product["name"]
 
+        # 🔥 إصلاح: تهيئة user_data[user_id] إذا مموجود
+        if user_id not in context.user_data:
+            context.user_data[user_id] = {}
+
+        # تخزين البيانات
         context.user_data[user_id]["order_id"] = order_id
         context.user_data[user_id]["product"] = product_id
 
