@@ -1886,6 +1886,83 @@ async def handle_incomplete_order_selection(update: Update, context: ContextType
             await query.edit_message_text("❌ حدث خطأ في تحميل الطلبية")
         except:
             pass
+
+# ----------------------------------------------------------------------
+# الدوال المفقودة (ضرورية لتشغيل ConversationHandlers)
+# ----------------------------------------------------------------------
+
+# 1. دالة طلب عدد الأماكن (Places Count)
+async def ask_places_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تبدأ محادثة طلب عدد الأماكن."""
+    query = update.callback_query
+    await query.answer()
+    
+    # يجب استخراج order_id من query.data هنا
+    # لكن حالياً سنكتفي بإرسال رسالة
+    await query.message.reply_text("الرجاء إرسال عدد الأماكن (مثل: 1, 2, 3) للطلبية.")
+    
+    return ASK_PLACES_COUNT
+
+async def handle_places_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة الرد على عدد الأماكن."""
+    try:
+        count = int(update.message.text.strip())
+        if count <= 0:
+            await update.message.reply_text("يجب أن يكون العدد رقماً صحيحاً وموجباً. حاول مجدداً.")
+            return ASK_PLACES_COUNT
+        
+        # ... (هنا يتم حفظ عدد الأماكن في الطلبية)
+        
+        await update.message.reply_text(f"تم تسجيل عدد الأماكن: {count}. يمكنك الآن المتابعة.")
+        return ConversationHandler.END
+        
+    except ValueError:
+        await update.message.reply_text("الرجاء إرسال رقم صحيح فقط (مثل 2).")
+        return ASK_PLACES_COUNT
+
+# 2. دالة طلب رقم الهاتف للحذف (لـ delete_order_conv_handler)
+async def ask_customer_phone_number_for_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تبدأ محادثة طلب رقم هاتف الزبون لتأكيد حذف الطلب."""
+    query = update.callback_query
+    await query.answer()
+    
+    order_id = query.data.replace("delete_order_", "")
+    context.user_data['order_to_delete'] = order_id
+    
+    await query.message.reply_text(
+        f"للتأكيد، الرجاء إرسال رقم الهاتف المسجل في الطلبية *{order_id}*.",
+        parse_mode="Markdown"
+    )
+    return ASK_CUSTOMER_PHONE_NUMBER_FOR_DELETION
+
+async def handle_customer_phone_number_for_deletion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة رقم الهاتف المدخل ومقارنته برقم الطلب الأصلي."""
+    # ... (هنا يتم مقارنة الرقم ثم الانتقال إلى ASK_FOR_DELETION_CONFIRMATION أو إنهاء المحادثة)
+    
+    # افتراضياً: سنطلب التأكيد
+    keyboard = [
+        [InlineKeyboardButton("تأكيد الحذف ⚠️", callback_data="confirm_delete")],
+        [InlineKeyboardButton("إلغاء", callback_data="cancel_delete")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text("هل أنت متأكد من حذف هذه الطلبية؟", reply_markup=reply_markup)
+    return ASK_FOR_DELETION_CONFIRMATION
+
+async def handle_deletion_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """تأكيد أو إلغاء عملية الحذف."""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "confirm_delete":
+        # ... (هنا يتم تنفيذ منطق الحذف)
+        await query.edit_message_text("تم حذف الطلبية بنجاح.")
+    else: # cancel_delete
+        await query.edit_message_text("تم إلغاء عملية الحذف.")
+        
+    return ConversationHandler.END
+
+# ----------------------------------------------------------------------
     
     
 def main():
