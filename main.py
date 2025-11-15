@@ -8,25 +8,37 @@ import threading
 from collections import Counter
 from datetime import datetime, timezone
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    WebAppInfo     # ⬅⬅⬅ مهم جداً للويب فيو
+)
 from telegram.ext import (
-    ApplicationBuilder, ContextTypes, CommandHandler,
-    MessageHandler, CallbackQueryHandler, ConversationHandler, filters
+    ApplicationBuilder,
+    ContextTypes,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    ConversationHandler,
+    filters
 )
 
-# ✅ استيراد الدوال الخاصة بالمناطق من الملف الجديد
+# يبقى هذا كما هو (ما يسبب أي تعارض)
 from features.delivery_zones import (
-    list_zones, get_delivery_price
+    list_zones,
+    get_delivery_price
 )
 
-# ✅ تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
+# إعدادات اللوق
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# ✅ مسارات التخزين داخل Railway أو Replit أو غيره
+# مسارات التخزين
 DATA_DIR = "/mnt/data/"
 
 ORDERS_FILE = os.path.join(DATA_DIR, "orders.json")
@@ -36,10 +48,10 @@ DAILY_PROFIT_FILE = os.path.join(DATA_DIR, "daily_profit.json")
 COUNTER_FILE = os.path.join(DATA_DIR, "invoice_counter.txt")
 LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
 
-# ✅ قراءة التوكن من المتغيرات البيئية (يفترض أنك ضايفه بـ Railway)
+# قراءة التوكن
 TOKEN = os.getenv("TOKEN")
 
-# ✅ متغيرات التخزين المؤقت في الذاكرة
+# المتغيرات داخل الذاكرة
 orders = {}
 pricing = {}
 invoice_numbers = {}
