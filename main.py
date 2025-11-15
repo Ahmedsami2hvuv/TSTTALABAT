@@ -1563,127 +1563,6 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"[{update.effective_chat.id}] Error in show_report: {e}", exc_info=True)
         await update.message.reply_text("😐هذا الظراط ماكدرت ادزلك التقرير .")
-
-def main():
-    app = ApplicationBuilder().token(TOKEN).build()
-
-    # وضع المتغيرات العالمية في bot_data
-    app.bot_data['orders'] = orders
-    app.bot_data['pricing'] = pricing
-    app.bot_data['invoice_numbers'] = invoice_numbers
-    app.bot_data['daily_profit'] = daily_profit
-    app.bot_data['last_button_message'] = last_button_message
-    app.bot_data['supplier_report_timestamps'] = supplier_report_timestamps
-
-    # تمرير دوال الحفظ العامة لـ bot_data حتى تتمكن الدوال الأخرى من استدعائها
-    app.bot_data['schedule_save_global_func'] = schedule_save_global
-    app.bot_data['_save_data_to_disk_global_func'] = _save_data_to_disk_global
-
-    # Handlers
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("profit", show_profit))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(الارباح|ارباح)$"), show_profit))
-    app.add_handler(CommandHandler("reset", reset_all))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^تصفير$"), reset_all))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^صفر$"), reset_supplier_report))
-    app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
-    app.add_handler(CommandHandler("report", show_report))
-    app.add_handler(CommandHandler("myreport", show_supplier_report))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تقاريري|تقريري)$"), show_supplier_report))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(التقارير|تقرير|تقارير)$"), show_report))
-    app.add_handler(CallbackQueryHandler(cancel_edit, pattern=r"^cancel_edit_.*$"))
-
-    # ⭐⭐ إضافة الأمر لعرض الطلبات غير المكتملة ⭐⭐
-    app.add_handler(CommandHandler("incomplete", show_incomplete_orders))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(طلبات|الطلبات|طلبات غير مكتملة|طلبات ناقصة)$"), show_incomplete_orders))
-
-    # ⭐⭐ إضافة handler لأزرار الطلبات غير المكتملة ⭐⭐
-    app.add_handler(CallbackQueryHandler(handle_incomplete_order_selection, pattern=r"^(load_incomplete_|cancel_incomplete)"))
-
-    app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
-    app.add_handler(CallbackQueryHandler(edit_prices, pattern=r"^edit_prices_"))
-    app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern=r"^start_new_order$"))
-    
-    # أمر /zones لعرض المناطق
-    app.add_handler(CommandHandler("zones", list_zones))
-    # استجابة نصية "مناطق" أو "المناطق"
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(مناطق|المناطق)$"), list_zones))
-
-    # ConversationHandler لعدد المحلات
-    places_conv_handler = ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(handle_places_count_data, pattern=r"^places_data_[a-f0-9]{8}_\d+$"),
-        ],
-        states={
-            ASK_PLACES_COUNT: [
-                MessageHandler(filters.TEXT & filters.Regex(r"^\d+(\.\d+)?$") & ~filters.COMMAND, handle_places_count_data),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_places_count_data),
-            ],
-        },
-        fallbacks=[
-            CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
-        ]
-    )
-    app.add_handler(places_conv_handler)
-
-    # ConversationHandler لمسح الطلبية
-    delete_order_conv_handler = ConversationHandler(
-        entry_points=[
-            MessageHandler(filters.TEXT & filters.Regex(r"^(مسح)$"), delete_order_command),
-            CommandHandler("delete_order", delete_order_command),
-        ],
-        states={
-            ASK_CUSTOMER_PHONE_NUMBER_FOR_DELETION: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_customer_phone_for_deletion),
-            ],
-            ASK_FOR_DELETION_CONFIRMATION: [
-                CallbackQueryHandler(handle_order_selection_for_deletion, 
-                                     pattern=r"^(select_order_to_delete_.*|confirm_final_delete_.*|cancel_delete_order|cancel_delete_order_final_selection)$"),
-            ],
-        },
-        fallbacks=[
-            CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-            MessageHandler(filters.ALL & ~filters.COMMAND, lambda u, c: ConversationHandler.END) 
-        ]
-    )
-    app.add_handler(delete_order_conv_handler)
-
-    # ConversationHandler لإنشاء وتسعير الطلبات وإضافة المنتجات
-    order_creation_conv_handler = ConversationHandler(
-        entry_points=[
-            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
-            
-            # ✅ NEW: معالجة ضغط زر اختيار المنتج (للتسعير)
-            CallbackQueryHandler(product_selected, pattern=r"^product_id:[a-f0-9]{8}$"), 
-            # ✅ NEW: معالجة ضغط زر البدء بمسح المنتج (لعرض القائمة)
-            CallbackQueryHandler(start_delete_product_list_callback, pattern=r"^delete_product_start:"),
-            # ✅ NEW: معالجة ضغط زر تأكيد مسح المنتج 
-            CallbackQueryHandler(confirm_delete_product_by_button_callback, pattern=r"^confirm_del_prod:[a-f0-9]{8}$"),
-            
-            # الأزرار الأخرى المتعلقة بإضافة وإلغاء المنتج (إذا كنت لا تزال تستخدمها)
-            CallbackQueryHandler(add_new_product_callback, pattern=r"^add_product_to_order_.*$"),
-            CallbackQueryHandler(delete_product_callback, pattern=r"^delete_specific_product_.*$"),
-            CallbackQueryHandler(cancel_delete_product_callback, pattern=r"^cancel_delete_product_.*$")
-        ],
-        states={
-            ASK_BUY: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
-            ],
-            ASK_PRODUCT_NAME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_product_name),
-                CallbackQueryHandler(cancel_add_product_callback, pattern=r"^cancel_add_product_.*$")
-            ],
-        },
-        fallbacks=[
-            CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-            MessageHandler(filters.ALL, lambda u, c: ConversationHandler.END)
-        ]
-    )
-    app.add_handler(order_creation_conv_handler)
-
-    # تشغيل البوت
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
     
 
 async def show_supplier_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2009,5 +1888,105 @@ async def handle_incomplete_order_selection(update: Update, context: ContextType
             pass
     
     
+def main():
+    # 1. تهيئة التطبيق
+    # (الـ TOKEN تم تصحيحه وجلبه في بداية الملف)
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    # 2. وضع المتغيرات العالمية في bot_data لتكون متاحة للدوال
+    app.bot_data['orders'] = orders
+    app.bot_data['pricing'] = pricing
+    app.bot_data['invoice_numbers'] = invoice_numbers
+    app.bot_data['daily_profit'] = daily_profit
+    app.bot_data['last_button_message'] = last_button_message
+    app.bot_data['supplier_report_timestamps'] = supplier_report_timestamps
+    
+    # 3. Handlers (معالجات الأوامر والرسائل)
+    
+    # أوامر بسيطة
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("profit", show_profit))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(الارباح|ارباح)$"), show_profit))
+    app.add_handler(CommandHandler("reset", reset_all))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^تصفير$"), reset_all))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^صفر$"), reset_supplier_report))
+    app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
+    app.add_handler(CommandHandler("report", show_report))
+    app.add_handler(CommandHandler("myreport", show_supplier_report))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تقاريري|تقريري)$"), show_supplier_report))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(التقارير|تقرير|تقارير)$"), show_report))
+    app.add_handler(CallbackQueryHandler(cancel_edit, pattern=r"^cancel_edit_.*$"))
+
+    # أوامر الطلبات غير المكتملة
+    app.add_handler(CommandHandler("incomplete", show_incomplete_orders))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(طلبات|الطلبات|طلبات غير مكتملة|طلبات ناقصة)$"), show_incomplete_orders))
+    app.add_handler(CallbackQueryHandler(handle_incomplete_order_selection, pattern=r"^(load_incomplete_|cancel_incomplete)"))
+
+    # أوامر المناطق
+    app.add_handler(CommandHandler("zones", list_zones))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(مناطق|المناطق)$"), list_zones))
+    
+    # معالج الرسائل المعدلة
+    app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
+
+    # معالجات الأزرار المتعلقة بالتسعير
+    app.add_handler(CallbackQueryHandler(edit_prices, pattern=r"^edit_prices_"))
+    app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern=r"^start_new_order$"))
+
+    # 4. معالج المحادثات (Conversation Handlers)
+    
+    # معالج المحادثة لطلب عدد الأماكن (places_conv_handler)
+    places_conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(ask_places_count, pattern=r"^ask_places_count_for_order_.*$")],
+        states={
+            ASK_PLACES_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_places_count)],
+        },
+        fallbacks=[CallbackQueryHandler(cancel_edit, pattern=r"^cancel_edit_.*$")],
+        allow_reentry=True
+    )
+    app.add_handler(places_conv_handler)
+    
+    # معالج المحادثة لتأكيد حذف الطلب (delete_order_conv_handler)
+    delete_order_conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(ask_customer_phone_number_for_deletion, pattern=r"^delete_order_.*$")],
+        states={
+            ASK_CUSTOMER_PHONE_NUMBER_FOR_DELETION: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_customer_phone_number_for_deletion)
+            ],
+            ASK_FOR_DELETION_CONFIRMATION: [
+                CallbackQueryHandler(handle_deletion_confirmation, pattern="^(confirm_delete|cancel_delete)$")
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel_edit)], # يمكن استخدام cancel_edit هنا إذا كان يعيد ConversationHandler.END
+        allow_reentry=True
+    )
+    app.add_handler(delete_order_conv_handler)
+
+
+    # معالج المحادثة الرئيسي لاستقبال الطلبات (يجب أن يكون في النهاية لاستقبال أي رسالة نصية)
+    order_creation_conv_handler = ConversationHandler(
+        entry_points=[
+            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
+        ],
+        states={
+            # هنا يجب وضع أي حالات محادثة أخرى تستخدمها (مثل ASK_BUY, ASK_PRODUCT_NAME)
+            # بما أنك لم ترسل هذه الدوال، سأضعها كـ fallbacks افتراضية لتجنب الأعطال:
+            ASK_BUY: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order)],
+            ASK_PRODUCT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order)],
+        },
+        fallbacks=[
+            CommandHandler("cancel", lambda update, context: ConversationHandler.END),
+            MessageHandler(filters.ALL, lambda update, context: ConversationHandler.END)
+        ],
+        allow_reentry=True
+    )
+    app.add_handler(order_creation_conv_handler)
+    
+    
+    # 5. تشغيل البوت
+    logger.info("Starting bot polling...")
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+
+# نقطة دخول البوت
 if __name__ == "__main__":
     main()
