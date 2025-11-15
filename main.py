@@ -725,126 +725,170 @@ async def cancel_delete_product_callback(update: Update, context: ContextTypes.D
     return ConversationHandler.END
 
 async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """استلام سعر الشراء وسعر البيع لمنتج معين من المجهز.
+    """
+    استلام سعر الشراء وسعر البيع لمنتج معين من المجهز — نسخة مرنة تدعم التحويل من مفاتيح الأسماء القديمة إلى IDs.
     يقبل:
-    1. سطرين منفصلين (سطر للشراء، سطر للبيع).
-    2. سطر واحد (يُعتبر شراء وبيع).
-    3. القيمة صفر (0) لتسجيل المنتج كغير متوفر.
+    - سطرين منفصلين (سطر للشراء، سطر للبيع).
+    - سطر واحد (يُعتبر شراء=بيع).
+    - القيمة صفر (0) لتسجيل المنتج كغير متوفر.
     """
     user_id = str(update.message.from_user.id)
     chat_id = update.effective_chat.id
-    
+
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
-    
+
     try:
-        # 1. محاولة حذف الرسائل السابقة التي تطلب السعر
+        # حاول تحييد أي رسائل قديمة (لو عندك دالة delete_previous_messages)
         try:
             await delete_previous_messages(context, user_id)
         except Exception:
             pass
 
+        # تأكد إن user_data مهيأ
+        context.user_data.setdefault(user_id, {})
+        context.user_data[user_id].setdefault('messages_to_delete', [])
+
         order_id = context.user_data[user_id].get("order_id")
-        product = context.user_data[user_id].get("product")
-        
-        if not order_id or not product:
-            await update.message.reply_text("❌ لم يتم تحديد طلبية أو منتج. يرجى البدء من جديد.")
+        product_ref = context.user_data[user_id].get("product")  # هذا ممكن يكون product_id أو (نادر) اسم قديم
+
+        if not order_id or order_id not in orders:
+            await update.message.reply_text("❌ لم يتم تحديد طلبية أو الطلبية قديمة. أرسل الطلب من جديد.")
             return ConversationHandler.END
 
-        # حفظ رسالة المستخدم الحالية للحذف
-        context.user_data.setdefault(user_id, {}).setdefault('messages_to_delete', []).append({
-            'chat_id': update.message.chat_id, 
+        if not product_ref:
+            await update.message.reply_text("❌ لم يتم تحديد المنتج. اضغط على اسم المنتج من الأزرار أولاً.")
+            return ConversationHandler.END
+
+        # حفظ رسالة المستخدم للحذف لاحقاً
+        context.user_data[user_id]['messages_to_delete'].append({
+            'chat_id': update.message.chat_id,
             'message_id': update.message.message_id
         })
-        
-        # ------------------------------------------------------------------
-        # 🔄 المنطق لتحليل المدخلات: يدعم سطرين أو سطر واحد
-        # ------------------------------------------------------------------
+
+        # قراءة النص المدخل وتحليله (سطر واحد أو سطرين)
         lines = [line.strip() for line in update.message.text.split('\n') if line.strip()]
-        
         buy_price_str = None
         sell_price_str = None
 
         if len(lines) == 2:
-            # الحالة الطبيعية: سطرين منفصلين
-            buy_price_str = lines[0]
-            sell_price_str = lines[1]
+            buy_price_str, sell_price_str = lines[0], lines[1]
         elif len(lines) == 1:
-            # حالة سطر واحد: قيمة واحدة (شراء=بيع) أو قيمتين بمسافة
             parts = [p.strip() for p in lines[0].split() if p.strip()]
-            
             if len(parts) == 2:
-                buy_price_str = parts[0]
-                sell_price_str = parts[1]
+                buy_price_str, sell_price_str = parts[0], parts[1]
             elif len(parts) == 1:
-                buy_price_str = parts[0]
-                sell_price_str = parts[0] 
-            else:
-                 buy_price_str = None 
-        
-        if not buy_price_str or not sell_price_str:
-            msg_error = await update.message.reply_text("😒دكتب عدل دخل سعر الشراء بالسطر الأول وسعر البيع بالسطر الثاني.\nأو سعر واحد فقط في سطر واحد إذا كانا متساويين.")
-            context.user_data[user_id]['messages_to_delete'].append({
-                'chat_id': msg_error.chat_id, 
-                'message_id': msg_error.message_id
-            })
+                buy_price_str = sell_price_str = parts[0]
+
+        if buy_price_str is None or sell_price_str is None:
+            msg_error = await update.message.reply_text("😒 دخل سعر الشراء بالسطر الأول وسعر البيع بالسطر الثاني، أو قيمة واحدة إذا متساويين.")
+            context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
             return ASK_BUY
-            
-        # 3. التحقق من تحويل القيم إلى أرقام
+
         try:
             buy_price = float(buy_price_str)
             sell_price = float(sell_price_str)
-        
-            # ✅ التعديل هنا: السماح بالصفر لكن منع القيم السالبة
             if buy_price < 0 or sell_price < 0:
                 raise ValueError("الأسعار لا يمكن أن تكون سالبة.")
-
-        except ValueError as e:
-            logger.error(f"[{update.effective_chat.id}] Buy/Sell prices: ValueError for user {user_id} with input '{update.message.text}': {e}", exc_info=True)
-            msg_error = await update.message.reply_text("😒دكتب عدل دخل ارقام صحيحة مال البيع والشراء.")
-            context.user_data[user_id]['messages_to_delete'].append({
-                'chat_id': msg_error.chat_id, 
-                'message_id': msg_error.message_id
-            })
+        except Exception:
+            msg_error = await update.message.reply_text("😒 دخّل أرقام صحيحة للشراء والبيع.")
+            context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
             return ASK_BUY
 
-        # ------------------------------------------------------------------
-        # 💾 منطق حفظ البيانات والانتقال للحالة التالية
-        # ------------------------------------------------------------------
+        # ======= إيجاد المنتج داخل الطلبية سواء كان id أو اسم قديم =======
+        product_obj = None
+        product_id = None
 
-        pricing.setdefault(order_id, {}).setdefault(product, {})["buy"] = buy_price
-        pricing[order_id][product]["sell"] = sell_price
+        # 1) إذا product_ref يبدو كـ id (نبحث أولاً)
+        for p in orders[order_id].get("products", []):
+            if isinstance(p, dict) and p.get("id") == product_ref:
+                product_obj = p
+                product_id = p["id"]
+                break
+
+        # 2) لو ما لقيناه، جرّب إذا product_ref هو اسم قديم (نبحث عن اسم مطابق)
+        if product_obj is None:
+            for p in orders[order_id].get("products", []):
+                if isinstance(p, dict) and p.get("name") == product_ref:
+                    product_obj = p
+                    product_id = p["id"]
+                    break
+                if isinstance(p, str) and p == product_ref:
+                    # وجدنا عنصر قديم كنص — نحوله الآن إلى dict ونعطيه ID
+                    import uuid
+                    new_p = {"id": uuid.uuid4().hex[:8], "name": p}
+                    idx = orders[order_id]["products"].index(p)
+                    orders[order_id]["products"][idx] = new_p
+                    product_obj = new_p
+                    product_id = new_p["id"]
+                    break
+
+        # 3) لو لسا ما لقينا المنتج، جرب البحث بالاسم داخل dicts (يتعامل مع حالات مختلفة)
+        if product_obj is None:
+            for p in orders[order_id].get("products", []):
+                if isinstance(p, dict) and str(p.get("id")) == str(product_ref):
+                    product_obj = p
+                    product_id = p["id"]
+                    break
+
+        if product_obj is None:
+            # لم نتمكن من إيجاد المنتج؛ اعمل لوق وارجع رسالة واضحة
+            logger.error(f"[{chat_id}] Could not resolve product '{product_ref}' in order {order_id}. Products: {orders[order_id].get('products')}")
+            await update.message.reply_text("هذا المنتج مموجود أو صار خلل. حاول تحميل الطلبية من جديد أو أضف المنتج مرة ثانية.")
+            return ConversationHandler.END
+
+        # ======= الآن نضمن أن pricing يستخدم product_id كمفتاح =======
+        pricing.setdefault(order_id, {})
+
+        # migration: لو موجود بيانات قديمة باسم المنتج (name) نحولها إلى المفتاح الجديد (id)
+        name_key = product_obj.get("name")
+        if name_key in pricing[order_id] and product_id not in pricing[order_id]:
+            # انقل المحتوى
+            pricing[order_id][product_id] = pricing[order_id].pop(name_key)
+            logger.info(f"Migrated pricing key for order {order_id}: '{name_key}' -> '{product_id}'")
+
+        # تأكد وجود dict للمنتج
+        pricing[order_id].setdefault(product_id, {})
+
+        # حفظ الأسعار
+        pricing[order_id][product_id]["buy"] = buy_price
+        pricing[order_id][product_id]["sell"] = sell_price
+
+        # وضع supplier_id في الطلب
         orders[order_id]["supplier_id"] = user_id
-        
-        logger.info(f"[{update.effective_chat.id}] Pricing for order '{order_id}' and product '{product}' AFTER SAVE: {json.dumps(pricing.get(order_id, {}).get(product), indent=2)}")
-        
+
+        logger.info(f"[{chat_id}] Saved pricing for order '{order_id}', product_id '{product_id}': buy={buy_price}, sell={sell_price}")
         context.application.create_task(save_data_in_background(context))
-        
+
+        # تنظيف user_data الحقلين
         context.user_data[user_id].pop("order_id", None)
         context.user_data[user_id].pop("product", None)
-        
+
+        # هل كل المنتجات مسعّرة الآن؟
         is_order_complete = True
-        for p_name in orders[order_id].get("products", []):
-            if p_name not in pricing.get(order_id, {}) or 'buy' not in pricing[order_id].get(p_name, {}):
+        for p in orders[order_id].get("products", []):
+            pid = p["id"] if isinstance(p, dict) else None
+            if pid is None or pid not in pricing.get(order_id, {}) or 'buy' not in pricing[order_id].get(pid, {}):
                 is_order_complete = False
                 break
-                
+
         if is_order_complete:
-            logger.info(f"[{update.effective_chat.id}] Order {order_id} is now fully priced. Requesting places count.")
             await request_places_count_standalone(chat_id, context, user_id, order_id)
             return ConversationHandler.END
         else:
-            logger.info(f"[{update.effective_chat.id}] Order {order_id} is partially priced. Showing updated buttons.")
             await show_buttons(chat_id, context, user_id, order_id, confirmation_message="تم إدخال السعر. بقي منتجات أخرى؟")
             return ConversationHandler.END
-            
+
     except Exception as e:
-        logger.error(f"[{update.effective_chat.id}] Critical error in receive_buy_price: {e}", exc_info=True)
-        msg_error = await update.message.reply_text("كسها صار خطا مدري وين سوي طلب جديد يلا.")
-        context.user_data[user_id]['messages_to_delete'].append({
-            'chat_id': msg_error.chat_id,
-            'message_id': msg_error.message_id
-        })
+        logger.error(f"[{chat_id}] Critical error in receive_buy_price: {e}", exc_info=True)
+        try:
+            msg_error = await update.message.reply_text("كسها صار خطا مدري وين؛ رجع سوي طلب جديد أو أضف المنتج مرة ثانية.")
+            context.user_data.setdefault(user_id, {}).setdefault('messages_to_delete', []).append({
+                'chat_id': msg_error.chat_id,
+                'message_id': msg_error.message_id
+            })
+        except:
+            pass
         return ConversationHandler.END
         
 async def receive_new_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
