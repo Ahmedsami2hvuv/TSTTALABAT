@@ -447,8 +447,11 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
 
         message_text = ""
         if confirmation_message:
+            # ✅ الرسالة الآن تتضمن رقم الزبون والمنطقة من الدالة السابقة
             message_text += f"{confirmation_message}\n\n"
-        message_text += f"دوس على منتج واكتب سعره *{order['title']}*:"
+        
+        # ✅ رسالة الترحيب صارت أوضح
+        message_text += f"دوس على منتج واكتب سعره ({order['title']}):"
 
         msg_info = last_button_message.get(order_id)
         if msg_info:
@@ -676,6 +679,8 @@ async def confirm_delete_product_by_button_callback(update: Update, context: Con
     # نرجع نعرض الأزرار المحدثة
     await show_buttons(chat_id, context, user_id, order_id) 
     return ConversationHandler.END
+
+
 
 async def cancel_add_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1948,9 +1953,13 @@ async def show_incomplete_orders(update: Update, context: ContextTypes.DEFAULT_T
 
 async def handle_incomplete_order_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """معالجة اختيار طلبية غير مكتملة"""
+    # الوصول إلى 'orders' من الذاكرة المشتركة للبوت
+    orders = context.application.bot_data.get('orders', {}) 
+    
     try:
         query = update.callback_query
-        await query.answer()
+        # الإجابة على الكويري أولاً لمنع "انتظار" البوت
+        await query.answer() 
         
         if query.data == "cancel_incomplete":
             await query.edit_message_text("تم إلغاء عملية تحميل الطلبات.")
@@ -1959,10 +1968,13 @@ async def handle_incomplete_order_selection(update: Update, context: ContextType
         if query.data.startswith("load_incomplete_"):
             order_id = query.data.replace("load_incomplete_", "")
             user_id = str(query.from_user.id)
+            chat_id = query.message.chat_id
             
             if order_id not in orders:
-                await query.edit_message_text("❌ هذه الطلبية لم تعد موجودة.")
+                await context.bot.send_message(chat_id=chat_id, text="❌ هذه الطلبية لم تعد موجودة.")
                 return
+            
+            order = orders[order_id]
             
             # حذف رسالة القائمة
             try:
@@ -1970,16 +1982,30 @@ async def handle_incomplete_order_selection(update: Update, context: ContextType
             except:
                 pass
             
+            # ✅ التعديل الرئيسي: استخدام الحقول الموجودة فعلاً في الطلب:
+            # 1. رقم الزبون موجود في حقل 'phone_number'.
+            # 2. العنوان/المنطقة موجود في حقل 'title'.
+            customer_number_display = order.get("phone_number", "غير متوفر")
+            zone_name_display = order.get("title", "غير متوفرة") 
+            
+            # ✅ التعديل هنا: استخدام تنسيق `Inline Code` (علامة `) حول رقم الزبون
+            confirmation_message = (
+                f"تم تحميل الطلبية غير المكتملة:\n"
+                f"📞 رقم الزبون: `{customer_number_display}`\n"
+                f"📌 عنوان الطلب: *{zone_name_display}*"
+            )
+
             # عرض الطلبية المحددة بأزرارها
-            await show_buttons(query.message.chat_id, context, user_id, order_id, 
-                             confirmation_message="تم تحميل الطلبية غير المكتملة:")
+            await show_buttons(chat_id, context, user_id, order_id, 
+                             confirmation_message=confirmation_message)
             
     except Exception as e:
-        logger.error(f"Error in handle_incomplete_order_selection: {e}")
-        try:
-            await query.edit_message_text("❌ حدث خطأ في تحميل الطلبية")
-        except:
-            pass
+        logger.error(f"Error in handle_incomplete_order_selection: {e}", exc_info=True)
+        # إرسال رسالة خطأ جديدة بدلاً من تعديل رسالة قديمة
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id, 
+            text="❌ حدث خطأ في تحميل الطلبية. (تم إرسال الخطأ إلى السجل)."
+        )
     
     
 if __name__ == "__main__":
