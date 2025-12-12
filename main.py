@@ -394,16 +394,10 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
 
     try:
         logger.info(f"[{chat_id}] show_buttons called for order {order_id}. User: {user_id}.")
-        logger.info(f"[{chat_id}] Current pricing data for order {order_id} in show_buttons: {json.dumps(pricing.get(order_id), indent=2)}")
 
         if order_id not in orders:
             logger.warning(f"[{chat_id}] Attempted to show buttons for non-existent order_id: {order_id}")
             await context.bot.send_message(chat_id=chat_id, text="ترا الطلب مموجود تري سوي طلب جديد.")
-            if user_id in context.user_data:
-                context.user_data[user_id].pop("order_id", None)
-                context.user_data[user_id].pop("product", None)
-                context.user_data[user_id].pop("current_active_order_id", None)
-                context.user_data[user_id].pop("messages_to_delete", None)
             return
 
         order = orders[order_id]
@@ -421,43 +415,38 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
         completed_products_buttons = []
         pending_products_buttons = []
 
-        # ✅ التغيير هنا: استخدمنا enumerate حتى نجيب الـ index (i) مال كل منتج
         for i, p_name in enumerate(order["products"]):
-            # ✅ التغيير هنا: الـ callback_data صار بي الـ index (i) بدل p_name
-            # هذا يحل مشكلة الاسم الطويل
             callback_data_for_product = f"{order_id}|{i}" 
             
             if p_name in pricing.get(order_id, {}) and 'buy' in pricing[order_id].get(p_name, {}) and 'sell' in pricing[order_id].get(p_name, {}):
                 completed_products_buttons.append([InlineKeyboardButton(f"✅ {p_name}", callback_data=callback_data_for_product)])
-                logger.info(f"[{chat_id}] Product '{p_name}' (index {i}) in order {order_id} is completed.")
             else:
                 pending_products_buttons.append([InlineKeyboardButton(p_name, callback_data=callback_data_for_product)])
-                logger.info(f"[{chat_id}] Product '{p_name}' (index {i}) in order {order_id} is pending.")
 
-        # ✅ إضافة أزرار المنتجات المكتملة أولاً
+        # ✅ إضافة أزرار المنتجات المكتملة أولاً ثم اللي تنتظر التسعير
         final_buttons_list.extend(completed_products_buttons)
-        # ✅ ثم إضافة أزرار المنتجات اللي تنتظر التسعير
         final_buttons_list.extend(pending_products_buttons)
 
-        # ✅ إضافة زر إلغاء التعديل في الأسفل إذا كان المستخدم في وضع التعديل
+        # ✅ التعديل هنا: إضافة زر "تم التعديل" إذا كنا في وضع التعديل
         if context.user_data.get(user_id, {}).get("editing_mode", False):
-            final_buttons_list.append([InlineKeyboardButton("❌ إلغاء التعديل", callback_data=f"cancel_edit_{order_id}")])
+            final_buttons_list.append([
+                InlineKeyboardButton("✅ اكتمل التعديل (التالي)", callback_data=f"done_editing_{order_id}")
+            ])
+            final_buttons_list.append([
+                InlineKeyboardButton("❌ إلغاء التعديل", callback_data=f"cancel_edit_{order_id}")
+            ])
 
         markup = InlineKeyboardMarkup(final_buttons_list)
 
         message_text = ""
         if confirmation_message:
-            # ✅ الرسالة الآن تتضمن رقم الزبون والمنطقة من الدالة السابقة
             message_text += f"{confirmation_message}\n\n"
         
-        # ✅ رسالة الترحيب صارت أوضح
         message_text += f"دوس على منتج واكتب سعره ({order['title']}):"
 
         msg_info = last_button_message.get(order_id)
         if msg_info:
-            logger.info(f"[{chat_id}] Deleting old button message {msg_info['message_id']} for order {order_id} before sending new one.")
             context.application.create_task(delete_message_in_background(context, chat_id=msg_info["chat_id"], message_id=msg_info["message_id"]))
-            # No del last_button_message[order_id] here, it's updated after new message is sent
 
         msg = await context.bot.send_message(
             chat_id=chat_id,
@@ -465,20 +454,17 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
             reply_markup=markup,
             parse_mode="Markdown"
         )
-        logger.info(f"[{chat_id}] Sent new button message {msg.message_id} for order {order_id}")
         last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
         context.application.create_task(save_data_in_background(context)) 
 
         if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
-            logger.info(f"[{chat_id}] Scheduling deletion of {len(context.user_data[user_id].get('messages_to_delete', []))} old messages after showing new buttons for user {user_id}.")
             for msg_info in context.user_data[user_id]['messages_to_delete']:
                 context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
             context.user_data[user_id]['messages_to_delete'].clear()
+            
     except Exception as e:
         logger.error(f"[{chat_id}] Error in show_buttons for order {order_id}: {e}", exc_info=True)
-        # ✅ هنا كلش مهم: نطبع الخطأ حتى نعرف إذا المشكلة بعدها بالـ 64 بايت
-        logger.error(f"[{chat_id}] More details on show_buttons error: {e}. This might be a 'Callback data too long' error if product names are extremely long (even as labels).")
-        await context.bot.send_message(chat_id=chat_id, text="ماكدرت اعرض الازرار، يمكن اسم واحد من المنتجات كلش طويل. حاول تعدل الطلب.")
+        await context.bot.send_message(chat_id=chat_id, text="ماكدرت اعرض الازرار، يمكن اسم واحد من المنتجات كلش طويل.")
         
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
@@ -1300,6 +1286,33 @@ async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"[{update.effective_chat.id}] Error in edit_prices: {e}", exc_info=True)
         await update.callback_query.message.reply_text("😏زربة صار خطا بالتعديل دسوي طلبية جديده بدون حجي زايد.")
         return ConversationHandler.END
+        
+async def finish_editing_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = str(query.from_user.id)
+    chat_id = query.message.chat_id
+    order_id = query.data.replace("done_editing_", "")
+
+    logger.info(f"[{chat_id}] Finished editing for order {order_id}. Proceeding to places count.")
+
+    # نلغي وضع التعديل لان خلصنا
+    if user_id in context.user_data:
+        context.user_data[user_id].pop("editing_mode", None)
+
+    # حذف رسالة الأزرار الحالية حتى لا تبقى معلقة
+    try:
+        await query.message.delete()
+    except Exception as e:
+        logger.warning(f"Could not delete message in finish_editing_callback: {e}")
+
+    # الانتقال لطلب عدد المحلات
+    await request_places_count_standalone(chat_id, context, user_id, order_id)
+    return ConversationHandler.END
+
+
+
 
 async def cancel_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1507,7 +1520,7 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         order_buy += buy
                         order_sell += sell
                         order_net_profit += profit_item # نجمع ربح كل منتج
-                        details.append(f"  - {p_name} | شراء💸: {format_float(buy)} | بيع💵 : {format_float(sell)} | ربح💲: {format_float(profit_item)}")
+                        details.append(f"  - {p_name} | 👊🏿: {format_float(buy)} | ✊🏻 : {format_float(sell)} | 💲: {format_float(profit_item)}")
                     else:
                         details.append(f"  - {p_name} | (لم يتم تسعيره)")
             else:
@@ -1587,6 +1600,10 @@ def main():
 
     app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
     app.add_handler(CallbackQueryHandler(edit_prices, pattern=r"^edit_prices_"))
+    
+    # ✅✅ هذا السطر الجديد اللي ضفناه (زر اكتمل التعديل) ✅✅
+    app.add_handler(CallbackQueryHandler(finish_editing_callback, pattern=r"^done_editing_"))
+
     app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern=r"^start_new_order$"))
     
     # أمر /zones لعرض المناطق
