@@ -474,71 +474,82 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
 
         user_id = str(query.from_user.id)
-        logger.info(f"[{query.message.chat_id}] Product selected callback from user {user_id}: {query.data}. User data at product_selected start: {json.dumps(context.user_data.get(user_id, {}), indent=2)}")
-
+        
+        # اضافة الرسالة لقائمة الحذف
         context.user_data.setdefault(user_id, {}).setdefault('messages_to_delete', []).append({
             'chat_id': query.message.chat_id,
             'message_id': query.message.message_id
         })
-        logger.info(f"[{query.message.chat_id}] Added product selection button message {query.message.message_id} to delete queue.")
 
-        # ✅ التغيير هنا: راح نقسم الـ callback_data حتى نطلع الـ index
         order_id, product_index_str = query.data.split('|', 1)
         
         if order_id not in orders:
-            logger.warning(f"[{query.message.chat_id}] Product selected: Order ID '{order_id}' not found.")
-            msg_error = await query.edit_message_text("زربت الطلبية مموجوده دديالله سوي طلب جديد.")
-            context.user_data[user_id]['messages_to_delete'].append({
-                'chat_id': msg_error.chat_id,
-                'message_id': msg_error.message_id
-            })
+            await query.edit_message_text("زربت الطلبية مموجوده.")
             return ConversationHandler.END
 
-        # ✅ التغيير هنا: نجيب اسم المنتج من القائمة باستخدام الـ index
         try:
             product_index = int(product_index_str)
             product = orders[order_id]["products"][product_index]
-        except (ValueError, IndexError, KeyError) as e:
-            logger.error(f"[{query.message.chat_id}] Failed to get product from index {product_index_str} for order {order_id}: {e}")
-            msg_error = await query.edit_message_text("ما لكيت هذا المنتج بالطلبية (يمكن الطلب تعدل؟). حاول مرة ثانية.")
-            context.user_data[user_id]['messages_to_delete'].append({
-                'chat_id': msg_error.chat_id,
-                'message_id': msg_error.message_id
-            })
+        except (ValueError, IndexError, KeyError):
+            await query.edit_message_text("خطأ في تحديد المنتج.")
             return ConversationHandler.END
 
         context.user_data[user_id]["order_id"] = order_id
-        context.user_data[user_id]["product"] = product # نخزن اسم المنتج الصحيح
-
+        context.user_data[user_id]["product"] = product 
         context.user_data[user_id].pop("buy_price", None) 
-
-        logger.info(f"[{query.message.chat_id}] Product '{product}' (from index {product_index}) selected for order '{order_id}'.")
 
         current_buy = pricing.get(order_id, {}).get(product, {}).get("buy")
         current_sell = pricing.get(order_id, {}).get(product, {}).get("sell")
 
         message_prompt = ""
         if current_buy is not None and current_sell is not None:
-            message_prompt = f"سعر *'{product}'* حالياً هو شراء: {format_float(current_buy)}، بيع: {format_float(current_sell)}.\n" \
-                            f"باعلي سعر الشراء الجديد بالسطر الأول، وسعر البيع بالسطر الثاني؟ (أو دز نفس الأسعار إذا ماكو تغيير)"
+            message_prompt = f"سعر *'{product}'* حالياً: {format_float(current_buy)} / {format_float(current_sell)}.\nدز السعر الجديد (شراء وبيع):"
         else:
             message_prompt = (
                 f"تمام، بيش اشتريت *'{product}'*؟ (بالسطر الأول)\n"
-                f"وبييش راح تبيعه؟ (بالسطر الثاني)\n\n" # سطر فارغ للفصل
-                f"💡 **إذا كان سعر الشراء هو نفسه سعر البيع،** اكتب الرقم مرة واحدة فقط."
+                f"وبييش راح تبيعه؟ (بالسطر الثاني)\n\n"
+                f"💡 **إذا السعر نفسه،** اكتب الرقم مرة واحدة."
             )
 
-        msg = await query.message.reply_text(message_prompt, parse_mode="Markdown")
+        # ✅✅ هنا ضفنا زر الإلغاء ✅✅
+        cancel_markup = InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء واختيار غير منتج", callback_data="cancel_price_entry")]])
+
+        msg = await query.message.reply_text(message_prompt, parse_mode="Markdown", reply_markup=cancel_markup)
+        
         context.user_data[user_id]['messages_to_delete'].append({
             'chat_id': msg.chat_id, 
             'message_id': msg.message_id
         })
-        return ASK_BUY # راح نستخدم ASK_BUY لجمع السعرين
+        return ASK_BUY 
 
     except Exception as e: 
-        logger.error(f"[{update.effective_chat.id}] Error in product_selected: {e}", exc_info=True)
-        await update.callback_query.message.reply_text("ههه صار خطا باختيار المنتج. دياللة سوي طلب جديد.")
+        logger.error(f"Error in product_selected: {e}", exc_info=True)
+        await update.callback_query.message.reply_text("صار خطأ.")
         return ConversationHandler.END
+        
+async def cancel_price_entry_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = str(query.from_user.id)
+    chat_id = query.message.chat_id
+    
+    logger.info(f"[{chat_id}] User {user_id} cancelled price entry.")
+    
+    # تنظيف الذاكرة المؤقتة الخاصة بتسعير المنتج
+    if user_id in context.user_data:
+        context.user_data[user_id].pop("order_id", None)
+        context.user_data[user_id].pop("product", None)
+    
+    # حذف رسالة "ادخل السعر"
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+        
+    await context.bot.send_message(chat_id=chat_id, text="تم الإلغاء. تكدر تختار منتج ثاني أو تسوي طلب جديد.")
+    return ConversationHandler.END
+
 
 async def add_new_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -713,6 +724,21 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pricing = context.application.bot_data['pricing']
     
     try:
+        # ✅✅ الذكاء الاصطناعي (تحليل النص قبل كلشي) ✅✅
+        # اذا المستخدم داز رسالة طويلة (3 اسطر او اكثر)، نعتبرها طلب جديد ونلغي وضع التسعير
+        lines = [line.strip() for line in update.message.text.split('\n') if line.strip()]
+        if len(lines) >= 3:
+            logger.info(f"[{chat_id}] User {user_id} sent a new order while in ASK_BUY mode. Switching to process_order.")
+            # تنظيف حالة التسعير
+            if user_id in context.user_data:
+                context.user_data[user_id].pop("order_id", None)
+                context.user_data[user_id].pop("product", None)
+            
+            # استدعاء دالة معالجة الطلب فوراً بنفس الرسالة
+            await process_order(update, context, update.message)
+            return ConversationHandler.END
+
+        # اكمال الاجراءات الطبيعية اذا كان النص قصير (سعر)
         try:
             await delete_previous_messages(context, user_id)
         except Exception:
@@ -725,13 +751,21 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ حدث خطأ، ابدأ من جديد.")
             return ConversationHandler.END
 
+        # ✅✅ التحقق اذا احد سبقك وسعر المنتج ✅✅
+        if pricing.get(order_id, {}).get(product, {}).get("buy") is not None:
+            # اذا احنا بوضع التعديل عادي، بس اذا طلب جديد واحد ثاني سعره نكله
+            is_editing = context.user_data.get(user_id, {}).get("editing_mode", False)
+            if not is_editing:
+                await update.message.reply_text(f"عيني '{product}' تسعر من قبل مجهز ثاني، ماكو داعي تكتب سعره. تكدر تبلش طلب جديد.")
+                context.user_data[user_id].pop("order_id", None)
+                context.user_data[user_id].pop("product", None)
+                return ConversationHandler.END
+
         context.user_data.setdefault(user_id, {}).setdefault('messages_to_delete', []).append({
             'chat_id': update.message.chat_id, 
             'message_id': update.message.message_id
         })
         
-        # تحليل السعر
-        lines = [line.strip() for line in update.message.text.split('\n') if line.strip()]
         buy_price_str, sell_price_str = None, None
 
         if len(lines) == 2:
@@ -762,10 +796,8 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pricing[order_id][product]["sell"] = sell_price
         orders[order_id]["supplier_id"] = user_id
         
-        # ✅ التصليح هنا: نتحقق أول شي اذا احنا بوضع التعديل
         is_editing = context.user_data.get(user_id, {}).get("editing_mode", False)
 
-        # ✅ فقط اذا كنا بوضع التعديل، نضيف المنتج للقائمة حتى تطلع العلامة ✏️
         if is_editing:
             if "edited_products_list" not in context.user_data[user_id]:
                 context.user_data[user_id]["edited_products_list"] = []
@@ -778,13 +810,10 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data[user_id].pop("product", None)
 
         if is_editing:
-            # اذا احنا بوضع التعديل، ارجع اعرض الازرار دائماً وابد لا تروح للمحلات
             logger.info(f"[{chat_id}] Price updated in Edit Mode. Returning to buttons.")
-            # السطر الجوه هو اللي جان مسبب المشكلة، تأكد ينسخ كامل بسطر واحد
             await show_buttons(chat_id, context, user_id, order_id, confirmation_message=f"تم تعديل سعر '{product}' بنجاح ✅.")
             return ConversationHandler.END
 
-        # اذا مو تعديل (طلب جديد)، شيك اذا كملت كل المنتجات
         is_order_complete = True
         for p_name in orders[order_id].get("products", []):
             if p_name not in pricing.get(order_id, {}) or 'buy' not in pricing[order_id].get(p_name, {}):
@@ -802,6 +831,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in receive_buy_price: {e}", exc_info=True)
         await update.message.reply_text("صار خطا.")
         return ConversationHandler.END
+        
 
 
 async def receive_new_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1527,7 +1557,6 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # وضع المتغيرات العالمية في bot_data
     app.bot_data['orders'] = orders
     app.bot_data['pricing'] = pricing
     app.bot_data['invoice_numbers'] = invoice_numbers
@@ -1535,7 +1564,6 @@ def main():
     app.bot_data['last_button_message'] = last_button_message
     app.bot_data['supplier_report_timestamps'] = supplier_report_timestamps
 
-    # تمرير دوال الحفظ العامة لـ bot_data حتى تتمكن الدوال الأخرى من استدعائها
     app.bot_data['schedule_save_global_func'] = schedule_save_global
     app.bot_data['_save_data_to_disk_global_func'] = _save_data_to_disk_global
 
@@ -1553,24 +1581,19 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(التقارير|تقرير|تقارير)$"), show_report))
     app.add_handler(CallbackQueryHandler(cancel_edit, pattern=r"^cancel_edit_.*$"))
 
-    # ⭐⭐ إضافة الأمر لعرض الطلبات غير المكتملة ⭐⭐
     app.add_handler(CommandHandler("incomplete", show_incomplete_orders))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(طلبات|الطلبات|طلبات غير مكتملة|طلبات ناقصة)$"), show_incomplete_orders))
 
-    # ⭐⭐ إضافة handler لأزرار الطلبات غير المكتملة ⭐⭐
     app.add_handler(CallbackQueryHandler(handle_incomplete_order_selection, pattern=r"^(load_incomplete_|cancel_incomplete)"))
 
     app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
     app.add_handler(CallbackQueryHandler(edit_prices, pattern=r"^edit_prices_"))
     
-    # ✅✅ هذا السطر الجديد اللي ضفناه (زر اكتمل التعديل) ✅✅
     app.add_handler(CallbackQueryHandler(finish_editing_callback, pattern=r"^done_editing_"))
 
     app.add_handler(CallbackQueryHandler(start_new_order_callback, pattern=r"^start_new_order$"))
     
-    # أمر /zones لعرض المناطق
     app.add_handler(CommandHandler("zones", list_zones))
-    # استجابة نصية "مناطق" أو "المناطق"
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(مناطق|المناطق)$"), list_zones))
 
     # ConversationHandler لعدد المحلات
@@ -1626,6 +1649,8 @@ def main():
         states={
             ASK_BUY: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_buy_price),
+                # ✅✅ هنا ضفنا معالج زر الإلغاء داخل حالة ASK_BUY ✅✅
+                CallbackQueryHandler(cancel_price_entry_callback, pattern="^cancel_price_entry$")
             ],
             ASK_PRODUCT_NAME: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_product_name),
@@ -1639,7 +1664,6 @@ def main():
     )
     app.add_handler(order_creation_conv_handler)
 
-    # تشغيل البوت
     app.run_polling(allowed_updates=Update.ALL_TYPES)
    
 
