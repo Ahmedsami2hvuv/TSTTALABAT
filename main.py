@@ -421,7 +421,7 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
 
             if is_priced:
                 if p_name in edited_list:
-                    button_text = f"🔄✅ {p_name}"  # ✅ العلامة الجديدة للمنتج المعدل
+                    button_text = f"✏️✅ {p_name}"  # ✅ العلامة الجديدة للمنتج المعدل
                 else:
                     button_text = f"✅ {p_name}"
                 completed_products_buttons.append([InlineKeyboardButton(button_text, callback_data=callback_data_for_product)])
@@ -434,7 +434,7 @@ async def show_buttons(chat_id, context, user_id, order_id, confirmation_message
         # زر انتهاء التعديل يظهر فقط في وضع التعديل
         if context.user_data.get(user_id, {}).get("editing_mode", False):
             final_buttons_list.append([
-                InlineKeyboardButton("💾 اكتمل التعديل (التالي)", callback_data=f"done_editing_{order_id}")
+                InlineKeyboardButton("💾 اكتمل التعديل", callback_data=f"done_editing_{order_id}")
             ])
             final_buttons_list.append([
                 InlineKeyboardButton("❌ إلغاء التعديل", callback_data=f"cancel_edit_{order_id}")
@@ -765,7 +765,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # ✅ التصليح هنا: نتحقق أول شي اذا احنا بوضع التعديل
         is_editing = context.user_data.get(user_id, {}).get("editing_mode", False)
 
-        # ✅ فقط اذا كنا بوضع التعديل، نضيف المنتج للقائمة حتى تطلع العلامة 🔄
+        # ✅ فقط اذا كنا بوضع التعديل، نضيف المنتج للقائمة حتى تطلع العلامة ✏️
         if is_editing:
             if "edited_products_list" not in context.user_data[user_id]:
                 context.user_data[user_id]["edited_products_list"] = []
@@ -2000,3 +2000,4 @@ async def handle_incomplete_order_selection(update: Update, context: ContextType
     
 if __name__ == "__main__":
     main()
+    
