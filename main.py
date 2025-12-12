@@ -780,8 +780,30 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_editing:
             # اذا احنا بوضع التعديل، ارجع اعرض الازرار دائماً وابد لا تروح للمحلات
             logger.info(f"[{chat_id}] Price updated in Edit Mode. Returning to buttons.")
-            await show_buttons(chat_id, context, user_id, order_id, confirmation_message=f"تم تعديل سعر
-        
+            # السطر الجوه هو اللي جان مسبب المشكلة، تأكد ينسخ كامل بسطر واحد
+            await show_buttons(chat_id, context, user_id, order_id, confirmation_message=f"تم تعديل سعر '{product}' بنجاح ✅.")
+            return ConversationHandler.END
+
+        # اذا مو تعديل (طلب جديد)، شيك اذا كملت كل المنتجات
+        is_order_complete = True
+        for p_name in orders[order_id].get("products", []):
+            if p_name not in pricing.get(order_id, {}) or 'buy' not in pricing[order_id].get(p_name, {}):
+                is_order_complete = False
+                break
+                
+        if is_order_complete:
+            await request_places_count_standalone(chat_id, context, user_id, order_id)
+            return ConversationHandler.END
+        else:
+            await show_buttons(chat_id, context, user_id, order_id, confirmation_message="تم إدخال السعر.")
+            return ConversationHandler.END
+
+    except Exception as e:
+        logger.error(f"Error in receive_buy_price: {e}", exc_info=True)
+        await update.message.reply_text("صار خطا.")
+        return ConversationHandler.END
+
+
 async def receive_new_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     chat_id = update.effective_chat.id
