@@ -1015,19 +1015,18 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         invoice = invoice_numbers.get(order_id, "غير معروف")
         phone_number = order.get('phone_number', 'ماكو رقم')
 
-        # ✅✅ خطوة 1: جلب معلومات المجهز (الاسم واليوزر) ✅✅
-        supplier_real_id = order.get("supplier_id", user_id) # نجيب ايدي المجهز المسجل بالطلب
+        # ✅ جلب معلومات المجهز (الاسم واليوزر)
+        supplier_real_id = order.get("supplier_id", user_id)
         supplier_name = "غير معروف"
         supplier_username = ""
         
         try:
-            # نجيب معلومات المستخدم من التليكرام
             supplier_chat = await context.bot.get_chat(supplier_real_id)
-            supplier_name = supplier_chat.full_name # الاسم الكامل
+            supplier_name = supplier_chat.full_name
             if supplier_chat.username:
-                supplier_username = f"(@{supplier_chat.username})" # اليوزر نيم
+                supplier_username = f"(@{supplier_chat.username})"
             else:
-                supplier_username = "(بدون يوزر)"
+                supplier_username = ""
         except Exception as e:
             logger.warning(f"Could not fetch supplier info: {e}")
 
@@ -1052,7 +1051,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         context.application.bot_data['daily_profit'] = daily_profit_current + net_profit_products + extra_cost_value
         context.application.create_task(save_data_in_background(context))
 
-        # فاتورة الزبون
+        # --- فاتورة الزبون ---
         customer_invoice_lines = [
             "📋 أبو الأكبر للتوصيل 🚀",
             "-----------------------------------",
@@ -1078,14 +1077,12 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             else:
                 customer_invoice_lines.append(f"– {product_name} (لم يتم تسعيره)")
 
-        # إضافة رسوم التجهيز
         if extra_cost_value > 0:
             prev_total_for_display = current_display_total_sum
             customer_invoice_lines.append(f"– 📦 التجهيز: من {current_places} محلات بـ {format_float(extra_cost_value)}")
             customer_invoice_lines.append(f"• {format_float(prev_total_for_display)}+{format_float(extra_cost_value)}= {format_float(prev_total_for_display + extra_cost_value)} 💵")
             current_display_total_sum += extra_cost_value
 
-        # إضافة أجرة التوصيل
         display_delivery_fee_customer = original_delivery_fee
         if current_places in [1, 2]:
             display_delivery_fee_customer = original_delivery_fee
@@ -1099,7 +1096,6 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             customer_invoice_lines.append(f"– 🚚 التوصيل: بـ 0")
             customer_invoice_lines.append(f"• {format_float(current_display_total_sum)}+0= {format_float(current_display_total_sum)} 💵")
 
-        # إضافة المجموع الكلي
         customer_invoice_lines.extend([
             "-----------------------------------",
             "✨ المجموع الكلي: ✨",
@@ -1115,10 +1111,10 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         except Exception as e:
             logger.error(f"[{chat_id}] Could not send customer invoice: {e}")
 
-        # ✅✅ خطوة 2: إضافة اسم المجهز للفاتورة ✅✅
+        # --- فاتورة المجهز (الشراء) ---
         supplier_invoice = [
             f"**فاتورة الشراء:🧾💸**",
-            f"👤 **المجهز:** {supplier_name} {supplier_username}", # ضفنا هذا السطر
+            f"👤 **المجهز:** {supplier_name} {supplier_username}", 
             f"رقم الفاتورة🔢: {invoice}",
             f"عنوان الزبون🏠: {order['title']}",
             f"رقم الزبون📞: `{phone_number}`",
@@ -1132,21 +1128,30 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
                 supplier_invoice.append(f"  - {p_name}: (ترا ماحددت بيش اشتريت)")
         supplier_invoice.append(f"\n*مجموع كلفة الشراء للطلبية:💸* {format_float(total_buy)}")
 
+        # إرسال للمجهز
         try:
             await context.bot.send_message(chat_id=user_id, text="\n".join(supplier_invoice), parse_mode="Markdown")
         except Exception as e:
             logger.error(f"[{chat_id}] Could not send supplier invoice: {e}")
 
-        # ⭐⭐ إرسال فاتورة الشراء للمدير (راح تحتوي ع اسم المجهز هسه) ⭐⭐
+        # ⭐⭐ إرسال فاتورة الشراء للمدير (مع حل مشكلة عدم الوصول) ⭐⭐
         try:
+            # المحاولة الأولى: إرسال مرتب مع تنسيق
             await context.bot.send_message(chat_id=OWNER_ID, text="\n".join(supplier_invoice), parse_mode="Markdown")
         except Exception as e:
-            logger.error(f"[{chat_id}] Could not send supplier invoice to owner: {e}")
+            logger.error(f"[{chat_id}] Failed to send markdown invoice to owner: {e}")
+            # المحاولة الثانية: إرسال نص عادي (بدون تنسيق) لضمان الوصول
+            try:
+                # نحذف الرموز اللي ممكن تسبب مشاكل
+                clean_text = "\n".join(supplier_invoice).replace('*', '').replace('`', '').replace('_', '-')
+                await context.bot.send_message(chat_id=OWNER_ID, text=clean_text)
+            except Exception as e2:
+                logger.error(f"[{chat_id}] Failed to send plain invoice to owner: {e2}")
 
-        # فاتورة الإدارة (نفس القديمة)
+        # --- فاتورة الإدارة (الربح) ---
         owner_invoice = [
             f"**فاتورة الإدارة:👨🏻‍💼**",
-            f"👤 **المجهز:** {supplier_name}", # هم ضفناه هنا للاحتياط
+            f"👤 **المجهز:** {supplier_name}",
             f"رقم الفاتورة🔢: {invoice}",
             f"رقم الزبون📞: `{phone_number}`",
             f"عنوان الزبون🏠: {order['title']}",
@@ -1174,13 +1179,13 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         except Exception as e:
             logger.error(f"[{chat_id}] Could not send owner invoice: {e}")
 
-        # ⭐⭐ إرسال فاتورة الزبون للمدير أيضاً ⭐⭐
+        # إرسال نسخة من فاتورة الزبون للمدير
         try:
             await context.bot.send_message(chat_id=OWNER_ID, text=customer_final_text, parse_mode="Markdown")
         except Exception as e:
             logger.error(f"[{chat_id}] Could not send customer invoice to owner: {e}")
 
-        # أزرار التحكم النهائية
+        # أزرار التحكم
         from urllib.parse import quote
         encoded_customer_text = quote(customer_final_text, safe='')
         keyboard = [
