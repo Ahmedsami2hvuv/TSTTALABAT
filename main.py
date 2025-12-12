@@ -730,7 +730,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'message_id': update.message.message_id
         })
         
-        # تحليل السعر (نفس الكود القديم)
+        # تحليل السعر
         lines = [line.strip() for line in update.message.text.split('\n') if line.strip()]
         buy_price_str, sell_price_str = None, None
 
@@ -762,44 +762,25 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pricing[order_id][product]["sell"] = sell_price
         orders[order_id]["supplier_id"] = user_id
         
-        # ✅ تسجيل أن هذا المنتج تم تعديله (حتى تطلع العلامة)
-        if "edited_products_list" not in context.user_data[user_id]:
-            context.user_data[user_id]["edited_products_list"] = []
-        if product not in context.user_data[user_id]["edited_products_list"]:
-            context.user_data[user_id]["edited_products_list"].append(product)
+        # ✅ التصليح هنا: نتحقق أول شي اذا احنا بوضع التعديل
+        is_editing = context.user_data.get(user_id, {}).get("editing_mode", False)
+
+        # ✅ فقط اذا كنا بوضع التعديل، نضيف المنتج للقائمة حتى تطلع العلامة 🔄
+        if is_editing:
+            if "edited_products_list" not in context.user_data[user_id]:
+                context.user_data[user_id]["edited_products_list"] = []
+            if product not in context.user_data[user_id]["edited_products_list"]:
+                context.user_data[user_id]["edited_products_list"].append(product)
 
         context.application.create_task(save_data_in_background(context))
         
         context.user_data[user_id].pop("order_id", None)
         context.user_data[user_id].pop("product", None)
 
-        # ✅ الحل الجذري: التحقق من وضع التعديل أولاً
-        is_editing = context.user_data.get(user_id, {}).get("editing_mode", False)
-
         if is_editing:
             # اذا احنا بوضع التعديل، ارجع اعرض الازرار دائماً وابد لا تروح للمحلات
             logger.info(f"[{chat_id}] Price updated in Edit Mode. Returning to buttons.")
-            await show_buttons(chat_id, context, user_id, order_id, confirmation_message=f"تم تعديل سعر '{product}' بنجاح ✅.")
-            return ConversationHandler.END
-
-        # اذا مو تعديل (طلب جديد)، شيك اذا كملت كل المنتجات
-        is_order_complete = True
-        for p_name in orders[order_id].get("products", []):
-            if p_name not in pricing.get(order_id, {}) or 'buy' not in pricing[order_id].get(p_name, {}):
-                is_order_complete = False
-                break
-                
-        if is_order_complete:
-            await request_places_count_standalone(chat_id, context, user_id, order_id)
-            return ConversationHandler.END
-        else:
-            await show_buttons(chat_id, context, user_id, order_id, confirmation_message="تم إدخال السعر.")
-            return ConversationHandler.END
-
-    except Exception as e:
-        logger.error(f"Error in receive_buy_price: {e}", exc_info=True)
-        await update.message.reply_text("صار خطا.")
-        return ConversationHandler.END
+            await show_buttons(chat_id, context, user_id, order_id, confirmation_message=f"تم تعديل سعر
         
 async def receive_new_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
