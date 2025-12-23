@@ -1587,6 +1587,7 @@ async def show_all_purchase_reports(update: Update, context: ContextTypes.DEFAUL
 
         report_msg = f"📦 **تقرير فواتير المجهز**\n"
         report_msg += f"👤 **الاسم:** {supplier_name}\n"
+        report_msg += f"🆔 **الايدي:** `{s_id}`\n"
         report_msg += "-----------------------------------\n"
         total_supplier_buy = 0.0
 
