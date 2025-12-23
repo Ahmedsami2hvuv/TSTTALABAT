@@ -1549,6 +1549,67 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"[{update.effective_chat.id}] Error in show_report: {e}", exc_info=True)
         await update.message.reply_text("😐هذا الظراط ماكدرت ادزلك التقرير .")
+
+async def show_all_purchase_reports(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    orders = context.application.bot_data['orders'] #
+    pricing = context.application.bot_data['pricing'] #
+    
+    # التأكد أن الشخص هو صاحب البوت فقط
+    if str(update.effective_user.id) != str(OWNER_ID): #
+        await update.message.reply_text("😏 لاتاكل خره، هذا الأمر للمدير بس.")
+        return
+
+    if not orders:
+        await update.message.reply_text("ماكو أي طلبيات مسجلة حالياً.")
+        return
+
+    # تجميع الطلبات حسب كل مجهز
+    supplier_groups = {}
+    for order_id, order in orders.items():
+        s_id = order.get("supplier_id")
+        if s_id:
+            if s_id not in supplier_groups:
+                supplier_groups[s_id] = []
+            supplier_groups[s_id].append((order_id, order))
+
+    if not supplier_groups:
+        await update.message.reply_text("ماكو مجهزين مشتغلين على الطلبات حالياً.")
+        return
+
+    # إرسال رسالة لكل مجهز
+    for s_id, supplier_orders in supplier_groups.items():
+        try:
+            # محاولة جلب اسم المجهز
+            supplier_chat = await context.bot.get_chat(s_id)
+            supplier_name = supplier_chat.full_name
+        except Exception:
+            supplier_name = f"مجهز غير معروف ({s_id})"
+
+        report_msg = f"📦 **فواتير المجهز: {supplier_name}**\n"
+        report_msg += "-----------------------------------\n\n"
+        total_supplier_buy = 0.0
+
+        for oid, order_data in supplier_orders:
+            order_buy_sum = 0.0
+            report_msg += f"🧾 **فاتورة رقم:** #{context.application.bot_data['invoice_numbers'].get(oid, '??')}\n" #
+            report_msg += f"🏠 **العنوان:** {order_data['title']}\n" #
+            report_msg += f"📞 **الرقم:** `{order_data.get('phone_number')}`\n" #
+            report_msg += "🛍 **المنتجات:**\n"
+
+            for p_name in order_data['products']: #
+                buy_price = pricing.get(oid, {}).get(p_name, {}).get('buy', 0) #
+                order_buy_sum += buy_price
+                report_msg += f"   - {p_name}: {format_float(buy_price)}\n" #
+            
+            report_msg += f"💰 **مجموع الطلبية:** {format_float(order_buy_sum)}\n"
+            report_msg += "-------------------\n"
+            total_supplier_buy += order_buy_sum
+
+        report_msg += f"\n✅ **المجموع الكلي للمجهز:** {format_float(total_supplier_buy)} دينار 💸"
+        
+        # إرسال الرسالة للمدير
+        await update.message.reply_text(report_msg, parse_mode="Markdown")
+        
         
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
@@ -1591,6 +1652,9 @@ def main():
     
     app.add_handler(CommandHandler("zones", list_zones))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(مناطق|المناطق)$"), list_zones))
+    # ضيف هاي الأسطر داخل دالة main()
+    app.add_handler(CommandHandler("purchase_reports", show_all_purchase_reports))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تقارير الشراء|تقرير الشراء)$"), show_all_purchase_reports))
 
     # ConversationHandler لعدد المحلات
     places_conv_handler = ConversationHandler(
