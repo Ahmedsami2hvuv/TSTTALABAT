@@ -1609,6 +1609,33 @@ async def show_all_purchase_reports(update: Update, context: ContextTypes.DEFAUL
         
         # إرسال الرسالة للمدير
         await update.message.reply_text(report_msg, parse_mode="Markdown")
+
+async def clear_chat_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    chat_id = update.effective_chat.id
+    
+    # التأكد أن الشخص هو صاحب البوت فقط
+    if user_id != str(OWNER_ID):
+        await update.message.reply_text("😏 لاتاكل خره، بس المالك يكدر ينظف الجات.")
+        return
+
+    # رسالة تنبيه قبل البدء
+    status_msg = await update.message.reply_text("جاري تنظيف الكروب... اصبرلي ثواني 🧹")
+    current_msg_id = update.message.message_id
+
+    # راح يحاول يمسح آخر 500 رسالة (تكدر تزيد الرقم إذا تريد)
+    deleted_count = 0
+    for i in range(current_msg_id, current_msg_id - 500, -1):
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=i)
+            deleted_count += 1
+        except Exception:
+            # إذا الرسالة قديمة أو ممسوحة أصلاً، يعبرها
+            continue
+
+    # إرسال تأكيد نهائي
+    await context.bot.send_message(chat_id=chat_id, text=f"تم تنظيف الجات بنجاح! ✨\nتم مسح {deleted_count} رسالة.")
+    
         
         
 def main():
