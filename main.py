@@ -1585,8 +1585,11 @@ async def show_all_purchase_reports(update: Update, context: ContextTypes.DEFAUL
         except Exception:
             supplier_name = f"مجهز غير معروف ({s_id})"
 
-        report_msg = f"📦 **فواتير المجهز: {supplier_name}**\n"
-        report_msg += "-----------------------------------\n\n"
+        report_msg = f"📦 **تقرير فواتير المجهز**\n"
+        report_msg += f"👤 **الاسم:** {supplier_name}\n"
+        report_msg += f"🆔 **الايدي:** `{s_id}`\n"
+        report_msg += f"🔗 **اليوزر:** {supplier_username}\n"
+        report_msg += "-----------------------------------\n"
         total_supplier_buy = 0.0
 
         for oid, order_data in supplier_orders:
