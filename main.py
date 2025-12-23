@@ -996,10 +996,10 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
                 pass
             del context.user_data[user_id]['places_count_message']
 
-        # ✅✅ هنا التعديل الجوهري ✅✅
-        # نسجل عدد المحلات + نسجل انو هذا المستخدم هو صاحب الطلب النهائي
+        # ✅ التعديل هنا: نسجل عدد المحلات فقط، ولا نغير المجهز إذا كان موجوداً
         orders[order_id_to_process]["places_count"] = places
-        orders[order_id_to_process]["supplier_id"] = user_id  # <--- هذا السطر يخلي الملكية للشخص اللي داس الدكمة
+        if not orders[order_id_to_process].get("supplier_id"):
+            orders[order_id_to_process]["supplier_id"] = user_id
 
         # حفظ البيانات
         context.application.bot_data['daily_profit'] = daily_profit 
@@ -1562,23 +1562,28 @@ async def show_all_purchase_reports(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("ماكو أي طلبيات مسجلة حالياً.")
         return
 
+    # تجميع الطلبات حسب المجهز الفعلي
     supplier_groups = {}
     for order_id, order in orders.items():
-        s_id = order.get("supplier_id")
+        # نستخدم الشخص اللي سعر (supplier_id) أو اللي بدأ الطلب (user_id)
+        s_id = order.get("supplier_id") or order.get("user_id")
+        
         if s_id:
             if s_id not in supplier_groups:
                 supplier_groups[s_id] = []
             supplier_groups[s_id].append((order_id, order))
 
     if not supplier_groups:
-        await update.message.reply_text("ماكو مجهزين مشتغلين على الطلبات حالياً.")
+        await update.message.reply_text("ماكو بيانات مجهزين كافية للتقرير.")
         return
 
+    # إرسال رسالة لكل مجهز
     for s_id, supplier_orders in supplier_groups.items():
         supplier_username = "لا يوجد"
         supplier_name = "غير معروف"
         try:
-            supplier_chat = await context.bot.get_chat(s_id)
+            # تحويل الايدي لرقم للتأكد من جلب البيانات
+            supplier_chat = await context.bot.get_chat(int(s_id))
             supplier_name = supplier_chat.full_name
             if supplier_chat.username:
                 supplier_username = f"@{supplier_chat.username}"
@@ -1592,22 +1597,34 @@ async def show_all_purchase_reports(update: Update, context: ContextTypes.DEFAUL
         report_msg += "-----------------------------------\n"
         
         total_supplier_buy = 0.0
+        has_any_priced_order = False
+
         for oid, order_data in supplier_orders:
             order_buy_sum = 0.0
             invoice_no = context.application.bot_data['invoice_numbers'].get(oid, '??')
-            report_msg += f"🧾 **فاتورة:** #{invoice_no} | 🏠 {order_data['title']}\n"
+            
+            # بناء نص المنتجات لهذه الفاتورة
+            order_items_text = ""
+            order_has_pricing = False
             
             for p_name in order_data['products']:
                 buy_price = pricing.get(oid, {}).get(p_name, {}).get('buy', 0)
-                order_buy_sum += buy_price
-                report_msg += f"   • {p_name}: {format_float(buy_price)}\n"
+                if buy_price > 0:
+                    order_buy_sum += buy_price
+                    order_items_text += f"   • {p_name}: {format_float(buy_price)}\n"
+                    order_has_pricing = True
             
-            total_supplier_buy += order_buy_sum
-            report_msg += f"💰 مجموع الطلبية: {format_float(order_buy_sum)}\n"
-            report_msg += "--- --- ---\n"
+            if order_has_pricing:
+                report_msg += f"🧾 **فاتورة:** #{invoice_no} | 🏠 {order_data['title']}\n"
+                report_msg += order_items_text
+                report_msg += f"💰 مجموع الطلبية: {format_float(order_buy_sum)}\n"
+                report_msg += "--- --- ---\n"
+                total_supplier_buy += order_buy_sum
+                has_any_priced_order = True
 
-        report_msg += f"✅ **المجموع الكلي للمجهز:** {format_float(total_supplier_buy)} الف 💸"
-        await update.message.reply_text(report_msg, parse_mode="Markdown")
+        if has_any_priced_order:
+            report_msg += f"✅ **المجموع الكلي للمجهز:** {format_float(total_supplier_buy)} دينار 💸"
+            await update.message.reply_text(report_msg, parse_mode="Markdown")
 
 async def clear_chat_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_user.id) != str(OWNER_ID):
