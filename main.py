@@ -1551,11 +1551,10 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("😐هذا الظراط ماكدرت ادزلك التقرير .")
 
 async def show_all_purchase_reports(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    orders = context.application.bot_data['orders'] #
-    pricing = context.application.bot_data['pricing'] #
+    orders = context.application.bot_data['orders']
+    pricing = context.application.bot_data['pricing']
     
-    # التأكد أن الشخص هو صاحب البوت فقط
-    if str(update.effective_user.id) != str(OWNER_ID): #
+    if str(update.effective_user.id) != str(OWNER_ID):
         await update.message.reply_text("😏 لاتاكل خره، هذا الأمر للمدير بس.")
         return
 
@@ -1563,7 +1562,6 @@ async def show_all_purchase_reports(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("ماكو أي طلبيات مسجلة حالياً.")
         return
 
-    # تجميع الطلبات حسب كل مجهز
     supplier_groups = {}
     for order_id, order in orders.items():
         s_id = order.get("supplier_id")
@@ -1576,65 +1574,60 @@ async def show_all_purchase_reports(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("ماكو مجهزين مشتغلين على الطلبات حالياً.")
         return
 
-    # إرسال رسالة لكل مجهز
     for s_id, supplier_orders in supplier_groups.items():
+        supplier_username = "لا يوجد"
+        supplier_name = "غير معروف"
         try:
-            # محاولة جلب اسم المجهز
             supplier_chat = await context.bot.get_chat(s_id)
             supplier_name = supplier_chat.full_name
+            if supplier_chat.username:
+                supplier_username = f"@{supplier_chat.username}"
         except Exception:
-            supplier_name = f"مجهز غير معروف ({s_id})"
+            pass
 
-        report_msg = f"📦 **فواتير المجهز: {supplier_name}**\n"
-        report_msg += "-----------------------------------\n\n"
+        report_msg = f"📦 **تقرير فواتير المجهز**\n"
+        report_msg += f"👤 **الاسم:** {supplier_name}\n"
+        report_msg += f"🆔 **الايدي:** `{s_id}`\n"
+        report_msg += f"🔗 **اليوزر:** {supplier_username}\n"
+        report_msg += "-----------------------------------\n"
+        
         total_supplier_buy = 0.0
-
         for oid, order_data in supplier_orders:
             order_buy_sum = 0.0
-            report_msg += f"🧾 **فاتورة رقم:** #{context.application.bot_data['invoice_numbers'].get(oid, '??')}\n" #
-            report_msg += f"🏠 **العنوان:** {order_data['title']}\n" #
-            report_msg += f"📞 **الرقم:** `{order_data.get('phone_number')}`\n" #
-            report_msg += "🛍 **المنتجات:**\n"
-
-            for p_name in order_data['products']: #
-                buy_price = pricing.get(oid, {}).get(p_name, {}).get('buy', 0) #
-                order_buy_sum += buy_price
-                report_msg += f"   - {p_name}: {format_float(buy_price)}\n" #
+            invoice_no = context.application.bot_data['invoice_numbers'].get(oid, '??')
+            report_msg += f"🧾 **فاتورة:** #{invoice_no} | 🏠 {order_data['title']}\n"
             
-            report_msg += f"💰 **مجموع الطلبية:** {format_float(order_buy_sum)}\n"
-            report_msg += "-------------------\n"
+            for p_name in order_data['products']:
+                buy_price = pricing.get(oid, {}).get(p_name, {}).get('buy', 0)
+                order_buy_sum += buy_price
+                report_msg += f"   • {p_name}: {format_float(buy_price)}\n"
+            
             total_supplier_buy += order_buy_sum
+            report_msg += f"💰 مجموع الطلبية: {format_float(order_buy_sum)}\n"
+            report_msg += "--- --- ---\n"
 
-        report_msg += f"\n✅ **المجموع الكلي للمجهز:** {format_float(total_supplier_buy)} دينار 💸"
-        
-        # إرسال الرسالة للمدير
+        report_msg += f"✅ **المجموع الكلي للمجهز:** {format_float(total_supplier_buy)} الف 💸"
         await update.message.reply_text(report_msg, parse_mode="Markdown")
 
 async def clear_chat_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    chat_id = update.effective_chat.id
-    
-    # التأكد أن الشخص هو صاحب البوت فقط
-    if user_id != str(OWNER_ID):
-        await update.message.reply_text("😏 لاتاكل خره، بس المالك يكدر ينظف الجات.")
+    if str(update.effective_user.id) != str(OWNER_ID):
+        await update.message.reply_text("😏 لاتاكل خره، بس المالك ينظف الجات.")
         return
 
-    # رسالة تنبيه قبل البدء
-    status_msg = await update.message.reply_text("جاري تنظيف الكروب... اصبرلي ثواني 🧹")
-    current_msg_id = update.message.message_id
+    status_msg = await update.message.reply_text("جاري تنظيف الكروب... 🧹")
+    chat_id = update.effective_chat.id
+    current_id = update.message.message_id
 
-    # راح يحاول يمسح آخر 500 رسالة (تكدر تزيد الرقم إذا تريد)
-    deleted_count = 0
-    for i in range(current_msg_id, current_msg_id - 500, -1):
+    # يمسح آخر 1000 رسالة
+    deleted = 0
+    for i in range(current_id, current_id - 1000, -1):
         try:
             await context.bot.delete_message(chat_id=chat_id, message_id=i)
-            deleted_count += 1
+            deleted += 1
         except Exception:
-            # إذا الرسالة قديمة أو ممسوحة أصلاً، يعبرها
             continue
 
-    # إرسال تأكيد نهائي
-    await context.bot.send_message(chat_id=chat_id, text=f"تم تنظيف الجات بنجاح! ✨\nتم مسح {deleted_count} رسالة.")
+    await context.bot.send_message(chat_id=chat_id, text=f"✨ تم تنظيف الجات ومسح {deleted} رسالة.")
     
         
         
@@ -1681,7 +1674,9 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(مناطق|المناطق)$"), list_zones))
     # ضيف هاي الأسطر داخل دالة main()
     app.add_handler(CommandHandler("purchase_reports", show_all_purchase_reports))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تقارير الشراء|تقرير الشراء)$"), show_all_purchase_reports))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تقرير الشراء|تقرير شراء|تقارير شراء|تقارير الشراء|تقارير المجهزين|تقرير المجهزين|تقرير مجهزين|تقارير مجهزين)$"), show_all_purchase_reports))
+    #دالة المسح
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(ح ك|حك|حذف ك|حذف كل|حذف الكل|م ك|مك|م س|مسح كل|مسح الكل)$"), clear_chat_messages))
 
     # ConversationHandler لعدد المحلات
     places_conv_handler = ConversationHandler(
