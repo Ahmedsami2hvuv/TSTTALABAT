@@ -925,7 +925,6 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
         places = None
         chat_id = update.effective_chat.id
         user_id = str(update.effective_user.id) 
-        logger.info(f"[{chat_id}] handle_places_count_data triggered by user {user_id}.")
 
         context.user_data.setdefault(user_id, {})
         if 'messages_to_delete' not in context.user_data[user_id]:
@@ -935,92 +934,46 @@ async def handle_places_count_data(update: Update, context: ContextTypes.DEFAULT
 
         if update.callback_query:
             query = update.callback_query
-            logger.info(f"[{chat_id}] Places count callback query received: {query.data}")
             await query.answer()
-            
             try:
                 parts = query.data.split('_')
                 if len(parts) == 4 and parts[0] == "places" and parts[1] == "data":
                     order_id_to_process = parts[2] 
-                    
                     if order_id_to_process not in orders:
-                        await context.bot.send_message(chat_id=chat_id, text="باعلي هيو الطلبية مموجودة.")
-                        if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
-                            del context.user_data[user_id]["current_active_order_id"]
+                        await context.bot.send_message(chat_id=chat_id, text="الطلبية مموجودة.")
                         return ConversationHandler.END 
-
                     places = int(parts[3])
-                    if query.message:
-                        try:
-                            await context.bot.delete_message(chat_id=query.message.chat_id, message_id=query.message.message_id)
-                        except Exception:
-                            pass
-                else:
-                    raise ValueError(f"Unexpected data: {query.data}")
-            except Exception as e:
-                logger.error(f"[{chat_id}] Failed to parse places count: {e}", exc_info=True)
-                await context.bot.send_message(chat_id=chat_id, text="😐الدكمة زربت.")
-                return ConversationHandler.END 
+                    try: await context.bot.delete_message(chat_id=query.message.chat_id, message_id=query.message.message_id)
+                    except: pass
+            except Exception: return ConversationHandler.END 
         
         elif update.message: 
             context.user_data[user_id]['messages_to_delete'].append({'chat_id': update.message.chat_id, 'message_id': update.message.message_id})
             order_id_to_process = context.user_data[user_id].get("current_active_order_id")
-
-            if not order_id_to_process or order_id_to_process not in orders:
-                 msg_error = await context.bot.send_message(chat_id=chat_id, text="ماكو طلبية فعالة حالياً.")
-                 context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
-                 return ConversationHandler.END 
-
-            if not update.message.text.strip().isdigit(): 
-                msg_error = await context.bot.send_message(chat_id=chat_id, text="😐يابه دوس رقم صحيح.")
-                context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
-                return ASK_PLACES_COUNT 
-            
-            try:
-                places = int(update.message.text.strip())
-                if places < 0: raise ValueError
-            except ValueError: 
-                msg_error = await context.bot.send_message(chat_id=chat_id, text="😐يابه ددوس عدل.")
-                context.user_data[user_id]['messages_to_delete'].append({'chat_id': msg_error.chat_id, 'message_id': msg_error.message_id})
-                return ASK_PLACES_COUNT 
+            if not order_id_to_process or order_id_to_process not in orders: return ConversationHandler.END 
+            if not update.message.text.strip().isdigit(): return ASK_PLACES_COUNT 
+            places = int(update.message.text.strip())
         
-        if places is None or order_id_to_process is None:
-            await context.bot.send_message(chat_id=chat_id, text="عذراً، صار خطأ.")
-            return ConversationHandler.END 
+        if places is None or order_id_to_process is None: return ConversationHandler.END 
 
-        if 'places_count_message' in context.user_data[user_id]:
-            msg_info = context.user_data[user_id]['places_count_message']
-            try:
-                await context.bot.delete_message(chat_id=msg_info['chat_id'], message_id=msg_info['message_id'])
-            except Exception:
-                pass
-            del context.user_data[user_id]['places_count_message']
-
-        # ✅ التعديل هنا: نسجل عدد المحلات فقط، ولا نغير المجهز إذا كان موجوداً
+        # ✅ التعديل: نحفظ عدد المحلات، ونخلي اللي داس الدكمة مجهز "فقط" إذا الطلبية ما بيها مجهز سابقاً
         orders[order_id_to_process]["places_count"] = places
         if not orders[order_id_to_process].get("supplier_id"):
             orders[order_id_to_process]["supplier_id"] = user_id
 
-        # حفظ البيانات
-        context.application.bot_data['daily_profit'] = daily_profit 
         context.application.create_task(save_data_in_background(context))
-
-        logger.info(f"[{chat_id}] Order {order_id_to_process} finalized by {user_id}. Places: {places}.")
-
+        
         if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
             for msg_info in context.user_data[user_id]['messages_to_delete']:
                 context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
             context.user_data[user_id]['messages_to_delete'].clear()
         
-        await show_final_options(chat_id, context, user_id, order_id_to_process, message_prefix="هلهل كللوش.")
-        
+        await show_final_options(chat_id, context, user_id, order_id_to_process, message_prefix="تم إنهاء الطلبية بنجاح ✅")
         if user_id in context.user_data and "current_active_order_id" in context.user_data[user_id]:
             del context.user_data[user_id]["current_active_order_id"]
-
         return ConversationHandler.END 
     except Exception as e:
-        logger.error(f"[{chat_id}] Error in handle_places_count_data: {e}", exc_info=True)
-        await context.bot.send_message(chat_id=chat_id, text="عذراً، صار خطأ.", parse_mode="Markdown")
+        logger.error(f"Error in handle_places_count_data: {e}")
         return ConversationHandler.END
         
 
@@ -1562,10 +1515,10 @@ async def show_all_purchase_reports(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("ماكو أي طلبيات مسجلة حالياً.")
         return
 
-    # تجميع الطلبات حسب المجهز الفعلي
+    # تجميع الطلبات حسب المجهز الحقيقي (الشخص اللي سعر)
     supplier_groups = {}
     for order_id, order in orders.items():
-        # نستخدم الشخص اللي سعر (supplier_id) أو اللي بدأ الطلب (user_id)
+        # نعتمد على supplier_id اللي تسجل وكت التسعير، وإذا ماكو نعتمد على user_id اللي سوى الطلب
         s_id = order.get("supplier_id") or order.get("user_id")
         
         if s_id:
@@ -1574,21 +1527,19 @@ async def show_all_purchase_reports(update: Update, context: ContextTypes.DEFAUL
             supplier_groups[s_id].append((order_id, order))
 
     if not supplier_groups:
-        await update.message.reply_text("ماكو بيانات مجهزين كافية للتقرير.")
+        await update.message.reply_text("ماكو بيانات مجهزين كافية للتقرير حالياً.")
         return
 
-    # إرسال رسالة لكل مجهز
     for s_id, supplier_orders in supplier_groups.items():
         supplier_username = "لا يوجد"
         supplier_name = "غير معروف"
         try:
-            # تحويل الايدي لرقم للتأكد من جلب البيانات
+            # محاولة جلب معلومات المجهز من التليكرام باستخدام الايدي
             supplier_chat = await context.bot.get_chat(int(s_id))
             supplier_name = supplier_chat.full_name
             if supplier_chat.username:
                 supplier_username = f"@{supplier_chat.username}"
-        except Exception:
-            pass
+        except Exception: pass
 
         report_msg = f"📦 **تقرير فواتير المجهز**\n"
         report_msg += f"👤 **الاسم:** {supplier_name}\n"
@@ -1597,32 +1548,29 @@ async def show_all_purchase_reports(update: Update, context: ContextTypes.DEFAUL
         report_msg += "-----------------------------------\n"
         
         total_supplier_buy = 0.0
-        has_any_priced_order = False
+        has_priced_items = False
 
         for oid, order_data in supplier_orders:
             order_buy_sum = 0.0
             invoice_no = context.application.bot_data['invoice_numbers'].get(oid, '??')
+            items_list = ""
             
-            # بناء نص المنتجات لهذه الفاتورة
-            order_items_text = ""
-            order_has_pricing = False
-            
+            # نحسب فقط المنتجات اللي الها سعر شراء حقيقي
             for p_name in order_data['products']:
                 buy_price = pricing.get(oid, {}).get(p_name, {}).get('buy', 0)
                 if buy_price > 0:
                     order_buy_sum += buy_price
-                    order_items_text += f"   • {p_name}: {format_float(buy_price)}\n"
-                    order_has_pricing = True
+                    items_list += f"   • {p_name}: {format_float(buy_price)}\n"
             
-            if order_has_pricing:
+            if order_buy_sum > 0:
                 report_msg += f"🧾 **فاتورة:** #{invoice_no} | 🏠 {order_data['title']}\n"
-                report_msg += order_items_text
+                report_msg += items_list
                 report_msg += f"💰 مجموع الطلبية: {format_float(order_buy_sum)}\n"
                 report_msg += "--- --- ---\n"
                 total_supplier_buy += order_buy_sum
-                has_any_priced_order = True
+                has_priced_items = True
 
-        if has_any_priced_order:
+        if has_priced_items:
             report_msg += f"✅ **المجموع الكلي للمجهز:** {format_float(total_supplier_buy)} دينار 💸"
             await update.message.reply_text(report_msg, parse_mode="Markdown")
 
