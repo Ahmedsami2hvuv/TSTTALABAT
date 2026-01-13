@@ -1048,7 +1048,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
                 msg = (f"🔔 **تنبيه تجهيز:**\n"
                        f"المجهز {current_name} كمل فاتورة #{invoice}\n"
                        f"المنتجات اللي جهزتها أنت:\n{prods_list}\n"
-                       f"مجموعهن: {format_float(others_deductions[name])} د.ع")
+                       f"مجموعهن: {format_float(others_deductions[name])} الف")
                 await context.bot.send_message(chat_id=other_id, text=msg, parse_mode="Markdown")
             except: pass
 
@@ -1061,7 +1061,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             for name, amt in others_deductions.items():
                 sup_msg.append(f"➖ ناقص من {name}: {format_float(amt)}")
                 final_net -= amt
-            sup_msg.append(f"✅ **الصافي المطلوب: {format_float(final_net)}**")
+            sup_msg.append(f"✅ **الي دفتهن: {format_float(final_net)}**")
 
         await context.bot.send_message(chat_id=user_id, text="\n".join(sup_msg), parse_mode="Markdown")
         await context.bot.send_message(chat_id=OWNER_ID, text="\n".join(sup_msg), parse_mode="Markdown")
@@ -1283,7 +1283,7 @@ async def show_profit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"ربح البيع والتجهيز💵: *{format_float(overall_cumulative_profit)}* دينار", parse_mode="Markdown")
     except Exception as e:
         logger.error(f"[{update.effective_chat.id}] Error in show_profit: {e}", exc_info=True)
-        await update.message.reply_text("😐كسها ماكدرت اطلعلك الارباح")
+        await update.message.reply_text("😐اهووو ماكدرت اطلعلك الارباح")
 
 async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -1293,7 +1293,7 @@ async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         keyboard = [
             [InlineKeyboardButton("اي صفر", callback_data="confirm_reset")],
-            [InlineKeyboardButton("لا لاتصفر", callback_data="cancel_reset")]
+            [InlineKeyboardButton("لاتصفر", callback_data="cancel_reset")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text("😏يابه انته متاكد تريد تصفر راجع روحك اخذ خيره مو بعدين دكول لا حرامات ", reply_markup=reply_markup)
@@ -1572,7 +1572,7 @@ def main():
     app.add_handler(CommandHandler("profit", show_profit))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(الارباح|ارباح)$"), show_profit))
     app.add_handler(CommandHandler("reset", reset_all))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^تصفير$"), reset_all))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تصفير|صفر|تص|صف)$"), reset_all)
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^صفر$"), reset_supplier_report))
     app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
 
@@ -1584,7 +1584,7 @@ def main():
     
     # 3. تقارير الشراء (المجهزين) - دعم كل الكلمات
     app.add_handler(CommandHandler("purchase_reports", show_all_purchase_reports))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تقرير الشراء|تقرير شراء|تقارير شراء|تقارير الشراء|تقارير المجهزين|تقرير المجهزين|تقرير مجهزين|تقارير مجهزين)$"), show_all_purchase_reports))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تقرير الشراء|تقرير شراء|تقارير شراء|تقارير الشراء|تقارير المجهزين|تقرير المجهزين|تق|تقرير مجهزين|تقارير مجهزين)$"), show_all_purchase_reports))
 
     # 4. أوامر التنظيف (مسح الكل)
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(ح ك|حك|حذف ك|حذف كل|حذف الكل|م ك|مك|م س|مسح كل|مسح الكل)$"), clear_chat_messages))
