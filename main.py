@@ -1397,7 +1397,6 @@ async def show_all_purchase_reports(update: Update, context: ContextTypes.DEFAUL
     orders = context.application.bot_data.get('orders', {})
     pricing = context.application.bot_data.get('pricing', {})
     
-    # التأكد من هوية المدير
     if str(update.effective_user.id) != str(OWNER_ID):
         await update.message.reply_text("😏 لاتاكل خره، هذا الأمر للمدير بس.")
         return
@@ -1406,66 +1405,83 @@ async def show_all_purchase_reports(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("ماكو أي طلبيات مسجلة حالياً.")
         return
 
-    # تجميع الطلبات حسب المجهز
-    supplier_groups = {}
-    for order_id, order in orders.items():
-        s_id = order.get("supplier_id") or order.get("user_id")
-        if s_id:
-            if s_id not in supplier_groups:
-                supplier_groups[s_id] = []
-            supplier_groups[s_id].append((order_id, order))
+    # تحديد كل المجهزين الذين شاركوا في العمل
+    all_suppliers = set()
+    for oid in pricing:
+        for p_name in pricing[oid]:
+            s_id = pricing[oid][p_name].get("prepared_by_id")
+            if s_id:
+                all_suppliers.add(s_id)
 
-    if not supplier_groups:
-        await update.message.reply_text("ماكو بيانات مجهزين كافية للتقرير.")
+    if not all_suppliers:
+        await update.message.reply_text("ماكو بيانات مجهزين مسجلة بالأسعار.")
         return
 
-    # إرسال رسالة لكل مجهز
-    for s_id, supplier_orders in supplier_groups.items():
+    for s_id in all_suppliers:
+        supplier_name = "مجهز غير معروف"
         supplier_username = "لا يوجد"
-        supplier_name = f"مجهز ({s_id})"
-        
         try:
-            # محاولة جلب الاسم واليوزر من تليكرام
             supplier_chat = await context.bot.get_chat(int(s_id))
-            supplier_name = supplier_chat.full_name
+            supplier_name = supplier_chat.first_name
             if supplier_chat.username:
                 supplier_username = f"@{supplier_chat.username}"
-        except Exception:
-            pass 
+        except: pass
 
-        # استخدمنا هنا تنسيق HTML (<b> و <code>) حتى ما يضرب بسبب علامة (_) باليوزر
         report_msg = f"📦 <b>تقرير فواتير المجهز</b>\n"
         report_msg += f"👤 <b>الاسم:</b> {supplier_name}\n"
         report_msg += f"🆔 <b>الايدي:</b> <code>{s_id}</code>\n"
         report_msg += f"🔗 <b>اليوزر:</b> {supplier_username}\n"
         report_msg += "-----------------------------------\n"
         
-        total_supplier_buy = 0.0
-        has_priced_items = False
+        grand_total_for_this_supplier = 0.0
+        has_data = False
 
-        for oid, order_data in supplier_orders:
-            order_buy_sum = 0.0
+        for oid, order_data in orders.items():
             invoice_no = context.application.bot_data.get('invoice_numbers', {}).get(oid, '??')
-            items_list = ""
-            
-            for p_name in order_data.get('products', []):
-                buy_price = pricing.get(oid, {}).get(p_name, {}).get('buy', 0)
-                if buy_price > 0:
-                    order_buy_sum += buy_price
-                    items_list += f"   • {p_name}: {format_float(buy_price)}\n"
-            
-            if order_buy_sum > 0:
-                report_msg += f"🧾 <b>فاتورة:</b> #{invoice_no} | 🏠 {order_data['title']}\n"
-                report_msg += items_list
-                report_msg += f"💰 مجموع الطلبية: {format_float(order_buy_sum)}\n"
-                report_msg += "--- --- ---\n"
-                total_supplier_buy += order_buy_sum
-                has_priced_items = True
+            order_total_buy = 0.0
+            order_others_deduction = 0.0
+            others_details = {} # { "اسم الشخص": مبلغ }
+            items_text = ""
+            order_has_supplier_items = False
 
-        if has_priced_items:
-            report_msg += f"\n✅ <b>المجموع الكلي للمجهز:</b> {format_float(total_supplier_buy)} دينار 💸"
-            # انتبه هنا: غيرنا الـ parse_mode إلى HTML
+            # فحص كل منتج في الطلبية
+            for p_name in order_data.get('products', []):
+                p_info = pricing.get(oid, {}).get(p_name, {})
+                buy_price = p_info.get('buy', 0.0)
+                p_worker_id = str(p_info.get('prepared_by_id', ''))
+                p_worker_name = p_info.get('prepared_by_name', 'شخص آخر')
+
+                if buy_price > 0:
+                    order_total_buy += buy_price
+                    # إذا كان المنتج لهذا المجهز
+                    if p_worker_id == str(s_id):
+                        items_text += f"   • {p_name}: {format_float(buy_price)}\n"
+                        order_has_supplier_items = True
+                    else:
+                        # إذا كان لغيره
+                        items_text += f"   • {p_name}: {format_float(buy_price)} جهزه ({p_worker_name})\n"
+                        order_others_deduction += buy_price
+                        others_details[p_worker_name] = others_details.get(p_worker_name, 0.0) + buy_price
+
+            if order_has_supplier_items:
+                has_data = True
+                report_msg += f"🧾 <b>فاتورة:</b> #{invoice_no} | 🏠 {order_data['title']}\n"
+                report_msg += items_text
+                report_msg += f"💰 مجموع الطلبية: {format_float(order_total_buy)}\n"
+                
+                final_net = order_total_buy
+                if order_others_deduction > 0:
+                    for name, amt in others_details.items():
+                        report_msg += f"ناقص تجهيز ({name}) {format_float(amt)} = {format_float(order_total_buy - amt)}\n"
+                        final_net -= amt
+                
+                report_msg += "--- --- ---\n"
+                grand_total_for_this_supplier += final_net
+
+        if has_data:
+            report_msg += f"\n✅ <b>المجموع الكلي للمجهز:</b> {format_float(grand_total_for_this_supplier)} دينار 💸"
             await update.message.reply_text(report_msg, parse_mode="HTML")
+            
 
 async def clear_chat_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
