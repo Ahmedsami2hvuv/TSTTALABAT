@@ -721,13 +721,18 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     worker_name = update.effective_user.first_name
     
+    # ✅ السطر المطلوب للمسح التلقائي (أضفه هنا)
+    context.user_data.setdefault(user_id, {}).setdefault('messages_to_delete', []).append({
+        'chat_id': chat_id, 
+        'message_id': update.message.message_id
+    })
+
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
     
     try:
         lines = [line.strip() for line in update.message.text.split('\n') if line.strip()]
         
-        # إذا دخل نص طويل يحوله لمعالجة طلب جديد
         if len(lines) >= 3:
             if user_id in context.user_data:
                 context.user_data[user_id].pop("order_id", None)
@@ -759,7 +764,6 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("😒 دخل ارقام صحيحة.")
             return ASK_BUY
 
-        # ✅ خزن البيانات
         if order_id not in pricing: pricing[order_id] = {}
         pricing[order_id][product] = {
             "buy": buy_price,
@@ -772,22 +776,18 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data[user_id].pop("order_id", None)
         context.user_data[user_id].pop("product", None)
 
-        # 🛠️ التصحيح هنا: التحقق من أن "جميع" منتجات الطلبية تم تسعيرها
         current_order_products = orders[order_id].get("products", [])
         priced_products = pricing.get(order_id, {})
         
         is_order_complete = True
         for p in current_order_products:
-            # نتحقق إذا كان المنتج موجود في سجل الأسعار وله سعر شراء
             if p not in priced_products or "buy" not in priced_products[p]:
                 is_order_complete = False
                 break
                 
         if is_order_complete:
-            # إذا وفقط إذا كملت "كل" المنتجات، يطلب عدد المحلات
             await request_places_count_standalone(chat_id, context, user_id, order_id)
         else:
-            # إذا بعد اكو منتجات ما مسعرة، يرجع يظهر الأزرار
             await show_buttons(chat_id, context, user_id, order_id, confirmation_message=f"✅ تم تسعير: {product}")
             
         return ConversationHandler.END
@@ -1003,17 +1003,21 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         if not order: return
         
         invoice = invoice_numbers.get(order_id, "000")
-        # اسم المجهز اللي داس الزر حالياً
+        phone_number = order.get('phone_number', 'ماكو رقم')
+        
+        # اسم المجهز الحالي
         current_chat = await context.bot.get_chat(user_id)
         current_name = current_chat.first_name
         
         total_buy = 0.0
         total_sell = 0.0
-        others_deductions = {} # { "اسم الشخص": مبلغ }
-        others_ids = {} # { "اسم الشخص": id } لغرض المراسلة
+        others_deductions = {} 
+        others_ids = {} 
+        others_products = {} # لخزن أسماء المنتجات للمجهز الآخر
         
         buy_details = []
         
+        # حسابات الشراء وتفاصيل المجهزين
         for p_name in order["products"]:
             data = pricing.get(order_id, {}).get(p_name, {})
             buy = data.get("buy", 0.0)
@@ -1027,57 +1031,96 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             if str(p_id_worker) != str(user_id):
                 others_deductions[p_name_worker] = others_deductions.get(p_name_worker, 0.0) + buy
                 others_ids[p_name_worker] = p_id_worker
+                # خزن اسم المنتج وسعره للمجهز الآخر
+                if p_name_worker not in others_products: others_products[p_name_worker] = []
+                others_products[p_name_worker].append(f"• {p_name} ({format_float(buy)})")
+                
                 note = f" (قام بتجهيزه {p_name_worker})"
             else:
                 note = ""
             
             buy_details.append(f"  - {p_name}: {format_float(buy)}{note}")
 
-        # --- إرسال إشعارات للمجهزين الآخرين ---
+        # --- 1. إرسال إشعارات مفصلة للمجهزين الآخرين ---
         for name, other_id in others_ids.items():
             try:
-                msg = f"🔔 **تنبيه تجهيز:**\nالمجهز {current_name} كمل فاتورة #{invoice}\nالمنتجات اللي جهزتها أنت مبلغهن: {format_float(others_deductions[name])}"
+                prods_list = "\n".join(others_products[name])
+                msg = (f"🔔 **تنبيه تجهيز:**\n"
+                       f"المجهز {current_name} كمل فاتورة #{invoice}\n"
+                       f"المنتجات اللي جهزتها أنت:\n{prods_list}\n"
+                       f"مجموعهن: {format_float(others_deductions[name])} د.ع")
                 await context.bot.send_message(chat_id=other_id, text=msg, parse_mode="Markdown")
             except: pass
 
-        # --- بناء فاتورة الشراء للمجهز الحالي ---
+        # --- 2. بناء فاتورة الشراء (ترسل للمجهز والمدير) ---
         final_net = total_buy
-        sup_msg = [
-            f"**فاتورة الشراء الخاصة بك:🧾**",
-            f"👤 المجهز الحالي: {current_name}",
-            f"🔢 فاتورة رقم: {invoice}",
-            f"\n*تفاصيل الشراء:*",
-            *buy_details,
-            f"\n💰 المجموع الكلي: {format_float(total_buy)}"
-        ]
-        
+        sup_msg = [f"**فاتورة الشراء الخاصة بك:🧾**", f"👤 المجهز: {current_name}", f"🔢 فاتورة: {invoice}",
+                   f"🏠 العنوان: {order['title']}", f"📞 الرقم: `{phone_number}`", f"\n*تفاصيل الشراء:*", *buy_details,
+                   f"\n💰 المجموع الكلي: {format_float(total_buy)}"]
         if others_deductions:
             for name, amt in others_deductions.items():
                 sup_msg.append(f"➖ ناقص من {name}: {format_float(amt)}")
                 final_net -= amt
-            sup_msg.append(f"✅ **الصافي المطلوب منك دفعه: {format_float(final_net)}**")
+            sup_msg.append(f"✅ **الصافي المطلوب: {format_float(final_net)}**")
 
         await context.bot.send_message(chat_id=user_id, text="\n".join(sup_msg), parse_mode="Markdown")
-        
-        # --- فاتورة الزبون ---
-        delivery = get_delivery_price(order.get('title', ''))
-        places_cost = calculate_extra(order.get("places_count", 0))
-        grand_total = total_sell + delivery + places_cost
-        
-        cust_msg = f"📋 فاتورة رقم #{invoice}\n📍 العنوان: {order['title']}\n"
-        cust_msg += f"💰 المجموع الكلي مع التوصيل: {format_float(grand_total)} 💵"
-        await context.bot.send_message(chat_id=chat_id, text=cust_msg)
-
-        # إرسال التقرير للمدير
         await context.bot.send_message(chat_id=OWNER_ID, text="\n".join(sup_msg), parse_mode="Markdown")
 
-        # أزرار التعديل والرفع
+        # --- 3. بناء فاتورة الزبون (التنسيق الكامل للكروب) ---
+        delivery = get_delivery_price(order.get('title', ''))
+        places_count = order.get("places_count", 0)
+        extra_cost = calculate_extra(places_count)
+        
+        customer_lines = [
+            "📋 أبو الأكبر للتوصيل 🚀",
+            "-----------------------------------",
+            f"فاتورة رقم: #{invoice}",
+            f"🏠 عنوان الزبون: {order['title']}",
+            f"📞 رقم الزبون: {phone_number}",
+            "\n🛍️ المنتجات: "
+        ]
+        
+        current_sum = 0.0
+        for i, p_name in enumerate(order["products"]):
+            p_sell = pricing.get(order_id, {}).get(p_name, {}).get("sell", 0.0)
+            customer_lines.append(f"– {p_name} بـ{format_float(p_sell)}")
+            if i == 0:
+                customer_lines.append(f"• {format_float(p_sell)} 💵")
+            else:
+                customer_lines.append(f"• {format_float(current_sum)}+{format_float(p_sell)}= {format_float(current_sum + p_sell)} 💵")
+            current_sum += p_sell
+
+        if extra_cost > 0:
+            customer_lines.append(f"– 📦 التجهيز: من {places_count} محلات بـ {format_float(extra_cost)}")
+            customer_lines.append(f"• {format_float(current_sum)}+{format_float(extra_cost)}= {format_float(current_sum + extra_cost)} 💵")
+            current_sum += extra_cost
+
+        customer_lines.append(f"– 🚚 التوصيل: بـ {format_float(delivery)}")
+        customer_lines.append(f"• {format_float(current_sum)}+{format_float(delivery)}= {format_float(current_sum + delivery)} 💵")
+        
+        customer_lines.extend([
+            "-----------------------------------",
+            "✨ المجموع الكلي: ✨",
+            f"بدون التوصيل = {format_float(total_sell + extra_cost)} 💵",
+            f"مــــع التوصيل = {format_float(current_sum)} 💵",
+            "شكراً لاختياركم أبو الأكبر للتوصيل! ❤️"
+        ])
+        
+        await context.bot.send_message(chat_id=chat_id, text="\n".join(customer_lines))
+
+        # --- 4. مسح رسائل المجهزين (تنظيف الجات) ---
+        if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
+            for msg_info in context.user_data[user_id]['messages_to_delete']:
+                context.application.create_task(delete_message_in_background(context, chat_id=msg_info['chat_id'], message_id=msg_info['message_id']))
+            context.user_data[user_id]['messages_to_delete'].clear()
+
+        # أزرار التحكم
         kb = [[InlineKeyboardButton("1️⃣ تعديل الاسعار", callback_data=f"edit_prices_{order_id}")],
               [InlineKeyboardButton("2️⃣ رفع الطلبية", url="https://d.ksebstor.site/client/96f743f604a4baf145939298")]]
         await context.bot.send_message(chat_id=chat_id, text="تمت العملية بنجاح ✅", reply_markup=InlineKeyboardMarkup(kb))
 
     except Exception as e:
-        logger.error(f"Error: {e}")
+        logger.error(f"Error in show_final_options: {e}")
 
 async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
