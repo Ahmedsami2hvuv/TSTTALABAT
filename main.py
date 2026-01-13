@@ -721,7 +721,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     worker_name = update.effective_user.first_name
     
-    # ✅ السطر المطلوب للمسح التلقائي (أضفه هنا)
+    # تسجيل الرسالة للمسح التلقائي
     context.user_data.setdefault(user_id, {}).setdefault('messages_to_delete', []).append({
         'chat_id': chat_id, 
         'message_id': update.message.message_id
@@ -733,6 +733,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         lines = [line.strip() for line in update.message.text.split('\n') if line.strip()]
         
+        # إذا دخل نص طويل يحوله لمعالجة طلب جديد
         if len(lines) >= 3:
             if user_id in context.user_data:
                 context.user_data[user_id].pop("order_id", None)
@@ -747,6 +748,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ حدث خطأ، ابدأ من جديد.")
             return ConversationHandler.END
 
+        # استخراج الأسعار
         buy_price_str, sell_price_str = None, None
         if len(lines) == 2:
             buy_price_str, sell_price_str = lines[0], lines[1]
@@ -764,14 +766,27 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("😒 دخل ارقام صحيحة.")
             return ASK_BUY
 
+        # 🛠️ المنطق الجديد لضمان حق المجهز الأول:
         if order_id not in pricing: pricing[order_id] = {}
+        
+        # نتحقق إذا كان المنتج مسعر مسبقاً وله مجهز
+        existing_data = pricing[order_id].get(product, {})
+        original_worker_name = existing_data.get("prepared_by_name")
+        original_worker_id = existing_data.get("prepared_by_id")
+
+        # إذا كان المنتج له مجهز أصلي، نستخدم بياناته القديمة ونحدث السعر فقط
+        # أما إذا كان جديد (أول مرة يتسعر)، نضع بيانات الشخص الحالي
+        final_worker_name = original_worker_name if original_worker_id else worker_name
+        final_worker_id = original_worker_id if original_worker_id else user_id
+
         pricing[order_id][product] = {
             "buy": buy_price,
             "sell": sell_price,
-            "prepared_by_name": worker_name,
-            "prepared_by_id": user_id
+            "prepared_by_name": final_worker_name,
+            "prepared_by_id": final_worker_id
         }
         
+        # حفظ وتكملة الإجراءات
         context.application.create_task(save_data_in_background(context))
         context.user_data[user_id].pop("order_id", None)
         context.user_data[user_id].pop("product", None)
@@ -1572,7 +1587,7 @@ def main():
     app.add_handler(CommandHandler("profit", show_profit))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(الارباح|ارباح)$"), show_profit))
     app.add_handler(CommandHandler("reset", reset_all))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تصفير|صفر|تص|صف)$"), reset_all)
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تصفير|صفر|تص|صف)$"), reset_all))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^صفر$"), reset_supplier_report))
     app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
 
