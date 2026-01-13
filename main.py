@@ -727,7 +727,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         lines = [line.strip() for line in update.message.text.split('\n') if line.strip()]
         
-        # إذا دخل نص طويل (أكثر من سطرين) يحوله لمعالجة طلب جديد
+        # إذا دخل نص طويل يحوله لمعالجة طلب جديد
         if len(lines) >= 3:
             if user_id in context.user_data:
                 context.user_data[user_id].pop("order_id", None)
@@ -759,7 +759,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("😒 دخل ارقام صحيحة.")
             return ASK_BUY
 
-        # ✅ خزن البيانات: السعر + الاسم + الآيدي
+        # ✅ خزن البيانات
         if order_id not in pricing: pricing[order_id] = {}
         pricing[order_id][product] = {
             "buy": buy_price,
@@ -772,21 +772,28 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data[user_id].pop("order_id", None)
         context.user_data[user_id].pop("product", None)
 
-        # التحقق إذا كملت الطلبية
+        # 🛠️ التصحيح هنا: التحقق من أن "جميع" منتجات الطلبية تم تسعيرها
+        current_order_products = orders[order_id].get("products", [])
+        priced_products = pricing.get(order_id, {})
+        
         is_order_complete = True
-        for p in orders[order_id].get("products", []):
-            if p not in pricing.get(order_id, {}):
-                is_order_complete = False; break
+        for p in current_order_products:
+            # نتحقق إذا كان المنتج موجود في سجل الأسعار وله سعر شراء
+            if p not in priced_products or "buy" not in priced_products[p]:
+                is_order_complete = False
+                break
                 
         if is_order_complete:
+            # إذا وفقط إذا كملت "كل" المنتجات، يطلب عدد المحلات
             await request_places_count_standalone(chat_id, context, user_id, order_id)
         else:
-            await show_buttons(chat_id, context, user_id, order_id, confirmation_message=f"تم إدخال سعر {product}")
+            # إذا بعد اكو منتجات ما مسعرة، يرجع يظهر الأزرار
+            await show_buttons(chat_id, context, user_id, order_id, confirmation_message=f"✅ تم تسعير: {product}")
             
         return ConversationHandler.END
 
     except Exception as e:
-        logger.error(f"Error: {e}")
+        logger.error(f"Error in receive_buy_price: {e}")
         return ConversationHandler.END
         
 
