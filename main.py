@@ -1076,7 +1076,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             for name, amt in others_deductions.items():
                 sup_msg.append(f"➖ ناقص من {name}: {format_float(amt)}")
                 final_net -= amt
-            sup_msg.append(f"✅ **الي دفتهن: {format_float(final_net)}**")
+            sup_msg.append(f"✅ **الي دفتعهن: {format_float(final_net)}**")
 
         await context.bot.send_message(chat_id=user_id, text="\n".join(sup_msg), parse_mode="Markdown")
         await context.bot.send_message(chat_id=OWNER_ID, text="\n".join(sup_msg), parse_mode="Markdown")
