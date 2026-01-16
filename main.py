@@ -765,52 +765,96 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             await update.message.reply_text("😒 دخل ارقام صحيحة.")
             return ASK_BUY
+async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    orders = context.application.bot_data['orders']
+    pricing = context.application.bot_data['pricing']
+    
+    user_id = str(update.effective_user.id)
+    chat_id = update.effective_chat.id
+    user_display_name = update.effective_user.first_name
 
-        # 🛠️ المنطق الجديد لضمان حق المجهز الأول:
-        if order_id not in pricing: pricing[order_id] = {}
+    try:
+        if user_id not in context.user_data or "order_id" not in context.user_data[user_id]:
+            await update.message.reply_text("❌ انتهت الجلسة أو حدث خطأ، يرجى المحاولة مرة أخرى.")
+            return ConversationHandler.END
+
+        order_id = context.user_data[user_id]["order_id"]
+        product = context.user_data[user_id]["product"]
         
-        # نتحقق إذا كان المنتج مسعر مسبقاً وله مجهز
-        existing_data = pricing[order_id].get(product, {})
-        original_worker_name = existing_data.get("prepared_by_name")
-        original_worker_id = existing_data.get("prepared_by_id")
+        # التأكد من صحة المدخلات (يجب أن يكون رقماً)
+        try:
+            input_price = float(update.message.text.strip())
+        except ValueError:
+            await update.message.reply_text("⚠️ يرجى إدخال رقم صحيح للسعر.")
+            return ASK_BUY
 
-        # إذا كان المنتج له مجهز أصلي، نستخدم بياناته القديمة ونحدث السعر فقط
-        # أما إذا كان جديد (أول مرة يتسعر)، نضع بيانات الشخص الحالي
-        final_worker_name = original_worker_name if original_worker_id else worker_name
-        final_worker_id = original_worker_id if original_worker_id else user_id
-
-        pricing[order_id][product] = {
-            "buy": buy_price,
-            "sell": sell_price,
-            "prepared_by_name": final_worker_name,
-            "prepared_by_id": final_worker_id
-        }
-        
-        # حفظ وتكملة الإجراءات
-        context.application.create_task(save_data_in_background(context))
-        context.user_data[user_id].pop("order_id", None)
-        context.user_data[user_id].pop("product", None)
-
-        current_order_products = orders[order_id].get("products", [])
-        priced_products = pricing.get(order_id, {})
-        
-        is_order_complete = True
-        for p in current_order_products:
-            if p not in priced_products or "buy" not in priced_products[p]:
-                is_order_complete = False
-                break
-                
-        if is_order_complete:
-            await request_places_count_standalone(chat_id, context, user_id, order_id)
+        # منطق تحديد سعر الشراء والبيع (كما هو في نظامك الحالي)
+        if "buy_price" not in context.user_data[user_id]:
+            context.user_data[user_id]["buy_price"] = input_price
+            await update.message.reply_text(f"تمام، سعر الشراء {format_float(input_price)}. هسة دزلي سعر البيع:")
+            return ASK_BUY
         else:
-            await show_buttons(chat_id, context, user_id, order_id, confirmation_message=f"✅ تم تسعير: {product}")
+            buy_price = context.user_data[user_id]["buy_price"]
+            sell_price = input_price
             
-        return ConversationHandler.END
+            # ✅ الإصلاح: المحافظة على صاحب التسعير الأول
+            original_pricing_data = pricing.get(order_id, {}).get(product, {})
+            original_worker_name = original_pricing_data.get("prepared_by_name")
+            original_worker_id = original_pricing_data.get("prepared_by_id")
+            
+            # إذا كان المنتج مسعراً من قبل، نستخدم بيانات المجهز القديم، وإذا لا، نستخدم بيانات المستخدم الحالي
+            final_worker_name = original_worker_name if original_worker_name else user_display_name
+            final_worker_id = original_worker_id if original_worker_id else user_id
+
+            # حفظ التسعير
+            if order_id not in pricing:
+                pricing[order_id] = {}
+            
+            pricing[order_id][product] = {
+                "buy": buy_price,
+                "sell": sell_price,
+                "prepared_by_name": final_worker_name,
+                "prepared_by_id": final_worker_id
+            }
+
+            # ✅ الإصلاح: إضافة المنتج لقائمة "المعدلة" ليظهر عليها القلم ✏️
+            is_editing = context.user_data.get(user_id, {}).get("editing_mode", False)
+            if is_editing:
+                if "edited_products_list" not in context.user_data[user_id]:
+                    context.user_data[user_id]["edited_products_list"] = []
+                if product not in context.user_data[user_id]["edited_products_list"]:
+                    context.user_data[user_id]["edited_products_list"].append(product)
+
+            # حفظ البيانات في الخلفية
+            context.application.create_task(save_data_in_background(context))
+
+            # تنظيف البيانات المؤقتة
+            context.user_data[user_id].pop("order_id", None)
+            context.user_data[user_id].pop("product", None)
+            context.user_data[user_id].pop("buy_price", None)
+
+            # التحقق من اكتمال الطلب
+            current_order_products = orders[order_id].get("products", [])
+            priced_products = pricing.get(order_id, {})
+            is_order_complete = True
+            for p in current_order_products:
+                if p not in priced_products or "buy" not in priced_products[p]:
+                    is_order_complete = False
+                    break
+
+            # ✅ الإصلاح: إذا كنا في "وضع التعديل" لا ننتقل لعدد المحلات تلقائياً
+            if is_order_complete and not is_editing:
+                await request_places_count_standalone(chat_id, context, user_id, order_id)
+            else:
+                await show_buttons(chat_id, context, user_id, order_id, 
+                                 confirmation_message=f"✅ تم حفظ سعر: *{product}*")
+            
+            return ConversationHandler.END
 
     except Exception as e:
-        logger.error(f"Error in receive_buy_price: {e}")
+        logger.error(f"Error in receive_buy_price: {e}", exc_info=True)
+        await update.message.reply_text("❌ حدث خطأ أثناء حفظ السعر.")
         return ConversationHandler.END
-        
 
 
 async def receive_new_product_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
