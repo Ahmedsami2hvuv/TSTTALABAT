@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-OWNER_ID = os.getenv("OWNER_TELEGRAM_ID") 
+_owner_raw = os.getenv("OWNER_TELEGRAM_ID", "").strip()
 OWNER_PHONE_NUMBER = os.getenv("OWNER_TELEGRAM_PHONE_NUMBER", "+9647733921468")
 
 if TOKEN:
@@ -25,14 +25,20 @@ if TOKEN:
 else:
     raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set.")
 
-if OWNER_ID is None:
+if not _owner_raw:
     raise ValueError("OWNER_TELEGRAM_ID environment variable not set.")
-    
-# التأكد من تحويل الـ OWNER_ID إلى رقم بعد التحقق
-try:
-    OWNER_ID = int(OWNER_ID)
-except ValueError:
-    raise ValueError("OWNER_TELEGRAM_ID must be a number.")
+
+# دعم أكثر من مدير: أرقام مفصولة بفاصلة (مثال: 7032076289,937732530)
+OWNER_IDS = set()
+for x in _owner_raw.split(","):
+    part = x.strip()
+    if part.isdigit():
+        OWNER_IDS.add(int(part))
+if not OWNER_IDS:
+    raise ValueError("OWNER_TELEGRAM_ID must be one or more numbers (comma-separated).")
+
+# للتوافق مع أي كود يتوقع رقماً واحداً (مثل إرسال رسالة لمالك واحد)
+OWNER_ID = next(iter(OWNER_IDS))
 
 # ----------------------------------------------------------------------
 # ✅ تعريف مسار الملف المحلي للمناطق
@@ -106,7 +112,3 @@ def get_delivery_price(order_title_line):
     
     logger.info(f"No matching delivery zone found in title '{order_title_line}'. Returning 0.")
     return 0
-
-# الدوال الخاصة بإدارة المناطق من البوت (ask_zone_name, handle_zone_edit, add_zones_bulk)
-# لا داعي لوجودها بما أن التعديل سيتم يدويا على GitHub.
-# يفضل حذفها من main.py أيضاً.
