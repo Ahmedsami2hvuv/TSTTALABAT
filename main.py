@@ -2096,6 +2096,3 @@ async def handle_incomplete_order_selection(update: Update, context: ContextType
 if __name__ == "__main__":
     main()
     
-
-انا لست مبرجما ولا اعرف كيف اعدل جزر من الملف صحيح انا صاحب الملفات لاكني لا اعرف كيف اصلح جزئيا 
-</user_query>
