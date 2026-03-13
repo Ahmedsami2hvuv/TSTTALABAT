@@ -2007,11 +2007,17 @@ async def auto_reset_broadcast_callback(context: ContextTypes.DEFAULT_TYPE):
     logger.info("Auto reset and broadcast completed.")
 
 
+# نمط بداية سطر "الاسم" ثم مسافات اختيارية ثم : أو ： ثم الباقي اسم المنتج
+_RE_product_line = re.compile(r"^الاسم\s*[:\：]\s*(.+)$", re.IGNORECASE)
+_RE_quantity_line = re.compile(r"^الكمية\s*[:\：]\s*(\d+)", re.IGNORECASE)
+_RE_price_line = re.compile(r"^السعر\s*[:\：]\s*(\d+)", re.IGNORECASE)
+
+
 def _parse_site_order_message(text: str):
     """
-    تحليل رسالة طلب تأتي من بوت الموقع في كروب خصيب ستور.
-    ترجع dict فيها:
-      customer_name, address, landmark, items (name, qty, price), total_price
+    تحليل رسالة طلب تبدأ بـ "اسم الزبون".
+    المنتج فقط: سطر يبدأ بـ "الاسم:" وبعده سطر "الكمية:" ثم "السعر:".
+    أي سطر آخر (الكمية، السعر، العنوان، **، ملاحظات، ...) لا يُعتبر منتجاً.
     """
     if not text:
         return None
@@ -2027,23 +2033,49 @@ def _parse_site_order_message(text: str):
     n = len(lines)
     while i < n:
         line = lines[i]
-        if line.startswith("اسم الزبون"):
-            # مثال: "اسم الزبون: أم محمد"
-            parts = line.split(":", 1)
-            if len(parts) == 2:
-                customer_name = parts[1].strip()
-        elif line.startswith("العنوان"):
-            parts = line.split(":", 1)
-            if len(parts) == 2:
-                address = parts[1].strip()
-        elif line.startswith("اقرب نقطة دالة"):
-            parts = line.split(":", 1)
-            if len(parts) == 2:
-                landmark = parts[1].strip()
-        elif line.startswith("الاسم:"):
-            # بلوك منتج: الاسم قد يبدأ بـ "اسم المحل:" فننتخطاه ونأخذ ما بعده فقط
-            raw = line.split(":", 1)[1].strip() if ":" in line else ""
-            # تخطي "اسم المحل" وأخذ ما بعده (اسم المحل: أو اسم المحل )
+        # اسم الزبون
+        if re.match(r"^اسم\s*الزبون\s*[:\：]", line):
+            m = re.search(r"[:\：]\s*(.+)$", line)
+            if m:
+                customer_name = m.group(1).strip()
+            i += 1
+            continue
+        # العنوان = اسم المنطقة فقط
+        if re.match(r"^العنوان\s*[:\：]", line):
+            m = re.search(r"[:\：]\s*(.+)$", line)
+            if m:
+                address = m.group(1).strip()
+            i += 1
+            continue
+        # اقرب نقطة دالة
+        if re.match(r"^اقرب\s*نقطة\s*دالة\s*[:\：]", line):
+            m = re.search(r"[:\：]\s*(.+)$", line)
+            if m:
+                landmark = m.group(1).strip()
+            i += 1
+            continue
+        # ملاحظات أو فواصل أو عناوين → نتخطى، لا نعتبرها منتج
+        if re.match(r"^ملاحظات\s*[:\：]?", line) or line in ("**", "***", "******", "معلومات الطلب", "") or re.match(r"^-+$", line):
+            i += 1
+            continue
+        # السعر الكلي (قد يكون سطر منفصل ثم رقم في السطر التالي)
+        if "السعر الكلي" in line:
+            try:
+                rest = line.replace("السعر الكلي", "").replace("*", "").strip()
+                if rest.isdigit():
+                    total_price = int(rest)
+                elif i + 1 < n and lines[i + 1].replace("*", "").strip().isdigit():
+                    total_price = int(lines[i + 1].replace("*", "").strip())
+                elif i + 2 < n and lines[i + 2].replace("*", "").strip().isdigit():
+                    total_price = int(lines[i + 2].replace("*", "").strip())
+            except ValueError:
+                pass
+            i += 1
+            continue
+        # بلوك منتج: فقط سطر يبدأ بـ "الاسم:" ثم "الكمية:" ثم "السعر:"
+        m_name = _RE_product_line.match(line)
+        if m_name:
+            raw = m_name.group(1).strip()
             if re.match(r"^اسم\s*المحل\s*[:\：]\s*", raw):
                 raw = re.sub(r"^اسم\s*المحل\s*[:\：]\s*", "", raw).strip()
             elif re.match(r"^اسم\s*المحل\s+", raw):
@@ -2051,31 +2083,34 @@ def _parse_site_order_message(text: str):
             name = raw
             qty = 1
             price = 0
-            if i + 1 < n and lines[i + 1].strip().startswith("الكمية"):
-                parts = lines[i + 1].split(":", 1)
-                if len(parts) == 2:
+            if i + 1 < n:
+                m_q = _RE_quantity_line.match(lines[i + 1])
+                if m_q:
                     try:
-                        qty = int(parts[1].strip())
+                        qty = int(m_q.group(1))
                     except ValueError:
-                        qty = 1
-            if i + 2 < n and lines[i + 2].strip().startswith("السعر"):
-                parts = lines[i + 2].split(":", 1)
-                if len(parts) == 2:
+                        pass
+            if i + 2 < n:
+                m_p = _RE_price_line.match(lines[i + 2])
+                if m_p:
                     try:
-                        price = int(parts[1].strip())
+                        price = int(m_p.group(1))
                     except ValueError:
-                        price = 0
-            # عدم إضافة سطر إذا الاسم فاضي أو هو مجرد "اسم المحل"
-            if not name or name == "اسم المحل":
+                        pass
+            if name and name != "اسم المحل":
+                items.append({"name": name, "qty": qty, "price": price})
+            # نتخطى سطر الكمية والسعر لأننا استخدمناهم
+            i += 1
+            if i < n and _RE_quantity_line.match(lines[i]):
                 i += 1
-                continue
-            items.append({"name": name, "qty": qty, "price": price})
-        elif line == "السعر الكلي" and i + 2 < n:
-            # الخط بعده نجوم، ثم القيمة
-            try:
-                total_price = int(lines[i + 2].strip())
-            except ValueError:
-                total_price = None
+            if i < n and _RE_price_line.match(lines[i]):
+                i += 1
+            continue
+        # سطر "الكمية" أو "السعر" لوحده بدون "الاسم" قبله → نتخطى (لا نعتبره منتج)
+        if _RE_quantity_line.match(line) or _RE_price_line.match(line):
+            i += 1
+            continue
+        # أي سطر آخر لا نعتبره منتج
         i += 1
 
     return {
