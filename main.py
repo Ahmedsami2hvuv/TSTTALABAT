@@ -1836,8 +1836,8 @@ async def _route_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await logic_old.receive_order(update, context)
         return
 
-    # أي كروب ثاني: نفس التوجيه حسب بداية الرسالة
-    if is_site:
+    # أي كروب ثاني: إذا فيه طلبية معلّقة (منتظر رقم أو منطقة) نمرر للملف الجديد؛ وإلا حسب بداية الرسالة
+    if logic_site_order.pending_site_orders or is_site:
         await logic_site_order.handle_site_target(update, context)
     else:
         await logic_old.receive_order(update, context)
