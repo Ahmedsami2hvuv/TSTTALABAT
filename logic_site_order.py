@@ -141,10 +141,38 @@ def _parse_site_order_message(text: str):
     }
 
 
+def _normalize_phone(phone_str: str):
+    """
+    تطبيع رقم الموبايل كما بالملف الأصلي: إزالة المسافات، +964 → 0
+    """
+    if not phone_str:
+        return None
+    s = (phone_str or "").strip().replace(" ", "").replace("\u00a0", "").replace("+", "")
+    s = re.sub(r"[^\d]", "", s)
+    if not s:
+        return None
+    if s.startswith("964") and len(s) > 3:
+        return "0" + s[3:]
+    if s.startswith("07") and len(s) >= 10:
+        return s[:12]
+    if re.match(r"^7\d{9}$", s):
+        return "0" + s
+    return None
+
+
 def _extract_phone_number(text: str):
-    cleaned = re.sub(r"[^\d]", "", text or "")
+    """استخراج رقم عراقي من النص مع تطبيعه (+964 → 0، إزالة المسافات)."""
+    if not text:
+        return None
+    cleaned = re.sub(r"[^\d]", "", text)
+    if cleaned.startswith("964") and len(cleaned) > 3:
+        return "0" + cleaned[3:]
     m = re.search(r"07\d{8,10}", cleaned)
-    return m.group(0) if m else None
+    if m:
+        return _normalize_phone(m.group(0))
+    if re.match(r"^7\d{9}$", cleaned):
+        return "0" + cleaned
+    return None
 
 
 def _is_region_in_zones(region_text: str) -> bool:
@@ -301,30 +329,28 @@ async def handle_site_target(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return
         order_data["address"] = region_text
         entry["needs_region"] = False
-        if not _extract_phone_number(text):
+        phone = _extract_phone_number(text) or _normalize_phone(text.strip())
+        if not phone or len(phone) < 10:
             entry["needs_phone"] = True
             await context.bot.send_message(
                 chat_id=reply_chat_id,
                 text="تم. دز رقم الموبايل فقط حتى أكمل الطلبية.",
             )
-        else:
-            phone = _extract_phone_number(text) or text.strip()
-            if len(phone) >= 10:
-                pending_site_orders.pop(0)
-                rst_text = _build_rst_order_text_from_site(order_data, phone)
-                await context.bot.send_message(chat_id=reply_chat_id, text=rst_text)
-            else:
-                entry["needs_phone"] = True
-                await context.bot.send_message(
-                    chat_id=reply_chat_id,
-                    text="دز رقم الموبايل فقط حتى أكمل الطلبية.",
-                )
+            return
+        pending_site_orders.pop(0)
+        from logic_old import create_order_from_site_data
+        await create_order_from_site_data(reply_chat_id, context, update.message.from_user.id, order_data, phone)
         return
 
     if needs_phone:
-        phone = _extract_phone_number(text)
+        phone = _extract_phone_number(text) or _normalize_phone((text or "").strip())
         if not phone:
+            await context.bot.send_message(
+                chat_id=reply_chat_id,
+                text="ما تم التعرف على الرقم. دز رقم الموبايل فقط (مثال: 07712345678 أو +964 771 234 5678).",
+            )
             return
         pending_site_orders.pop(0)
-        rst_text = _build_rst_order_text_from_site(order_data, phone)
-        await context.bot.send_message(chat_id=reply_chat_id, text=rst_text)
+        # إنشاء الطلب كطلب عادي وعرض الأزرار (بدل إرسال النص فقط)
+        from logic_old import create_order_from_site_data
+        await create_order_from_site_data(reply_chat_id, context, update.message.from_user.id, order_data, phone)
