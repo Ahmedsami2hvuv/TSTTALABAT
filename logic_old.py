@@ -139,6 +139,48 @@ async def process_order(update, context, message, edited=False):
         )
 
 
+async def create_order_from_site_data(chat_id, context, user_id, order_data, phone):
+    """
+    إنشاء طلبية من بيانات طلب الموقع (اسم الزبون...) كطلب عادي وعرض أزرار التسعير.
+    order_data: dict فيه address و items (قائمة {name, qty, price})
+    phone: رقم معدّل (بعد تطبيع +964 والمسافات).
+    """
+    user_id = str(user_id)
+    orders = context.application.bot_data["orders"]
+    pricing = context.application.bot_data["pricing"]
+    invoice_numbers = context.application.bot_data["invoice_numbers"]
+
+    title = (order_data.get("address") or "").strip() or "طلب موقع"
+    items = order_data.get("items") or []
+    products = [f"{item.get('name', '').strip()} {item.get('qty', 1)}" for item in items if item.get("name")]
+
+    if not products:
+        await context.bot.send_message(chat_id=chat_id, text="ما في منتجات بالطلب.")
+        return
+
+    order_id = str(uuid.uuid4())[:8]
+    invoice_no = _get_invoice_number(context)
+    orders[order_id] = {
+        "user_id": user_id,
+        "title": title,
+        "phone_number": phone,
+        "products": products,
+        "places_count": 0,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    pricing[order_id] = {p: {} for p in products}
+    invoice_numbers[order_id] = invoice_no
+    _save_data_in_background(context)
+    logger.info(f"Created site order {order_id} for user {user_id}.")
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=f"طلب : *{title}*\n(الرقم: `{phone}`)\n(عدد المنتجات: {len(products)})",
+        parse_mode="Markdown",
+    )
+    await show_buttons(chat_id, context, user_id, order_id)
+
+
 async def show_buttons(chat_id, context, user_id, order_id, confirmation_message=None):
     """عرض أزرار تسعير الطلبية (المنطق القديم)."""
     orders = context.application.bot_data["orders"]
