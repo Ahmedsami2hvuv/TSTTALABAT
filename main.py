@@ -59,32 +59,24 @@ SITE_TARGET_CHAT_ID = 2447525875   # الكروب الذي ينزل به بوت 
 pending_site_orders = []  # كل عنصر: {"order_data": dict, "needs_region": bool, "needs_phone": bool}
 
 
-class _FilterSiteOrderSource(filters.MessageFilter):
-    """البرمجة الجديدة (طلب الموقع): تشتغل فقط إذا بداية الرسالة «اسم الزبون»."""
-
-    def filter(self, message):
-        if not message or not message.text:
-            return False
-        if message.chat.id != SITE_SOURCE_CHAT_ID:
-            return False
-        t = message.text.strip()
-        return bool(t) and not t.startswith("/") and t.startswith("اسم الزبون")
-
-
-class _FilterSiteOrderTarget(filters.MessageFilter):
+class _FilterSiteOrderTarget(filters.UpdateFilter):
     """البرمجة الجديدة: إذا بداية الرسالة «اسم الزبون» أو فيه طلبية معلّقة ننتظر رد عليها."""
 
-    def filter(self, message):
-        if not message or not message.text:
+    def filter(self, update):
+        if not update.message or not getattr(update.message, "text", None):
             return False
-        if message.chat.id != SITE_TARGET_CHAT_ID:
+        if update.effective_chat.id != SITE_TARGET_CHAT_ID:
             return False
-        t = message.text.strip()
+        t = (update.message.text or "").strip()
         if not t or t.startswith("/"):
             return False
         if t.startswith("اسم الزبون"):
             return True
         return len(pending_site_orders) > 0
+
+    def check_update(self, update, application=None):
+        """للتوافق مع PTB v20 إذا استدعت المكتبة check_update بدل filter."""
+        return self.filter(update)
 
 # للطلب عبر HTTP: البوت والـ loop يُعيَّنان من thread البوت (post_init)
 _webhook_bot = None
@@ -2462,7 +2454,7 @@ def main():
     # 0. طلبات المتجر الإلكتروني — البرمجة الجديدة فقط إذا بداية الرسالة «اسم الزبون»؛ وإلا تشتغل البرمجة القديمة (اسم منطقة)
     app.add_handler(
         MessageHandler(
-            _FilterSiteOrderSource() & filters.TEXT & ~filters.COMMAND,
+            filters.Chat(SITE_SOURCE_CHAT_ID) & filters.TEXT & ~filters.COMMAND & filters.Regex(r"^اسم\s*الزبون"),
             handle_site_order_message
         )
     )
