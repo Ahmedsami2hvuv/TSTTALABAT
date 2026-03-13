@@ -58,6 +58,34 @@ SITE_TARGET_CHAT_ID = 2447525875   # الكروب الذي ينزل به بوت 
 # قائمة طلبات الموقع التي تنتظر رقم هاتف
 pending_site_orders = []  # كل عنصر: {"order_data": dict, "needs_region": bool, "needs_phone": bool}
 
+
+class _FilterSiteOrderSource(filters.MessageFilter):
+    """البرمجة الجديدة (طلب الموقع): تشتغل فقط إذا بداية الرسالة «اسم الزبون»."""
+
+    def filter(self, message):
+        if not message or not message.text:
+            return False
+        if message.chat.id != SITE_SOURCE_CHAT_ID:
+            return False
+        t = message.text.strip()
+        return bool(t) and not t.startswith("/") and t.startswith("اسم الزبون")
+
+
+class _FilterSiteOrderTarget(filters.MessageFilter):
+    """البرمجة الجديدة: إذا بداية الرسالة «اسم الزبون» أو فيه طلبية معلّقة ننتظر رد عليها."""
+
+    def filter(self, message):
+        if not message or not message.text:
+            return False
+        if message.chat.id != SITE_TARGET_CHAT_ID:
+            return False
+        t = message.text.strip()
+        if not t or t.startswith("/"):
+            return False
+        if t.startswith("اسم الزبون"):
+            return True
+        return len(pending_site_orders) > 0
+
 # للطلب عبر HTTP: البوت والـ loop يُعيَّنان من thread البوت (post_init)
 _webhook_bot = None
 _webhook_loop = None
@@ -2431,16 +2459,16 @@ def main():
     app.bot_data['_save_data_to_disk_global_func'] = _save_data_to_disk_global
     app.bot_data['pending_site_orders'] = pending_site_orders
 
-    # 0. طلبات المتجر الإلكتروني — يجب أن يكون أول handler يلتقط النص من كروب الموقع وكروب الهدف (group=0)
+    # 0. طلبات المتجر الإلكتروني — البرمجة الجديدة فقط إذا بداية الرسالة «اسم الزبون»؛ وإلا تشتغل البرمجة القديمة (اسم منطقة)
     app.add_handler(
         MessageHandler(
-            filters.Chat(SITE_SOURCE_CHAT_ID) & filters.TEXT & ~filters.COMMAND,
+            _FilterSiteOrderSource() & filters.TEXT & ~filters.COMMAND,
             handle_site_order_message
         )
     )
     app.add_handler(
         MessageHandler(
-            filters.Chat(SITE_TARGET_CHAT_ID) & filters.TEXT & ~filters.COMMAND,
+            _FilterSiteOrderTarget() & filters.TEXT & ~filters.COMMAND,
             handle_site_phone_reply
         )
     )
