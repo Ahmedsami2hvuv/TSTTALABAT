@@ -161,9 +161,10 @@ def _is_region_in_zones(region_text: str) -> bool:
 
 
 def _build_rst_order_text_from_site(order_data, phone: str):
-    landmark = (order_data.get("landmark") or "").strip()
+    # السطر الأول للطلب: المنطقة (من العنوان) لاحتساب التوصيل؛ النقطة الدالة للوصف فقط إن وُجدت
     address = (order_data.get("address") or "").strip()
-    title_line = landmark if landmark else (address or "طلب من الموقع")
+    landmark = (order_data.get("landmark") or "").strip()
+    title_line = address or landmark or "طلب من الموقع"
     product_lines = []
     for item in order_data.get("items", []):
         name = item.get("name", "").strip()
@@ -194,8 +195,8 @@ async def handle_site_source(update: Update, context: ContextTypes.DEFAULT_TYPE)
     order_data = _parse_site_order_message(_normalize_for_site_check(text))
     if not order_data or not order_data.get("items"):
         return
-    region_candidate = (order_data.get("address") or order_data.get("landmark") or "").strip()
-    if not _is_region_in_zones(region_candidate):
+    region_candidate = (order_data.get("address") or "").strip()
+    if not region_candidate or not _is_region_in_zones(region_candidate):
         pending_site_orders.append({
             "order_data": order_data,
             "needs_region": True,
@@ -203,7 +204,7 @@ async def handle_site_source(update: Update, context: ContextTypes.DEFAULT_TYPE)
         })
         await context.bot.send_message(
             chat_id=SITE_TARGET_CHAT_ID,
-            text="📦 طلبية من المتجر الإلكتروني.\nالمنطقة اللي مكتوبة مو موجودة عندنا. دز اسم المنطقه الصحيحة.",
+            text="📦 طلبية من المتجر الإلكتروني.\nاسم المنطقه غير معروف أو غير صحيح. اكتب لي اسم المنطقه.",
         )
         return
     phone = _extract_phone_number(text)
@@ -216,12 +217,11 @@ async def handle_site_source(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "needs_region": False,
         "needs_phone": True,
     })
-    landmark = order_data.get("landmark") or order_data.get("address") or "غير معروف"
     await context.bot.send_message(
         chat_id=SITE_TARGET_CHAT_ID,
         text=(
             "📦 اجت طلبية جديدة من المتجر الإلكتروني.\n"
-            f"العنوان/النقطة الدالة: {landmark}\n"
+            f"المنطقة: {region_candidate}\n"
             "بس الطلب ما بي رقم زبون.\n"
             "دزوا رقم الموبايل فقط حتى أكمل الطلبية."
         ),
@@ -241,8 +241,9 @@ async def handle_site_target(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if is_site_order_message(text):
         order_data = _parse_site_order_message(_normalize_for_site_check(text))
         if order_data and order_data.get("items"):
-            region_candidate = (order_data.get("address") or order_data.get("landmark") or "").strip()
-            if not _is_region_in_zones(region_candidate):
+            # المنطقة من «العنوان» فقط — نطابقها بملف المناطق (ما نستخدم اقرب نقطة دالة للمنطقة)
+            region_candidate = (order_data.get("address") or "").strip()
+            if not region_candidate or not _is_region_in_zones(region_candidate):
                 pending_site_orders.append({
                     "order_data": order_data,
                     "needs_region": True,
@@ -250,7 +251,7 @@ async def handle_site_target(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 })
                 await context.bot.send_message(
                     chat_id=reply_chat_id,
-                    text="📦 تم أخذ تفاصيل الطلبية.\nالمنطقة اللي مكتوبة مو موجودة عندنا. دز اسم المنطقه الصحيحة.",
+                    text="📦 تم أخذ تفاصيل الطلبية.\nاسم المنطقه غير معروف أو غير صحيح. اكتب لي اسم المنطقه.",
                 )
                 return
             phone = _extract_phone_number(text)
@@ -263,12 +264,11 @@ async def handle_site_target(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 "needs_region": False,
                 "needs_phone": True,
             })
-            landmark = order_data.get("landmark") or order_data.get("address") or "غير معروف"
             await context.bot.send_message(
                 chat_id=reply_chat_id,
                 text=(
                     "📦 تم أخذ تفاصيل الطلبية.\n"
-                    f"العنوان/النقطة الدالة: {landmark}\n"
+                    f"المنطقة: {region_candidate}\n"
                     "دز رقم الموبايل فقط حتى أكمل الطلبية."
                 ),
             )
@@ -292,9 +292,16 @@ async def handle_site_target(update: Update, context: ContextTypes.DEFAULT_TYPE)
         needs_phone = True
 
     if needs_region:
-        order_data["address"] = text.strip()
+        region_text = text.strip()
+        if not _is_region_in_zones(region_text):
+            await context.bot.send_message(
+                chat_id=reply_chat_id,
+                text="اسم المنطقه غير معروف أو غير صحيح. اكتب لي اسم المنطقه.",
+            )
+            return
+        order_data["address"] = region_text
         entry["needs_region"] = False
-        if not order_data.get("phone") and not _extract_phone_number(text):
+        if not _extract_phone_number(text):
             entry["needs_phone"] = True
             await context.bot.send_message(
                 chat_id=reply_chat_id,
