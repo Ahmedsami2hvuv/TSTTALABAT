@@ -5,6 +5,7 @@ import time
 import asyncio
 import logging
 import threading
+import re
 from collections import Counter
 from datetime import datetime, timezone, timedelta, time as dt_time
 
@@ -49,6 +50,13 @@ daily_profit = 0.0
 last_button_message = {}
 supplier_report_timestamps = {}
 known_group_chats = set()  # معرفات الكروبات لإرسال "تم التصفير التلقائي"
+
+# معرفات كروبات المتجر الإلكتروني و كروب بوت RSTTALABAT
+SITE_SOURCE_CHAT_ID = 2082135888   # الكروب الذي ينزل به بوت الموقع الطلب الأول
+SITE_TARGET_CHAT_ID = 2447525875   # الكروب الذي ينزل به بوت RSTTALABAT الطلب الجاهز
+
+# قائمة طلبات الموقع التي تنتظر رقم هاتف
+pending_site_orders = []  # كل عنصر: dict فيه بيانات الطلب من الموقع
 
 # تهيئة القفل لعمليات الحفظ
 save_lock = threading.Lock()
@@ -1951,6 +1959,180 @@ async def auto_reset_broadcast_callback(context: ContextTypes.DEFAULT_TYPE):
     logger.info("Auto reset and broadcast completed.")
 
 
+def _parse_site_order_message(text: str):
+    """
+    تحليل رسالة طلب تأتي من بوت الموقع في كروب خصيب ستور.
+    ترجع dict فيها:
+      customer_name, address, landmark, items (name, qty, price), total_price
+    """
+    if not text:
+        return None
+
+    lines = [l.strip() for l in text.splitlines()]
+    customer_name = ""
+    address = ""
+    landmark = ""
+    items = []
+    total_price = None
+
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i]
+        if line.startswith("اسم الزبون"):
+            # مثال: "اسم الزبون: أم محمد"
+            parts = line.split(":", 1)
+            if len(parts) == 2:
+                customer_name = parts[1].strip()
+        elif line.startswith("العنوان"):
+            parts = line.split(":", 1)
+            if len(parts) == 2:
+                address = parts[1].strip()
+        elif line.startswith("اقرب نقطة دالة"):
+            parts = line.split(":", 1)
+            if len(parts) == 2:
+                landmark = parts[1].strip()
+        elif line.startswith("الاسم:"):
+            # بلوك منتج:
+            # الاسم: X
+            # الكمية: N
+            # السعر: Y
+            name = line.split(":", 1)[1].strip() if ":" in line else ""
+            qty = 1
+            price = 0
+            if i + 1 < n and lines[i + 1].startswith("الكمية"):
+                parts = lines[i + 1].split(":", 1)
+                if len(parts) == 2:
+                    try:
+                        qty = int(parts[1].strip())
+                    except ValueError:
+                        qty = 1
+            if i + 2 < n and lines[i + 2].startswith("السعر"):
+                parts = lines[i + 2].split(":", 1)
+                if len(parts) == 2:
+                    try:
+                        price = int(parts[1].strip())
+                    except ValueError:
+                        price = 0
+            items.append({"name": name, "qty": qty, "price": price})
+        elif line == "السعر الكلي" and i + 2 < n:
+            # الخط بعده نجوم، ثم القيمة
+            try:
+                total_price = int(lines[i + 2].strip())
+            except ValueError:
+                total_price = None
+        i += 1
+
+    return {
+        "customer_name": customer_name,
+        "address": address,
+        "landmark": landmark,
+        "items": items,
+        "total_price": total_price,
+    }
+
+
+def _extract_phone_number(text: str):
+    """محاولة استخراج رقم هاتف عراقي من نص (07xxxxxxxxx...)."""
+    if not text:
+        return None
+    # حذف المسافات والشرطات
+    cleaned = re.sub(r"[^\d]", "", text)
+    m = re.search(r"07\d{8,10}", cleaned)
+    return m.group(0) if m else None
+
+
+def _build_rst_order_text_from_site(order_data, phone: str):
+    """
+    بناء نص الطلب الذي يفهمه بوت RSTTALABAT:
+    سطر 1: العنوان (نستخدم اقرب نقطة دالة، وإذا فارغة نستخدم العنوان)
+    سطر 2: رقم الهاتف
+    باقي الأسطر: المنتجات مع الكمية.
+    """
+    landmark = (order_data.get("landmark") or "").strip()
+    address = (order_data.get("address") or "").strip()
+    title_line = landmark if landmark else (address or "طلب من الموقع")
+
+    product_lines = []
+    for item in order_data.get("items", []):
+        name = item.get("name", "").strip()
+        qty = item.get("qty", 1)
+        if not name:
+            continue
+        # مثال: "خبز شعير 1" أو "فالانسيا بحري 2"
+        product_lines.append(f"{name} {qty}")
+
+    lines = [title_line, phone]
+    lines.extend(product_lines)
+    return "\n".join(lines)
+
+
+async def handle_site_order_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    التعامل مع رسالة الطلب القادمة من كروب بوت الموقع (SITE_SOURCE_CHAT_ID):
+    - نحلل الرسالة
+    - إذا بيها رقم نرسل الطلب الجاهز مباشرة إلى كروب RSTTALABAT
+    - إذا ما بيها رقم نطلب الرقم في كروب RSTTALABAT ونخزن الطلب مؤقتاً.
+    """
+    global pending_site_orders
+
+    if not update.message or not update.message.text:
+        return
+    if update.effective_chat.id != SITE_SOURCE_CHAT_ID:
+        return
+
+    text = update.message.text
+    # نتأكد أن الرسالة فعلاً من بوت الموقع (شكلها معروف)
+    if "اسم الزبون" not in text or "معلومات الطلب" not in text:
+        return
+
+    order_data = _parse_site_order_message(text)
+    if not order_data or not order_data.get("items"):
+        return
+
+    # محاولة استخراج رقم من نفس الرسالة
+    phone = _extract_phone_number(text)
+    if phone:
+        rst_text = _build_rst_order_text_from_site(order_data, phone)
+        await context.bot.send_message(chat_id=SITE_TARGET_CHAT_ID, text=rst_text)
+        return
+
+    # لا يوجد رقم -> نخزن الطلب ونطلب الرقم في كروب RSTTALABAT
+    pending_site_orders.append(order_data)
+    landmark = order_data.get("landmark") or order_data.get("address") or "غير معروف"
+    notify_text = (
+        "📦 اجت طلبية جديدة من المتجر الإلكتروني.\n"
+        f"العنوان/النقطة الدالة: {landmark}\n"
+        "بس الطلب ما بي رقم زبون.\n"
+        "دزوا رقم الموبايل فقط حتى أكمل الطلبية."
+    )
+    await context.bot.send_message(chat_id=SITE_TARGET_CHAT_ID, text=notify_text)
+
+
+async def handle_site_phone_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    استقبال رقم الموبايل في كروب RSTTALABAT عندما توجد طلبية موقع معلّقة.
+    """
+    global pending_site_orders
+
+    if not update.message or not update.message.text:
+        return
+    if update.effective_chat.id != SITE_TARGET_CHAT_ID:
+        return
+
+    if not pending_site_orders:
+        return
+
+    phone = _extract_phone_number(update.message.text)
+    if not phone:
+        return
+
+    # نأخذ أول طلب معلّق
+    order_data = pending_site_orders.pop(0)
+    rst_text = _build_rst_order_text_from_site(order_data, phone)
+    await context.bot.send_message(chat_id=SITE_TARGET_CHAT_ID, text=rst_text)
+
+
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
@@ -1963,6 +2145,7 @@ def main():
     app.bot_data['supplier_report_timestamps'] = supplier_report_timestamps
     app.bot_data['schedule_save_global_func'] = schedule_save_global
     app.bot_data['_save_data_to_disk_global_func'] = _save_data_to_disk_global
+    app.bot_data['pending_site_orders'] = pending_site_orders
 
     # 1. أوامر التحكم الأساسية
     app.add_handler(CommandHandler("start", start))
@@ -2005,7 +2188,23 @@ def main():
     # 7ب. تسجيل الكروبات (لإرسال التصفير التلقائي)
     app.add_handler(MessageHandler(filters.ChatType.GROUPS, store_group_chat), group=1)
 
-    # 7ج. التقرير اليومي والتصفير التلقائي بتوقيت العراق (4 الفجر و 6 الصبح) — يحتاج تثبيت: pip install "python-telegram-bot[job-queue]"
+    # 7ج. التعامل مع طلبات المتجر الإلكتروني
+    app.add_handler(
+        MessageHandler(
+            filters.Chat(SITE_SOURCE_CHAT_ID) & filters.TEXT & ~filters.COMMAND,
+            handle_site_order_message
+        ),
+        group=2,
+    )
+    app.add_handler(
+        MessageHandler(
+            filters.Chat(SITE_TARGET_CHAT_ID) & filters.TEXT & ~filters.COMMAND,
+            handle_site_phone_reply
+        ),
+        group=2,
+    )
+
+    # 7د. التقرير اليومي والتصفير التلقائي بتوقيت العراق (4 الفجر و 6 الصبح) — يحتاج تثبيت: pip install "python-telegram-bot[job-queue]"
     if app.job_queue is not None:
         iraq_tz = timezone(timedelta(hours=3))  # العراق = UTC+3
         app.job_queue.run_daily(send_daily_report_callback, time=dt_time(4, 0, tzinfo=iraq_tz))   # الساعة 4 صباحاً
