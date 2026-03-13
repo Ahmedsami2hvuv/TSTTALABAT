@@ -2037,27 +2037,34 @@ def _parse_site_order_message(text: str):
             if len(parts) == 2:
                 landmark = parts[1].strip()
         elif line.startswith("الاسم:"):
-            # بلوك منتج:
-            # الاسم: X
-            # الكمية: N
-            # السعر: Y
-            name = line.split(":", 1)[1].strip() if ":" in line else ""
+            # بلوك منتج: الاسم قد يبدأ بـ "اسم المحل:" فننتخطاه ونأخذ ما بعده فقط
+            raw = line.split(":", 1)[1].strip() if ":" in line else ""
+            # تخطي "اسم المحل" وأخذ ما بعده (اسم المحل: أو اسم المحل )
+            if re.match(r"^اسم\s*المحل\s*[:\：]\s*", raw):
+                raw = re.sub(r"^اسم\s*المحل\s*[:\：]\s*", "", raw).strip()
+            elif re.match(r"^اسم\s*المحل\s+", raw):
+                raw = re.sub(r"^اسم\s*المحل\s+", "", raw).strip()
+            name = raw
             qty = 1
             price = 0
-            if i + 1 < n and lines[i + 1].startswith("الكمية"):
+            if i + 1 < n and lines[i + 1].strip().startswith("الكمية"):
                 parts = lines[i + 1].split(":", 1)
                 if len(parts) == 2:
                     try:
                         qty = int(parts[1].strip())
                     except ValueError:
                         qty = 1
-            if i + 2 < n and lines[i + 2].startswith("السعر"):
+            if i + 2 < n and lines[i + 2].strip().startswith("السعر"):
                 parts = lines[i + 2].split(":", 1)
                 if len(parts) == 2:
                     try:
                         price = int(parts[1].strip())
                     except ValueError:
                         price = 0
+            # عدم إضافة سطر إذا الاسم فاضي أو هو مجرد "اسم المحل"
+            if not name or name == "اسم المحل":
+                i += 1
+                continue
             items.append({"name": name, "qty": qty, "price": price})
         elif line == "السعر الكلي" and i + 2 < n:
             # الخط بعده نجوم، ثم القيمة
@@ -2103,7 +2110,7 @@ def _build_rst_order_text_from_site(order_data, phone: str):
         qty = item.get("qty", 1)
         if not name:
             continue
-        # مثال: "خبز شعير 1" أو "فالانسيا بحري 2"
+        # العدد كنص عادي في نفس سطر اسم المنتج (مثلاً: ريحان 1، خبز شعير 2)
         product_lines.append(f"{name} {qty}")
 
     lines = [title_line, phone]
