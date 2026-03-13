@@ -6,7 +6,7 @@ import asyncio
 import logging
 import threading
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta, time as dt_time
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.ext import (
@@ -18,6 +18,7 @@ from telegram.ext import (
 from features.delivery_zones import (
     list_zones, get_delivery_price
 )
+from features.product_categories import is_fish, is_vegetable_fruit
 
 # ✅ تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
 logging.basicConfig(
@@ -35,6 +36,7 @@ INVOICE_NUMBERS_FILE = os.path.join(DATA_DIR, "invoice_numbers.json")
 DAILY_PROFIT_FILE = os.path.join(DATA_DIR, "daily_profit.json")
 COUNTER_FILE = os.path.join(DATA_DIR, "invoice_counter.txt")
 LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
+KNOWN_GROUPS_FILE = os.path.join(DATA_DIR, "known_groups.json")
 
 # ✅ قراءة التوكن من المتغيرات البيئية (يفترض أنك ضايفه بـ Railway)
 TOKEN = os.getenv("TOKEN")
@@ -46,6 +48,7 @@ invoice_numbers = {}
 daily_profit = 0.0
 last_button_message = {}
 supplier_report_timestamps = {}
+known_group_chats = set()  # معرفات الكروبات لإرسال "تم التصفير التلقائي"
 
 # تهيئة القفل لعمليات الحفظ
 save_lock = threading.Lock()
@@ -71,7 +74,7 @@ def load_json_file(filepath, default_value, var_name):
 # دالة حفظ البيانات إلى القرص (يجب أن تكون عامة ويمكن الوصول إليها)
 def _save_data_to_disk_global():
     # الوصول إلى المتغيرات العالمية مباشرةً
-    global orders, pricing, invoice_numbers, daily_profit, last_button_message, supplier_report_timestamps # ✅ ضفنا هنا المتغير الجديد
+    global orders, pricing, invoice_numbers, daily_profit, last_button_message, supplier_report_timestamps, known_group_chats
     with save_lock:
         os.makedirs(DATA_DIR, exist_ok=True)
         try:
@@ -100,6 +103,10 @@ def _save_data_to_disk_global():
                 json.dump(supplier_report_timestamps, f, indent=4)
             os.replace(os.path.join(DATA_DIR, "supplier_report_timestamps.json") + ".tmp", os.path.join(DATA_DIR, "supplier_report_timestamps.json"))
 
+            with open(KNOWN_GROUPS_FILE + ".tmp", "w") as f:
+                json.dump(list(known_group_chats), f)
+            os.replace(KNOWN_GROUPS_FILE + ".tmp", KNOWN_GROUPS_FILE)
+
             logger.info("All data (global) saved to disk successfully.")
         except Exception as e:
             logger.error(f"Error saving global data to disk: {e}")
@@ -121,7 +128,7 @@ def schedule_save_global():
 
 # ✅ دالة تحميل البيانات عند بدء تشغيل البوت (تم تغيير موقعها)
 def load_data():
-    global orders, pricing, invoice_numbers, daily_profit, last_button_message, supplier_report_timestamps # ✅ ضفنا هنا المتغير الجديد
+    global orders, pricing, invoice_numbers, daily_profit, last_button_message, supplier_report_timestamps, known_group_chats
 
     os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -150,6 +157,11 @@ def load_data():
     supplier_report_timestamps_temp = load_json_file(os.path.join(DATA_DIR, "supplier_report_timestamps.json"), {}, "supplier_report_timestamps")
     supplier_report_timestamps.clear()
     supplier_report_timestamps.update({str(k): v for k, v in supplier_report_timestamps_temp.items()})
+
+    known_group_chats.clear()
+    known_list = load_json_file(KNOWN_GROUPS_FILE, [], "known_groups")
+    if isinstance(known_list, list):
+        known_group_chats.update(int(x) for x in known_list if str(x).lstrip("-").isdigit())
 
     logger.info(f"Initial load complete. Orders: {len(orders)}, Pricing entries: {len(pricing)}, Daily Profit: {daily_profit}")
 
@@ -1137,6 +1149,50 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             admin_detailed_lines.append(f"  • {sup_name}: {format_float(amt)} دينار 💸")
         admin_detailed_text = "\n".join(admin_detailed_lines)
 
+        # --- فاتورة السمك لوحد (بالخاص): كل منتج سمك بسطر كامل + من جهزه ---
+        fish_lines = []
+        for p_name in order["products"]:
+            if not is_fish(p_name):
+                continue
+            data = pricing.get(order_id, {}).get(p_name, {})
+            buy = float(data.get("buy", 0.0))
+            p_worker_name = data.get("prepared_by_name", "شخص آخر")
+            fish_lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({p_worker_name})")
+        if fish_lines:
+            fish_invoice_text = (
+                "🐟 فاتورة السمك (تفصيل):🧾\n"
+                f"رقم الفاتورة🔢: {invoice}\n"
+                f"عنوان الزبون🏠: {order['title']}\n"
+                f"رقم الزبون📞: {phone_number}\n\n"
+                "تفاصيل السمك:\n"
+                + "\n".join(fish_lines) +
+                f"\n\n💰 مجموع السمك: {format_float(sum(float(pricing.get(order_id, {}).get(p, {}).get('buy', 0)) for p in order['products'] if is_fish(p)))}"
+            )
+        else:
+            fish_invoice_text = None
+
+        # --- فاتورة الخضروات والفواكه لوحد (بالخاص) ---
+        veg_lines = []
+        for p_name in order["products"]:
+            if not is_vegetable_fruit(p_name):
+                continue
+            data = pricing.get(order_id, {}).get(p_name, {})
+            buy = float(data.get("buy", 0.0))
+            p_worker_name = data.get("prepared_by_name", "شخص آخر")
+            veg_lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({p_worker_name})")
+        if veg_lines:
+            veg_invoice_text = (
+                "🥬 فاتورة الخضروات والفواكه:🧾\n"
+                f"رقم الفاتورة🔢: {invoice}\n"
+                f"عنوان الزبون🏠: {order['title']}\n"
+                f"رقم الزبون📞: {phone_number}\n\n"
+                "تفاصيل الخضروات/الفواكه:\n"
+                + "\n".join(veg_lines) +
+                f"\n\n💰 مجموع الخضروات/الفواكه: {format_float(sum(float(pricing.get(order_id, {}).get(p, {}).get('buy', 0)) for p in order['products'] if is_vegetable_fruit(p)))}"
+            )
+        else:
+            veg_invoice_text = None
+
         # --- ب. بناء فاتورة الإدارة (للمدير فقط) ---
         admin_msg = [
             f"فاتورة الإدارة:👨🏻‍💼",
@@ -1198,10 +1254,14 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         # 2. إرسال للجروب (فاتورة الزبون)
         await context.bot.send_message(chat_id=chat_id, text=customer_text)
 
-        # 3. إرسال لكل المديرين: أولاً التفصيلية ثم فاتورة الأرباح ثم نسخة الجروب
+        # 3. إرسال لكل المديرين بالخاص: التفصيلية، الأرباح، فاتورة السمك لوحد، فاتورة الخضروات لوحد، نسخة الجروب
         for owner_id in OWNER_IDS:
             await context.bot.send_message(chat_id=owner_id, text=admin_detailed_text)  # تفاصيل المجهزين + كل مجهز شكد دفع
             await context.bot.send_message(chat_id=owner_id, text=admin_text)           # فاتورة الإدارة (الأرباح) - كما هي
+            if fish_invoice_text:
+                await context.bot.send_message(chat_id=owner_id, text=fish_invoice_text)  # فاتورة السمك لوحد
+            if veg_invoice_text:
+                await context.bot.send_message(chat_id=owner_id, text=veg_invoice_text)  # فاتورة الخضروات والفواكه لوحد
             await context.bot.send_message(chat_id=owner_id, text=f"📋 نسخة الجروب:\n\n{customer_text}")  # نسخة الجروب
 
         # تنظيف رسائل المجهز
@@ -1643,9 +1703,254 @@ async def clear_chat_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # إرسال تأكيد نهائي
     await context.bot.send_message(chat_id=chat_id, text=f"تم تنظيف الجات بنجاح! ✨\nتم مسح {deleted_count} رسالة.")
-    
-        
-        
+
+
+async def store_group_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """حفظ معرف الكروب عند أي رسالة من كروب (لإرسال التصفير التلقائي لاحقاً)."""
+    global known_group_chats
+    if update.effective_chat and update.effective_chat.id:
+        chat_type = getattr(update.effective_chat, "type", None)
+        if chat_type in ("group", "supergroup"):
+            known_group_chats.add(update.effective_chat.id)
+            schedule_save_global()
+
+
+def _build_report_orders_text(orders, pricing, invoice_numbers):
+    """بناء نص تقرير الطلبات (فواتير الطلبات)."""
+    from collections import Counter
+    total_orders = len(orders)
+    total_net_profit_all_orders = 0.0
+    total_extra_profit_all_orders = 0.0
+    details = []
+    for order_id, order in orders.items():
+        invoice = invoice_numbers.get(order_id, "غير معروف")
+        details.append(f"\n**فاتورة رقم:🔢** {invoice}")
+        details.append(f"**عنوان الزبون:🏠** {order['title']}")
+        order_net_profit = 0.0
+        if isinstance(order.get("products"), list):
+            for p_name in order["products"]:
+                p_data = pricing.get(order_id, {}).get(p_name, {})
+                if "buy" in p_data and "sell" in p_data:
+                    buy, sell = p_data["buy"], p_data["sell"]
+                    p_worker = p_data.get("prepared_by_name", "غير معروف")
+                    profit_item = sell - buy
+                    order_net_profit += profit_item
+                    details.append(f"   - {p_name} | 💲:{format_float(profit_item)} (مجهز: {p_worker})")
+                else:
+                    details.append(f"   - {p_name} | (لم يتم تسعيره)")
+        num_places = order.get("places_count", 0)
+        order_extra = calculate_extra(num_places)
+        total_net_profit_all_orders += order_net_profit
+        total_extra_profit_all_orders += order_extra
+        details.append(f"   *إجمالي ربح الطلبية: {format_float(order_net_profit + order_extra)}*")
+    header = (
+        f"**--- فواتير الطلبات 🗒️ ---**\n"
+        f"**إجمالي الطلبات:** {total_orders}\n"
+        f"**الربح الكلي الصافي: {format_float(total_net_profit_all_orders + total_extra_profit_all_orders)} دينار**\n\n"
+        f"**--- تفاصيل الطلبات ---**\n" + "\n".join(details)
+    )
+    return header
+
+
+def _build_report_profit_only_text(orders, pricing):
+    """بناء نص الأرباح لوحد."""
+    total_net = 0.0
+    total_extra = 0.0
+    for order_id, order_data in orders.items():
+        if isinstance(order_data.get("products"), list):
+            for p_name in order_data["products"]:
+                if order_id in pricing and p_name in pricing[order_id] and "buy" in pricing[order_id][p_name] and "sell" in pricing[order_id][p_name]:
+                    total_net += pricing[order_id][p_name]["sell"] - pricing[order_id][p_name]["buy"]
+        total_extra += calculate_extra(order_data.get("places_count", 0))
+    return f"ربح البيع والتجهيز💵: *{format_float(total_net + total_extra)}* دينار"
+
+
+def _build_report_fish_text(orders, pricing, invoice_numbers):
+    """بناء نص فواتير السمك (كل الطلبات، منتجات السمك فقط)."""
+    lines = ["🐟 **فواتير السمك (تقرير يومي)**\n"]
+    for order_id, order in orders.items():
+        fish_items = [(p_name, pricing.get(order_id, {}).get(p_name, {})) for p_name in order.get("products", []) if is_fish(p_name)]
+        if not fish_items:
+            continue
+        inv = invoice_numbers.get(order_id, "??")
+        lines.append(f"فاتورة #{inv} | {order.get('title', '')} | {order.get('phone_number', '')}")
+        for p_name, p_data in fish_items:
+            buy = p_data.get("buy", 0)
+            who = p_data.get("prepared_by_name", "غير معروف")
+            lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({who})")
+        lines.append("")
+    return "\n".join(lines) if len(lines) > 1 else "ماكو فواتير سمك لهذا اليوم."
+
+
+def _build_report_veg_text(orders, pricing, invoice_numbers):
+    """بناء نص فواتير الخضروات والفواكه."""
+    lines = ["🥬 **فواتير الخضروات والفواكه (تقرير يومي)**\n"]
+    for order_id, order in orders.items():
+        veg_items = [(p_name, pricing.get(order_id, {}).get(p_name, {})) for p_name in order.get("products", []) if is_vegetable_fruit(p_name)]
+        if not veg_items:
+            continue
+        inv = invoice_numbers.get(order_id, "??")
+        lines.append(f"فاتورة #{inv} | {order.get('title', '')} | {order.get('phone_number', '')}")
+        for p_name, p_data in veg_items:
+            buy = p_data.get("buy", 0)
+            who = p_data.get("prepared_by_name", "غير معروف")
+            lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({who})")
+        lines.append("")
+    return "\n".join(lines) if len(lines) > 1 else "ماكو فواتير خضروات/فواكه لهذا اليوم."
+
+
+async def _build_supplier_reports_messages(bot, orders, pricing, invoice_numbers):
+    """بناء قائمة رسائل تقارير المجهزين (كل مجهز رسالة)."""
+    all_suppliers = set()
+    for oid in pricing:
+        for p_name in pricing.get(oid, {}):
+            s_id = pricing[oid][p_name].get("prepared_by_id")
+            if s_id:
+                all_suppliers.add(s_id)
+    messages = []
+    for s_id in all_suppliers:
+        supplier_name = "مجهز غير معروف"
+        try:
+            supplier_chat = await bot.get_chat(int(s_id))
+            supplier_name = supplier_chat.first_name
+        except Exception:
+            pass
+        report_msg = f"📦 <b>فواتير مجهز: {supplier_name}</b>\n🆔 <code>{s_id}</code>\n-----------------------------------\n"
+        grand_total = 0.0
+        has_data = False
+        for oid, order_data in orders.items():
+            invoice_no = invoice_numbers.get(oid, '??')
+            order_total_buy = 0.0
+            others_deduction = 0.0
+            others_details = {}
+            items_text = ""
+            order_has_supplier = False
+            for p_name in order_data.get('products', []):
+                p_info = pricing.get(oid, {}).get(p_name, {})
+                buy_price = p_info.get('buy', 0.0)
+                p_worker_id = str(p_info.get('prepared_by_id', ''))
+                p_worker_name = p_info.get('prepared_by_name', 'شخص آخر')
+                if buy_price > 0:
+                    order_total_buy += buy_price
+                    if p_worker_id == str(s_id):
+                        items_text += f"   • {p_name}: {format_float(buy_price)}\n"
+                        order_has_supplier = True
+                    else:
+                        items_text += f"   • {p_name}: {format_float(buy_price)} جهزه ({p_worker_name})\n"
+                        others_deduction += buy_price
+                        others_details[p_worker_name] = others_details.get(p_worker_name, 0.0) + buy_price
+            if order_has_supplier:
+                has_data = True
+                report_msg += f"🧾 #{invoice_no} | {order_data['title']}\n" + items_text + f"💰 مجموع الطلبية: {format_float(order_total_buy)}\n"
+                final_net = order_total_buy - others_deduction
+                grand_total += final_net
+                report_msg += "--- --- ---\n"
+        if has_data:
+            report_msg += f"\n✅ <b>المجموع الكلي للمجهز:</b> {format_float(grand_total)} دينار 💸"
+            messages.append(report_msg)
+    return messages
+
+
+def _build_report_sales_purchase_profit_text(orders, pricing, invoice_numbers):
+    """فواتير البيع والشراء والارباح (ملخص إداري)."""
+    lines = ["**--- فواتير البيع والشراء والأرباح 👨🏻‍💼 ---**\n"]
+    for order_id, order in orders.items():
+        inv = invoice_numbers.get(order_id, "??")
+        total_buy = 0.0
+        total_sell = 0.0
+        for p_name in order.get("products", []):
+            p_data = pricing.get(order_id, {}).get(p_name, {})
+            total_buy += float(p_data.get("buy", 0))
+            total_sell += float(p_data.get("sell", 0))
+        places = order.get("places_count", 0)
+        extra = calculate_extra(places)
+        delivery = float(get_delivery_price(order.get('title', '')))
+        profit = total_sell - total_buy
+        lines.append(f"فاتورة #{inv} | شراء: {format_float(total_buy)} | بيع: {format_float(total_sell)} | ربح: {format_float(profit)} | محلات: {format_float(extra)} | توصيل: {format_float(delivery)}")
+    return "\n".join(lines) if len(lines) > 1 else "ماكو طلبات."
+
+
+async def send_daily_report_callback(context: ContextTypes.DEFAULT_TYPE):
+    """تقرير يومي الساعة 4 الفجر (1:00 UTC = 4 ص العراق)."""
+    bot = context.bot
+    orders = context.application.bot_data.get('orders', {})
+    pricing = context.application.bot_data.get('pricing', {})
+    invoice_numbers = context.application.bot_data.get('invoice_numbers', {})
+    if not orders:
+        for oid in OWNER_IDS:
+            try:
+                await bot.send_message(chat_id=oid, text="📋 التقرير اليومي (4 الفجر)\n\nماكو طلبات مسجلة لهذا اليوم.")
+            except Exception as e:
+                logger.error(f"Daily report send to {oid}: {e}")
+        return
+    try:
+        report_orders = _build_report_orders_text(orders, pricing, invoice_numbers)
+        report_fish = _build_report_fish_text(orders, pricing, invoice_numbers)
+        report_veg = _build_report_veg_text(orders, pricing, invoice_numbers)
+        report_sales = _build_report_sales_purchase_profit_text(orders, pricing, invoice_numbers)
+        report_profit = _build_report_profit_only_text(orders, pricing)
+        supplier_msgs = await _build_supplier_reports_messages(bot, orders, pricing, invoice_numbers)
+        for owner_id in OWNER_IDS:
+            try:
+                await bot.send_message(owner_id, text="📋 التقرير اليومي (4 الفجر)\n-----------------------------------")
+                for i in range(0, len(report_orders), 4096):
+                    await bot.send_message(owner_id, text=report_orders[i:i+4096], parse_mode="Markdown")
+                for msg in supplier_msgs:
+                    for i in range(0, len(msg), 4096):
+                        await bot.send_message(owner_id, text=msg[i:i+4096], parse_mode="HTML")
+                for i in range(0, len(report_fish), 4096):
+                    await bot.send_message(owner_id, text=report_fish[i:i+4096], parse_mode="Markdown")
+                for i in range(0, len(report_veg), 4096):
+                    await bot.send_message(owner_id, text=report_veg[i:i+4096], parse_mode="Markdown")
+                for i in range(0, len(report_sales), 4096):
+                    await bot.send_message(owner_id, text=report_sales[i:i+4096], parse_mode="Markdown")
+                await bot.send_message(owner_id, text=report_profit, parse_mode="Markdown")
+            except Exception as e:
+                logger.error(f"Daily report to owner {owner_id}: {e}")
+    except Exception as e:
+        logger.error(f"Daily report callback error: {e}", exc_info=True)
+
+
+def _do_auto_reset(context):
+    """تنفيذ التصفير التلقائي (بدون تأكيد مستخدم)."""
+    global orders, pricing, invoice_numbers, last_button_message, supplier_report_timestamps
+    orders = context.application.bot_data['orders']
+    pricing = context.application.bot_data['pricing']
+    invoice_numbers = context.application.bot_data['invoice_numbers']
+    last_button_message = context.application.bot_data['last_button_message']
+    supplier_report_timestamps = context.application.bot_data['supplier_report_timestamps']
+    orders.clear()
+    pricing.clear()
+    invoice_numbers.clear()
+    last_button_message.clear()
+    supplier_report_timestamps.clear()
+    context.application.bot_data['daily_profit'] = 0.0
+    try:
+        with open(COUNTER_FILE, "w") as f:
+            f.write("1")
+    except Exception as e:
+        logger.error(f"Reset counter file: {e}")
+    _save_data_to_disk_global()
+
+
+async def auto_reset_broadcast_callback(context: ContextTypes.DEFAULT_TYPE):
+    """ساعة 6 الصبح: تصفير تلقائي ثم إرسال 'تم التصفير التلقائي' لكل الكروبات وكل الخاص."""
+    _do_auto_reset(context)
+    bot = context.bot
+    msg = "✅ تم التصفير التلقائي (6 الصبح)."
+    for chat_id in known_group_chats:
+        try:
+            await bot.send_message(chat_id=chat_id, text=msg)
+        except Exception as e:
+            logger.warning(f"Broadcast to group {chat_id}: {e}")
+    for owner_id in OWNER_IDS:
+        try:
+            await bot.send_message(chat_id=owner_id, text=msg)
+        except Exception as e:
+            logger.warning(f"Broadcast to owner {owner_id}: {e}")
+    logger.info("Auto reset and broadcast completed.")
+
+
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
@@ -1696,6 +2001,14 @@ def main():
 
     # 7. معالجة الرسائل المعدلة
     app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE, edited_message))
+
+    # 7ب. تسجيل الكروبات (لإرسال التصفير التلقائي)
+    app.add_handler(MessageHandler(filters.ChatType.GROUPS, store_group_chat), group=1)
+
+    # 7ج. التقرير اليومي والتصفير التلقائي بتوقيت العراق (4 الفجر و 6 الصبح)
+    iraq_tz = timezone(timedelta(hours=3))  # العراق = UTC+3
+    app.job_queue.run_daily(send_daily_report_callback, time=dt_time(4, 0, tzinfo=iraq_tz))   # الساعة 4 صباحاً
+    app.job_queue.run_daily(auto_reset_broadcast_callback, time=dt_time(6, 0, tzinfo=iraq_tz))  # الساعة 6 صباحاً
 
     # 8. ConversationHandler لعدد المحلات
     places_conv_handler = ConversationHandler(
