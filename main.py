@@ -58,6 +58,10 @@ SITE_TARGET_CHAT_ID = 2447525875   # الكروب الذي ينزل به بوت 
 # قائمة طلبات الموقع التي تنتظر رقم هاتف
 pending_site_orders = []  # كل عنصر: dict فيه بيانات الطلب من الموقع
 
+# للطلب عبر HTTP: البوت والـ loop يُعيَّنان من thread البوت (post_init)
+_webhook_bot = None
+_webhook_loop = None
+
 # تهيئة القفل لعمليات الحفظ
 save_lock = threading.Lock()
 save_timer = None
@@ -2162,7 +2166,9 @@ async def handle_site_order_message(update: Update, context: ContextTypes.DEFAUL
 
 async def handle_site_phone_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    استقبال رقم الموبايل في كروب RSTTALABAT عندما توجد طلبية موقع معلّقة.
+    في كروب RSTTALABAT (الكروب الثاني):
+    - إذا الرسالة فيها نص طلب الموقع (اسم الزبون + معلومات الطلب) = أحد نسخ الطلب من الكروب الأول ولصقه هنا → نحلله وننزل الطلب الجاهز أو نطلب الرقم.
+    - إذا ما فيها واكو طلبية معلّقة = نعتبر الرسالة رقم موبايل ونكمل الطلبية.
     """
     global pending_site_orders
 
@@ -2171,21 +2177,129 @@ async def handle_site_phone_reply(update: Update, context: ContextTypes.DEFAULT_
     if update.effective_chat.id != SITE_TARGET_CHAT_ID:
         return
 
+    text = update.message.text.strip()
+
+    # لو أحد نسخ نص الطلب من الكروب الأول ولصقه هنا (لأننا ما نقدر نصل لسيرفر البوت الأول)
+    if "اسم الزبون" in text and "معلومات الطلب" in text:
+        order_data = _parse_site_order_message(text)
+        if order_data and order_data.get("items"):
+            phone = _extract_phone_number(text)
+            if phone:
+                rst_text = _build_rst_order_text_from_site(order_data, phone)
+                await context.bot.send_message(chat_id=SITE_TARGET_CHAT_ID, text=rst_text)
+                return
+            pending_site_orders.append(order_data)
+            landmark = order_data.get("landmark") or order_data.get("address") or "غير معروف"
+            await context.bot.send_message(
+                chat_id=SITE_TARGET_CHAT_ID,
+                text=(
+                    "📦 تم أخذ تفاصيل الطلبية.\n"
+                    f"العنوان/النقطة الدالة: {landmark}\n"
+                    "دز رقم الموبايل فقط حتى أكمل الطلبية."
+                ),
+            )
+            return
+
+    # استقبال رقم الموبايل عندما توجد طلبية معلّقة
     if not pending_site_orders:
         return
 
-    phone = _extract_phone_number(update.message.text)
+    phone = _extract_phone_number(text)
     if not phone:
         return
 
-    # نأخذ أول طلب معلّق
     order_data = pending_site_orders.pop(0)
     rst_text = _build_rst_order_text_from_site(order_data, phone)
     await context.bot.send_message(chat_id=SITE_TARGET_CHAT_ID, text=rst_text)
 
 
+def _run_order_webhook_server(port: int):
+    """تشغيل خادم HTTP لاستقبال الطلبات من الموقع (يتخطى مشكلة عدم استلام رسائل البوتات من بوتات أخرى)."""
+    from flask import Flask, request, jsonify
+    global _webhook_bot, _webhook_loop, pending_site_orders
+
+    app_http = Flask(__name__)
+
+    @app_http.route("/incoming-order", methods=["POST"])
+    def incoming_order():
+        global _webhook_bot, _webhook_loop, pending_site_orders
+        if _webhook_bot is None or _webhook_loop is None:
+            return jsonify({"ok": False, "error": "bot_not_ready"}), 503
+        try:
+            data = request.get_json(force=True, silent=True) or {}
+            customer_name = data.get("customer_name", "")
+            address = data.get("address", "")
+            landmark = data.get("landmark", "")
+            items_raw = data.get("items", [])
+            phone = data.get("phone") or data.get("phone_number")
+            if isinstance(phone, str):
+                phone = _extract_phone_number(phone) or phone.strip() or None
+            items = []
+            for it in items_raw:
+                if isinstance(it, dict):
+                    name = (it.get("name") or "").strip()
+                    if re.match(r"^اسم\s*المحل\s*[:\：]\s*", name):
+                        name = re.sub(r"^اسم\s*المحل\s*[:\：]\s*", "", name).strip()
+                    elif re.match(r"^اسم\s*المحل\s+", name):
+                        name = re.sub(r"^اسم\s*المحل\s+", "", name).strip()
+                    if name and name != "اسم المحل":
+                        items.append({"name": name, "qty": int(it.get("qty", 1)) if isinstance(it.get("qty"), (int, float)) else 1})
+                elif isinstance(it, str) and it.strip():
+                    items.append({"name": it.strip(), "qty": 1})
+            order_data = {
+                "customer_name": customer_name,
+                "address": address,
+                "landmark": landmark,
+                "items": items,
+                "total_price": None,
+            }
+            if not items:
+                return jsonify({"ok": False, "error": "no_items"}), 400
+            if phone:
+                rst_text = _build_rst_order_text_from_site(order_data, phone)
+                future = asyncio.run_coroutine_threadsafe(
+                    _webhook_bot.send_message(chat_id=SITE_TARGET_CHAT_ID, text=rst_text),
+                    _webhook_loop,
+                )
+                future.result(timeout=15)
+                return jsonify({"ok": True, "sent_to_chat": SITE_TARGET_CHAT_ID})
+            pending_site_orders.append(order_data)
+            notify_text = (
+                "📦 اجت طلبية جديدة من المتجر الإلكتروني.\n"
+                f"العنوان/النقطة الدالة: {landmark or address or 'غير معروف'}\n"
+                "بس الطلب ما بي رقم زبون.\n"
+                "دزوا رقم الموبايل فقط حتى أكمل الطلبية."
+            )
+            future = asyncio.run_coroutine_threadsafe(
+                _webhook_bot.send_message(chat_id=SITE_TARGET_CHAT_ID, text=notify_text),
+                _webhook_loop,
+            )
+            future.result(timeout=15)
+            return jsonify({"ok": True, "pending_phone": True})
+        except Exception as e:
+            logger.exception("incoming_order HTTP error")
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app_http.route("/health", methods=["GET"])
+    def health():
+        return jsonify({"ok": True, "bot_ready": _webhook_bot is not None})
+
+    app_http.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
+
+
 def main():
-    app = ApplicationBuilder().token(TOKEN).build()
+    global _webhook_bot, _webhook_loop
+
+    def _store_bot_and_loop(application):
+        global _webhook_bot, _webhook_loop
+        _webhook_bot = application.bot
+        try:
+            _webhook_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            _webhook_loop = asyncio.get_event_loop()
+        logger.info("Order webhook: bot and loop stored for HTTP /incoming-order")
+
+    app = ApplicationBuilder().token(TOKEN).post_init(_store_bot_and_loop).build()
 
     # تهيئة البيانات في Bot Data
     app.bot_data['orders'] = orders
@@ -2315,8 +2429,16 @@ def main():
     )
     app.add_handler(order_creation_conv_handler)
 
-    # تشغيل البوت
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    # تشغيل البوت في thread والطلب من الموقع عبر HTTP على PORT (يتخطى عدم استلام رسائل البوتات من بوتات أخرى)
+    port = int(os.getenv("PORT", "8080"))
+    bot_thread = threading.Thread(
+        target=app.run_polling,
+        kwargs={"allowed_updates": Update.ALL_TYPES},
+        daemon=True,
+    )
+    bot_thread.start()
+    logger.info("Bot polling started in background; order webhook server listening on port %s", port)
+    _run_order_webhook_server(port)
    
 
 async def show_supplier_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
