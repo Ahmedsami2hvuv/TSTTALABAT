@@ -35,13 +35,17 @@ def _normalize_for_site_check(text: str) -> str:
 def is_site_order_message(text: str) -> bool:
     """
     هل الرسالة تبدأ بـ «اسم الزبون» (طلب موقع)؟
-    main يستخدمها للتوجيه: إذا True → الملف الجديد، إذا False → الملف القديم.
+    main يستخدمها للتوجيه فقط: إذا True → الملف الجديد، إذا False → الملف القديم.
+    نعتبر أي رسالة بدايتها "اسم الزبون" طلب موقع (بدون اشتراط "معلومات الطلب").
     """
     t = _normalize_for_site_check(text or "")
-    if not t or "معلومات الطلب" not in t:
+    if not t:
         return False
-    idx = t.find("اسم الزبون")
-    return idx >= 0 and idx <= 50
+    # بداية النص أو أول سطر يبدأ بـ اسم الزبون
+    if t.startswith("اسم الزبون"):
+        return True
+    first_line = t.split("\n")[0].strip()
+    return first_line.startswith("اسم الزبون")
 
 
 def _parse_site_order_message(text: str):
