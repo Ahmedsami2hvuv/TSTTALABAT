@@ -2290,7 +2290,7 @@ def _run_order_webhook_server(port: int):
 def main():
     global _webhook_bot, _webhook_loop
 
-    def _store_bot_and_loop(application):
+    async def _store_bot_and_loop(application):
         global _webhook_bot, _webhook_loop
         _webhook_bot = application.bot
         try:
