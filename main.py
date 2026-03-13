@@ -2191,6 +2191,20 @@ def main():
     app.bot_data['_save_data_to_disk_global_func'] = _save_data_to_disk_global
     app.bot_data['pending_site_orders'] = pending_site_orders
 
+    # 0. طلبات المتجر الإلكتروني — يجب أن يكون أول handler يلتقط النص من كروب الموقع وكروب الهدف (group=0)
+    app.add_handler(
+        MessageHandler(
+            filters.Chat(SITE_SOURCE_CHAT_ID) & filters.TEXT & ~filters.COMMAND,
+            handle_site_order_message
+        )
+    )
+    app.add_handler(
+        MessageHandler(
+            filters.Chat(SITE_TARGET_CHAT_ID) & filters.TEXT & ~filters.COMMAND,
+            handle_site_phone_reply
+        )
+    )
+
     # 1. أوامر التحكم الأساسية
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("profit", show_profit))
@@ -2232,23 +2246,7 @@ def main():
     # 7ب. تسجيل الكروبات (لإرسال التصفير التلقائي)
     app.add_handler(MessageHandler(filters.ChatType.GROUPS, store_group_chat), group=1)
 
-    # 7ج. التعامل مع طلبات المتجر الإلكتروني
-    app.add_handler(
-        MessageHandler(
-            filters.Chat(SITE_SOURCE_CHAT_ID) & filters.TEXT & ~filters.COMMAND,
-            handle_site_order_message
-        ),
-        group=2,
-    )
-    app.add_handler(
-        MessageHandler(
-            filters.Chat(SITE_TARGET_CHAT_ID) & filters.TEXT & ~filters.COMMAND,
-            handle_site_phone_reply
-        ),
-        group=2,
-    )
-
-    # 7د. التقرير اليومي والتصفير التلقائي بتوقيت العراق (4 الفجر و 6 الصبح) — يحتاج تثبيت: pip install "python-telegram-bot[job-queue]"
+    # 7ج. التقرير اليومي والتصفير التلقائي بتوقيت العراق (4 الفجر و 6 الصبح) — يحتاج تثبيت: pip install "python-telegram-bot[job-queue]"
     if app.job_queue is not None:
         iraq_tz = timezone(timedelta(hours=3))  # العراق = UTC+3
         app.job_queue.run_daily(send_daily_report_callback, time=dt_time(4, 0, tzinfo=iraq_tz))   # الساعة 4 صباحاً
