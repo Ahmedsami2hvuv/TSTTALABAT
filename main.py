@@ -17,7 +17,7 @@ from telegram.ext import (
 
 # ✅ استيراد الدوال الخاصة بالمناطق من الملف الجديد
 from features.delivery_zones import (
-    list_zones, get_delivery_price, load_zones
+    list_zones, get_delivery_price
 )
 from features.product_categories import is_fish, is_vegetable_fruit, is_meat
 
@@ -55,9 +55,9 @@ known_group_chats = set()  # معرفات الكروبات لإرسال "تم ا
 SITE_SOURCE_CHAT_ID = 2082135888   # الكروب الذي ينزل به بوت الموقع الطلب الأول
 SITE_TARGET_CHAT_ID = 2447525875   # الكروب الذي ينزل به بوت RSTTALABAT الطلب الجاهز
 
-# قائمة طلبات الموقع التي تنتظر رقم هاتف
-pending_site_orders = []  # كل عنصر: {"order_data": dict, "needs_region": bool, "needs_phone": bool}
-
+# المنطق مقسوم على ملفين: logic_old (طلبات عادية)، logic_site_order (طلب موقع بداية «اسم الزبون: »)
+import logic_old
+import logic_site_order
 
 # للطلب عبر HTTP: البوت والـ loop يُعيَّنان من thread البوت (post_init)
 _webhook_bot = None
@@ -308,218 +308,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ConversationHandler.END
 
-async def receive_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    orders = context.application.bot_data['orders']
-    pricing = context.application.bot_data['pricing']
-    invoice_numbers = context.application.bot_data['invoice_numbers']
-    last_button_message = context.application.bot_data['last_button_message']
-
-    print("📩 تم استقبال رسالة جديدة داخل receive_order")
-    try:
-        logger.info(f"[{update.effective_chat.id}] Processing order from: {update.effective_user.id} - Message ID: {update.message.message_id}. User data: {json.dumps(context.user_data.get(str(update.effective_user.id), {}), indent=2)}")
-        await process_order(update, context, update.message)
-        return ConversationHandler.END
-    except Exception as e:
-        logger.error(f"[{update.effective_chat.id}] Error in receive_order: {e}", exc_info=True)
-        await update.message.reply_text("ماكدرت اعالج الطلب عاجبك لوتحاول مره ثانيه لو ادز طلب جديد ولا تصفن.")
-        return ConversationHandler.END
-
 async def edited_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    orders = context.application.bot_data['orders']
-    pricing = context.application.bot_data['pricing']
-    invoice_numbers = context.application.bot_data['invoice_numbers']
-    last_button_message = context.application.bot_data['last_button_message']
-
+    """معالجة تعديل رسالة طلبية — يُحوّل إلى المنطق القديم (logic_old)."""
     try:
         if not update.edited_message:
             return
-        logger.info(f"[{update.effective_chat.id}] Processing edited order from: {update.effective_user.id} - Message ID: {update.edited_message.message_id}. User data: {json.dumps(context.user_data.get(str(update.effective_user.id), {}), indent=2)}")
-        await process_order(update, context, update.edited_message, edited=True)
+        logger.info(
+            f"[{update.effective_chat.id}] Processing edited order from: {update.effective_user.id} - "
+            f"Message ID: {update.edited_message.message_id}."
+        )
+        await logic_old.process_order(update, context, update.edited_message, edited=True)
     except Exception as e:
         logger.error(f"[{update.effective_chat.id}] Error in edited_message: {e}", exc_info=True)
         await update.edited_message.reply_text("طك بطك ماكدر اعدل تريد سوي طلب جديد.")
 
-async def process_order(update, context, message, edited=False):
-    orders = context.application.bot_data['orders']
-    pricing = context.application.bot_data['pricing']
-    invoice_numbers = context.application.bot_data['invoice_numbers']
-    last_button_message = context.application.bot_data['last_button_message']
-    
-    user_id = str(message.from_user.id)
-    lines = [line.strip() for line in message.text.strip().split('\n') if line.strip()]
-    
-    # ✅ تعديل التحقق من عدد الأسطر: الآن نتوقع 3 أسطر على الأقل (عنوان، رقم هاتف، منتجات)
-    if len(lines) < 3:
-        if not edited:
-            await message.reply_text("باعلي تاكد انك تكتب الطلبية ك التالي اول سطر هو عنوان الزبون وثاني سطر هو رقم الزبون وراها المنتجات كل سطر بي منتج يالله فر ويلك وسوي الطلب.")
-        return
-
-    title = lines[0]
-    
-    # ✅ منطق جديد لمعالجة رقم الهاتف
-    phone_number_raw = lines[1].strip().replace(" ", "") # إزالة المسافات
-    if phone_number_raw.startswith("+964"):
-        phone_number = "0" + phone_number_raw[4:] # استبدال +964 بـ 0
-    else:
-        phone_number = phone_number_raw.replace("+", "") # إذا ماكو +964، بس نضمن إزالة أي علامة +
-    
-    products = [p.strip() for p in lines[2:] if p.strip()] # ✅ المنتجات تبدأ من السطر الثالث
-
-    if not products:
-        if not edited:
-            await message.reply_text("يابه لازم المنتجات ورا رقم الهاتف .")
-        return
-
-    order_id = None
-    is_new_order = True 
-
-    if edited:
-        for oid, msg_info in last_button_message.items():
-            if msg_info and msg_info.get("message_id") == message.message_id and str(msg_info.get("chat_id")) == str(message.chat_id):
-                if oid in orders: 
-                    order_id = oid
-                    is_new_order = False
-                    logger.info(f"Found existing order {order_id} based on message ID (edited message).")
-                    break
-                else:
-                    logger.warning(f"Message ID {message.message_id} found in last_button_message but order {oid} is missing. Treating as new.")
-                    order_id = None 
-                    
-    if not order_id: 
-        order_id = str(uuid.uuid4())[:8]
-        invoice_no = get_invoice_number() 
-        # ✅ إضافة phone_number و created_at إلى قاموس الطلبية
-        orders[order_id] = {
-            "user_id": user_id, 
-            "title": title, 
-            "phone_number": phone_number, 
-            "products": products, 
-            "places_count": 0,
-            "created_at": datetime.now(timezone.utc).isoformat() # ✅ هذا السطر الجديد
-        } 
-        pricing[order_id] = {p: {} for p in products}
-        invoice_numbers[order_id] = invoice_no
-        logger.info(f"Created new order {order_id} for user {user_id}.")
-    else: 
-        old_products = set(orders[order_id].get("products", []))
-        new_products = set(products)
-        
-        orders[order_id]["title"] = title
-        orders[order_id]["phone_number"] = phone_number # ✅ تحديث رقم الهاتف في الطلبية الموجودة
-        orders[order_id]["products"] = products
-        # اذا تم تعديل الطلبية، ما نغير تاريخ الانشاء
-        
-        for p in new_products:
-            if p not in pricing.get(order_id, {}):
-                pricing.setdefault(order_id, {})[p] = {}
-        
-        if order_id in pricing:
-            for p in old_products - new_products:
-                if p in pricing[order_id]:
-                    del pricing[order_id][p]
-                    logger.info(f"Removed pricing for product '{p}' from order {order_id}.")
-        logger.info(f"Updated existing order {order_id}. Initiator: {user_id}.")
-        
-    context.application.create_task(save_data_in_background(context))
-    
-    # ✅ تعديل رسالة الاستلام لتضمين رقم الهاتف بالشكل الجديد
-    if is_new_order:
-        await message.reply_text(f"طلب : *{title}*\n(الرقم: `{phone_number}` )\n(عدد المنتجات: {len(products)})", parse_mode="Markdown")
-        await show_buttons(message.chat_id, context, user_id, order_id)
-    else:
-        await show_buttons(message.chat_id, context, user_id, order_id, confirmation_message="دهاك حدثنه الطلب. عيني دخل الاسعار الاستاذ حدث الطلب.")
-
-async def show_buttons(chat_id, context, user_id, order_id, confirmation_message=None):
-    orders = context.application.bot_data['orders']
-    pricing = context.application.bot_data['pricing']
-    last_button_message = context.application.bot_data['last_button_message']
-
-    try:
-        if order_id not in orders:
-            await context.bot.send_message(chat_id=chat_id, text="❌ الطلب غير موجود.")
-            return
-
-        order = orders[order_id]
-        final_buttons_list = []
-
-        # أزرار الإضافة والمسح (السطر الأول)
-        final_buttons_list.append([
-            InlineKeyboardButton("➕ إضافة منتج", callback_data=f"add_product_to_order_{order_id}"),
-            InlineKeyboardButton("🗑️ مسح منتج", callback_data=f"delete_specific_product_{order_id}")
-        ])
-
-        completed_products_buttons = []
-        pending_products_buttons = []
-
-        # جلب قائمة المنتجات المعدلة حالياً من بيانات المستخدم
-        user_data = context.user_data.get(user_id, {})
-        edited_list = user_data.get("edited_products_list", [])
-        editing_mode = user_data.get("editing_mode", False)
-
-        for i, p_name in enumerate(order["products"]):
-            callback_data_for_product = f"{order_id}|{i}"
-            
-            # تحديد شكل الزر (تم التسعير، معدل، أو جديد)
-            is_priced = p_name in pricing.get(order_id, {}) and 'buy' in pricing[order_id].get(p_name, {})
-
-            if is_priced:
-                if p_name in edited_list:
-                    button_text = f"✏️✅ {p_name}"  # علامة القلم للمعدل
-                else:
-                    button_text = f"✅ {p_name}"    # علامة صح للمسعر مسبقاً
-                completed_products_buttons.append([InlineKeyboardButton(button_text, callback_data=callback_data_for_product)])
-            else:
-                button_text = p_name
-                pending_products_buttons.append([InlineKeyboardButton(button_text, callback_data=callback_data_for_product)])
-
-        # دمج القوائم
-        final_buttons_list.extend(completed_products_buttons)
-        final_buttons_list.extend(pending_products_buttons)
-
-        # ✅ أزرار التحكم في وضع التعديل (تظهر فقط عند النقر على "تعديل الطلبية")
-        if editing_mode:
-            final_buttons_list.append([
-                InlineKeyboardButton("🏪 تعديل المحلات", callback_data=f"done_editing_{order_id}")
-            ])
-            final_buttons_list.append([
-                InlineKeyboardButton("💾 حفظ واكتمل التعديل", callback_data=f"cancel_edit_{order_id}")
-            ])
-
-        markup = InlineKeyboardMarkup(final_buttons_list)
-
-        # تجهيز نص الرسالة
-        message_text = f"{confirmation_message}\n\n" if confirmation_message else ""
-        status_text = "🔧 وضع التعديل حالياً" if editing_mode else "📝 تسعير الطلب"
-        message_text += f"*{status_text}* ({order['title']}):\nاختر منتجاً لتعديل سعره:"
-
-        # حذف الرسالة السابقة لتجنب تراكم الرسائل
-        msg_info = last_button_message.get(order_id)
-        if msg_info:
-            context.application.create_task(delete_message_in_background(context, chat_id=msg_info["chat_id"], message_id=msg_info["message_id"]))
-
-        # إرسال الرسالة الجديدة
-        msg = await context.bot.send_message(
-            chat_id=chat_id, 
-            text=message_text, 
-            reply_markup=markup, 
-            parse_mode="Markdown"
-        )
-        
-        # حفظ معلومات الرسالة الأخيرة
-        last_button_message[order_id] = {"chat_id": chat_id, "message_id": msg.message_id}
-        context.application.create_task(save_data_in_background(context)) 
-
-        # تنظيف أي رسائل مؤقتة أخرى
-        if 'messages_to_delete' in user_data:
-            for m_info in user_data['messages_to_delete']:
-                context.application.create_task(delete_message_in_background(context, chat_id=m_info['chat_id'], message_id=m_info['message_id']))
-            user_data['messages_to_delete'].clear()
-            
-    except Exception as e:
-        logger.error(f"Error in show_buttons: {e}", exc_info=True)
-        await context.bot.send_message(chat_id=chat_id, text="⚠️ حدث خطأ في عرض قائمة المنتجات.")
-
-        
 async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
@@ -727,7 +529,7 @@ async def confirm_delete_product_by_button_callback(update: Update, context: Con
         await context.bot.send_message(chat_id=chat_id, text=f"ترا المنتج مو موجود بالطلبية أصلاً (يمكن انمسح). تأكد من الاسم.")
 
     # نرجع نعرض الأزرار المحدثة
-    await show_buttons(chat_id, context, user_id, order_id) 
+    await logic_old.show_buttons(chat_id, context, user_id, order_id) 
     return ConversationHandler.END
 
 async def cancel_add_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -746,7 +548,7 @@ async def cancel_add_product_callback(update: Update, context: ContextTypes.DEFA
 
     await context.bot.send_message(chat_id=chat_id, text="تم إلغاء عملية إضافة منتج جديد.")
     # نرجع نعرض الأزرار الأصلية
-    await show_buttons(chat_id, context, user_id, order_id)
+    await logic_old.show_buttons(chat_id, context, user_id, order_id)
     return ConversationHandler.END
 
 async def cancel_delete_product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -765,7 +567,7 @@ async def cancel_delete_product_callback(update: Update, context: ContextTypes.D
 
     await context.bot.send_message(chat_id=chat_id, text="تم إلغاء عملية مسح المنتج.")
     # نرجع نعرض الأزرار الأصلية
-    await show_buttons(chat_id, context, user_id, order_id)
+    await logic_old.show_buttons(chat_id, context, user_id, order_id)
     return ConversationHandler.END
 
 async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -850,7 +652,7 @@ async def receive_buy_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_order_complete and not is_editing:
             await request_places_count_standalone(chat_id, context, user_id, order_id)
         else:
-            await show_buttons(chat_id, context, user_id, order_id, 
+            await logic_old.show_buttons(chat_id, context, user_id, order_id, 
                              confirmation_message=f"✅ تم حفظ {product}: شراء {format_float(buy_price)} / بيع {format_float(sell_price)}")
         
         return ConversationHandler.END
@@ -908,7 +710,7 @@ async def receive_new_product_name(update: Update, context: ContextTypes.DEFAULT
     context.user_data[user_id].pop("current_active_order_id", None)
 
     # عرض الأزرار المحدثة (التي تعتمد على الـ index لمنع أخطاء طول البيانات)
-    await show_buttons(chat_id, context, user_id, order_id)
+    await logic_old.show_buttons(chat_id, context, user_id, order_id)
     return ConversationHandler.END
 
 async def request_places_count_standalone(chat_id, context: ContextTypes.DEFAULT_TYPE, user_id: str, order_id: str):
@@ -1354,7 +1156,7 @@ async def edit_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
         
-        await show_buttons(query.message.chat_id, context, user_id, order_id, confirmation_message="وضع التعديل: اضغط على المنتج لتغيير سعره، ثم اضغط 'اكتمل التعديل'.")
+        await logic_old.show_buttons(query.message.chat_id, context, user_id, order_id, confirmation_message="وضع التعديل: اضغط على المنتج لتغيير سعره، ثم اضغط 'اكتمل التعديل'.")
         return ConversationHandler.END
     except Exception as e:
         logger.error(f"Error in edit_prices: {e}", exc_info=True)
@@ -2008,368 +1810,42 @@ async def auto_reset_broadcast_callback(context: ContextTypes.DEFAULT_TYPE):
     logger.info("Auto reset and broadcast completed.")
 
 
-# نمط بداية سطر "الاسم" ثم مسافات اختيارية ثم : أو ： ثم الباقي اسم المنتج
-_RE_product_line = re.compile(r"^الاسم\s*[:\：]\s*(.+)$", re.IGNORECASE)
-_RE_quantity_line = re.compile(r"^الكمية\s*[:\：]\s*(\d+)", re.IGNORECASE)
-_RE_price_line = re.compile(r"^السعر\s*[:\：]\s*(\d+)", re.IGNORECASE)
-
-# أحرف قد تظهر في أول النص عند النسخ من تليجرام (نزيلها قبل التحقق)
-_STRIP_START = "\uFEFF\u200E\u200F\u202A\u202B\u202C\u202D\u202E\u200B\u200C\u200D\u2060"
-
-
-def _normalize_for_site_check(text: str) -> str:
-    """تنظيف النص قبل التحقق من كونه طلب موقع (لصق يدوي من كروب البوت الأول)."""
-    if not text:
-        return ""
-    t = text.strip()
-    while t and t[0] in _STRIP_START:
-        t = t[1:].strip()
-    return t
-
-
-def _is_likely_site_order(text: str) -> bool:
-    """
-    هل الرسالة تشبه طلب الموقع (اللي تنزل من البوت الأول وتلصقها يدوي في الكروب الثاني)؟
-    نتحقق أن «اسم الزبون» في أول النص وأن «معلومات الطلب» موجود.
-    """
-    t = _normalize_for_site_check(text or "")
-    if not t or "معلومات الطلب" not in t:
-        return False
-    idx = t.find("اسم الزبون")
-    return idx >= 0 and idx <= 50
-
-
-def _parse_site_order_message(text: str):
-    """
-    تحليل رسالة طلب تبدأ بـ "اسم الزبون".
-    المنتج فقط: سطر يبدأ بـ "الاسم:" وبعده سطر "الكمية:" ثم "السعر:".
-    أي سطر آخر (الكمية، السعر، العنوان، **، ملاحظات، ...) لا يُعتبر منتجاً.
-    """
-    if not text:
-        return None
-
-    lines = [l.strip() for l in text.splitlines()]
-    customer_name = ""
-    address = ""
-    landmark = ""
-    items = []
-    total_price = None
-
-    i = 0
-    n = len(lines)
-    while i < n:
-        line = lines[i]
-        # اسم الزبون
-        if re.match(r"^اسم\s*الزبون\s*[:\：]", line):
-            m = re.search(r"[:\：]\s*(.+)$", line)
-            if m:
-                customer_name = m.group(1).strip()
-            i += 1
-            continue
-        # العنوان = اسم المنطقة فقط
-        if re.match(r"^العنوان\s*[:\：]", line):
-            m = re.search(r"[:\：]\s*(.+)$", line)
-            if m:
-                address = m.group(1).strip()
-            i += 1
-            continue
-        # اقرب نقطة دالة
-        if re.match(r"^اقرب\s*نقطة\s*دالة\s*[:\：]", line):
-            m = re.search(r"[:\：]\s*(.+)$", line)
-            if m:
-                landmark = m.group(1).strip()
-            i += 1
-            continue
-        # ملاحظات أو فواصل أو عناوين → نتخطى، لا نعتبرها منتج
-        if re.match(r"^ملاحظات\s*[:\：]?", line) or line in ("**", "***", "******", "معلومات الطلب", "") or re.match(r"^-+$", line):
-            i += 1
-            continue
-        # السعر الكلي (قد يكون سطر منفصل ثم رقم في السطر التالي)
-        if "السعر الكلي" in line:
-            try:
-                rest = line.replace("السعر الكلي", "").replace("*", "").strip()
-                if rest.isdigit():
-                    total_price = int(rest)
-                elif i + 1 < n and lines[i + 1].replace("*", "").strip().isdigit():
-                    total_price = int(lines[i + 1].replace("*", "").strip())
-                elif i + 2 < n and lines[i + 2].replace("*", "").strip().isdigit():
-                    total_price = int(lines[i + 2].replace("*", "").strip())
-            except ValueError:
-                pass
-            i += 1
-            continue
-        # بلوك منتج: فقط سطر يبدأ بـ "الاسم:" ثم "الكمية:" ثم "السعر:"
-        m_name = _RE_product_line.match(line)
-        if m_name:
-            raw = m_name.group(1).strip()
-            if re.match(r"^اسم\s*المحل\s*[:\：]\s*", raw):
-                raw = re.sub(r"^اسم\s*المحل\s*[:\：]\s*", "", raw).strip()
-            elif re.match(r"^اسم\s*المحل\s+", raw):
-                raw = re.sub(r"^اسم\s*المحل\s+", "", raw).strip()
-            name = raw
-            qty = 1
-            price = 0
-            if i + 1 < n:
-                m_q = _RE_quantity_line.match(lines[i + 1])
-                if m_q:
-                    try:
-                        qty = int(m_q.group(1))
-                    except ValueError:
-                        pass
-            if i + 2 < n:
-                m_p = _RE_price_line.match(lines[i + 2])
-                if m_p:
-                    try:
-                        price = int(m_p.group(1))
-                    except ValueError:
-                        pass
-            if name and name != "اسم المحل":
-                items.append({"name": name, "qty": qty, "price": price})
-            # نتخطى سطر الكمية والسعر لأننا استخدمناهم
-            i += 1
-            if i < n and _RE_quantity_line.match(lines[i]):
-                i += 1
-            if i < n and _RE_price_line.match(lines[i]):
-                i += 1
-            continue
-        # سطر "الكمية" أو "السعر" لوحده بدون "الاسم" قبله → نتخطى (لا نعتبره منتج)
-        if _RE_quantity_line.match(line) or _RE_price_line.match(line):
-            i += 1
-            continue
-        # أي سطر آخر لا نعتبره منتج
-        i += 1
-
-    return {
-        "customer_name": customer_name,
-        "address": address,
-        "landmark": landmark,
-        "items": items,
-        "total_price": total_price,
-    }
-
-
-def _extract_phone_number(text: str):
-    """محاولة استخراج رقم هاتف عراقي من نص (07xxxxxxxxx...)."""
-    if not text:
-        return None
-    # حذف المسافات والشرطات
-    cleaned = re.sub(r"[^\d]", "", text)
-    m = re.search(r"07\d{8,10}", cleaned)
-    return m.group(0) if m else None
-
-
-def _is_region_in_zones(region_text: str) -> bool:
-    """يتحقق إذا اسم المنطقة (من العنوان أو النقطة الدالة) موجود في قاعدة المناطق."""
-    if not (region_text or "").strip():
-        return False
-    zones = load_zones()
-    if not zones:
-        return True  # إذا ما فيه ملف مناطق نعتبر أي منطقة مقبولة
-    r = (region_text or "").strip()
-    for zone in zones:
-        if zone in r or r in zone:
-            return True
-    return False
-
-
-def _build_rst_order_text_from_site(order_data, phone: str):
-    """
-    بناء نص الطلب الذي يفهمه بوت RSTTALABAT:
-    سطر 1: العنوان (نستخدم اقرب نقطة دالة، وإذا فارغة نستخدم العنوان)
-    سطر 2: رقم الهاتف
-    باقي الأسطر: المنتجات مع الكمية.
-    """
-    landmark = (order_data.get("landmark") or "").strip()
-    address = (order_data.get("address") or "").strip()
-    title_line = landmark if landmark else (address or "طلب من الموقع")
-
-    product_lines = []
-    for item in order_data.get("items", []):
-        name = item.get("name", "").strip()
-        qty = item.get("qty", 1)
-        if not name:
-            continue
-        # العدد كنص عادي في نفس سطر اسم المنتج (مثلاً: ريحان 1، خبز شعير 2)
-        product_lines.append(f"{name} {qty}")
-
-    lines = [title_line, phone]
-    lines.extend(product_lines)
-    return "\n".join(lines)
-
-
-async def handle_site_order_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    كروب بوت الموقع (SITE_SOURCE_CHAT_ID):
-    - إذا بداية الرسالة «اسم الزبون» = طلب موقع (برمجة جديدة).
-    - وإلا = نمرر للبرمجة القديمة (receive_order).
-    """
-    global pending_site_orders
-
+async def _route_site_source(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """توجيه رسالة كروب المصدر: بداية «اسم الزبون: » → logic_site_order، وإلا → logic_old (receive_order)."""
     if not update.message or not update.message.text:
         return
     if update.effective_chat.id != SITE_SOURCE_CHAT_ID:
         return
-
     text = (update.message.text or "").strip()
-    # إذا ما تشبه طلب الموقع (اسم الزبون + معلومات الطلب في أول النص) = طلب عادي (اسم منطقة)
-    if not _is_likely_site_order(text):
-        await receive_order(update, context)
-        return
-
-    order_data = _parse_site_order_message(_normalize_for_site_check(text))
-    if not order_data or not order_data.get("items"):
-        return
-
-    # التحقق من أن المنطقة (العنوان أو النقطة الدالة) موجودة في قاعدة المناطق
-    region_candidate = (order_data.get("address") or order_data.get("landmark") or "").strip()
-    if not _is_region_in_zones(region_candidate):
-        pending_site_orders.append({
-            "order_data": order_data,
-            "needs_region": True,
-            "needs_phone": not bool(_extract_phone_number(text)),
-        })
-        await context.bot.send_message(
-            chat_id=SITE_TARGET_CHAT_ID,
-            text="📦 طلبية من المتجر الإلكتروني.\nالمنطقة اللي مكتوبة مو موجودة عندنا. دز اسم المنطقه الصحيحة.",
-        )
-        return
-
-    phone = _extract_phone_number(text)
-    if phone:
-        rst_text = _build_rst_order_text_from_site(order_data, phone)
-        await context.bot.send_message(chat_id=SITE_TARGET_CHAT_ID, text=rst_text)
-        return
-
-    # لا يوجد رقم → نخزن الطلب ونطلب الرقم في كروب RSTTALABAT
-    pending_site_orders.append({
-        "order_data": order_data,
-        "needs_region": False,
-        "needs_phone": True,
-    })
-    landmark = order_data.get("landmark") or order_data.get("address") or "غير معروف"
-    notify_text = (
-        "📦 اجت طلبية جديدة من المتجر الإلكتروني.\n"
-        f"العنوان/النقطة الدالة: {landmark}\n"
-        "بس الطلب ما بي رقم زبون.\n"
-        "دزوا رقم الموبايل فقط حتى أكمل الطلبية."
-    )
-    await context.bot.send_message(chat_id=SITE_TARGET_CHAT_ID, text=notify_text)
+    if logic_site_order.is_site_order_message(text):
+        await logic_site_order.handle_site_source(update, context)
+    else:
+        await logic_old.receive_order(update, context)
 
 
-async def handle_site_phone_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    كروب RSTTALABAT (SITE_TARGET_CHAT_ID):
-    - إذا بداية الرسالة «اسم الزبون» أو فيه طلبية معلّقة = برمجة طلب الموقع.
-    - وإلا = برمجة قديمة (receive_order).
-    """
-    global pending_site_orders
-
+async def _route_site_target(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """توجيه رسالة كروب الهدف: بداية «اسم الزبون: » أو طلبية معلّقة → logic_site_order، وإلا → logic_old."""
     if not update.message or not update.message.text:
         return
     if update.effective_chat.id != SITE_TARGET_CHAT_ID:
         return
-
     text = (update.message.text or "").strip()
-    # إذا ما تشبه طلب الموقع وما فيه طلبية معلّقة = طلب عادي (اسم منطقة)
-    if not _is_likely_site_order(text) and not pending_site_orders:
-        await receive_order(update, context)
-        return
-
-    # لو أحد نسخ نص الطلب من البوت الأول ولصقه هنا يدوي
-    if _is_likely_site_order(text):
-        order_data = _parse_site_order_message(_normalize_for_site_check(text))
-        if order_data and order_data.get("items"):
-            region_candidate = (order_data.get("address") or order_data.get("landmark") or "").strip()
-            if not _is_region_in_zones(region_candidate):
-                pending_site_orders.append({
-                    "order_data": order_data,
-                    "needs_region": True,
-                    "needs_phone": not bool(_extract_phone_number(text)),
-                })
-                await context.bot.send_message(
-                    chat_id=SITE_TARGET_CHAT_ID,
-                    text="📦 تم أخذ تفاصيل الطلبية.\nالمنطقة اللي مكتوبة مو موجودة عندنا. دز اسم المنطقه الصحيحة.",
-                )
-                return
-            phone = _extract_phone_number(text)
-            if phone:
-                rst_text = _build_rst_order_text_from_site(order_data, phone)
-                await context.bot.send_message(chat_id=SITE_TARGET_CHAT_ID, text=rst_text)
-                return
-            pending_site_orders.append({
-                "order_data": order_data,
-                "needs_region": False,
-                "needs_phone": True,
-            })
-            landmark = order_data.get("landmark") or order_data.get("address") or "غير معروف"
-            await context.bot.send_message(
-                chat_id=SITE_TARGET_CHAT_ID,
-                text=(
-                    "📦 تم أخذ تفاصيل الطلبية.\n"
-                    f"العنوان/النقطة الدالة: {landmark}\n"
-                    "دز رقم الموبايل فقط حتى أكمل الطلبية."
-                ),
-            )
-            return
-        # كان يشبه طلب موقع لكن التحليل ما جاب منتجات
-        return
-
-    # رد على طلبية معلّقة (منطقة أو رقم)
-    if not pending_site_orders:
-        return
-
-    entry = pending_site_orders[0]
-    if isinstance(entry, dict) and "order_data" in entry:
-        order_data = entry["order_data"]
-        needs_region = entry.get("needs_region", False)
-        needs_phone = entry.get("needs_phone", False)
+    if logic_site_order.is_site_order_message(text) or logic_site_order.pending_site_orders:
+        await logic_site_order.handle_site_target(update, context)
     else:
-        order_data = entry
-        needs_region = False
-        needs_phone = True
-
-    if needs_region:
-        order_data["address"] = text.strip()
-        entry["needs_region"] = False
-        if not order_data.get("phone") and not _extract_phone_number(text):
-            entry["needs_phone"] = True
-            await context.bot.send_message(
-                chat_id=SITE_TARGET_CHAT_ID,
-                text="تم. دز رقم الموبايل فقط حتى أكمل الطلبية.",
-            )
-        else:
-            phone = _extract_phone_number(text) or text.strip()
-            if len(phone) >= 10:
-                pending_site_orders.pop(0)
-                rst_text = _build_rst_order_text_from_site(order_data, phone)
-                await context.bot.send_message(chat_id=SITE_TARGET_CHAT_ID, text=rst_text)
-            else:
-                entry["needs_phone"] = True
-                await context.bot.send_message(
-                    chat_id=SITE_TARGET_CHAT_ID,
-                    text="دز رقم الموبايل فقط حتى أكمل الطلبية.",
-                )
-        return
-
-    if needs_phone:
-        phone = _extract_phone_number(text)
-        if not phone:
-            return
-        pending_site_orders.pop(0)
-        rst_text = _build_rst_order_text_from_site(order_data, phone)
-        await context.bot.send_message(chat_id=SITE_TARGET_CHAT_ID, text=rst_text)
+        await logic_old.receive_order(update, context)
 
 
 def _run_order_webhook_server(port: int):
     """تشغيل خادم HTTP لاستقبال الطلبات من الموقع (يتخطى مشكلة عدم استلام رسائل البوتات من بوتات أخرى)."""
     from flask import Flask, request, jsonify
-    global _webhook_bot, _webhook_loop, pending_site_orders
+    global _webhook_bot, _webhook_loop
 
     app_http = Flask(__name__)
 
     @app_http.route("/incoming-order", methods=["POST"])
     def incoming_order():
-        global _webhook_bot, _webhook_loop, pending_site_orders
+        global _webhook_bot, _webhook_loop
         if _webhook_bot is None or _webhook_loop is None:
             return jsonify({"ok": False, "error": "bot_not_ready"}), 503
         try:
@@ -2380,7 +1856,7 @@ def _run_order_webhook_server(port: int):
             items_raw = data.get("items", [])
             phone = data.get("phone") or data.get("phone_number")
             if isinstance(phone, str):
-                phone = _extract_phone_number(phone) or phone.strip() or None
+                phone = logic_site_order.extract_phone_number(phone) or phone.strip() or None
             items = []
             for it in items_raw:
                 if isinstance(it, dict):
@@ -2403,14 +1879,14 @@ def _run_order_webhook_server(port: int):
             if not items:
                 return jsonify({"ok": False, "error": "no_items"}), 400
             if phone:
-                rst_text = _build_rst_order_text_from_site(order_data, phone)
+                rst_text = logic_site_order.build_rst_order_text_from_site(order_data, phone)
                 future = asyncio.run_coroutine_threadsafe(
                     _webhook_bot.send_message(chat_id=SITE_TARGET_CHAT_ID, text=rst_text),
                     _webhook_loop,
                 )
                 future.result(timeout=15)
                 return jsonify({"ok": True, "sent_to_chat": SITE_TARGET_CHAT_ID})
-            pending_site_orders.append({
+            logic_site_order.pending_site_orders.append({
                 "order_data": order_data,
                 "needs_region": False,
                 "needs_phone": True,
@@ -2461,19 +1937,22 @@ def main():
     app.bot_data['supplier_report_timestamps'] = supplier_report_timestamps
     app.bot_data['schedule_save_global_func'] = schedule_save_global
     app.bot_data['_save_data_to_disk_global_func'] = _save_data_to_disk_global
-    app.bot_data['pending_site_orders'] = pending_site_orders
+    app.bot_data['pending_site_orders'] = logic_site_order.pending_site_orders
+    app.bot_data['get_invoice_number'] = get_invoice_number
+    app.bot_data['save_data_in_background'] = save_data_in_background
+    app.bot_data['delete_message_in_background'] = delete_message_in_background
 
-    # 0. طلبات المتجر الإلكتروني — نلتقط كل النص في الكروبين ونوجّه داخل المعالج: بداية «اسم الزبون» = برمجة جديدة، وإلا = استدعاء receive_order (البرمجة القديمة)
+    # 0. الملف الأساسي يقرأ الرسالة فقط ويوجّه: بداية «اسم الزبون: » → logic_site_order، وإلا → logic_old
     app.add_handler(
         MessageHandler(
             filters.Chat(SITE_SOURCE_CHAT_ID) & filters.TEXT & ~filters.COMMAND,
-            handle_site_order_message
+            _route_site_source
         )
     )
     app.add_handler(
         MessageHandler(
             filters.Chat(SITE_TARGET_CHAT_ID) & filters.TEXT & ~filters.COMMAND,
-            handle_site_phone_reply
+            _route_site_target
         )
     )
 
@@ -2559,7 +2038,7 @@ def main():
     # 10. ConversationHandler للطلبات والتسعير (المدخل الرئيسي)
     order_creation_conv_handler = ConversationHandler(
         entry_points=[
-            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_order),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, logic_old.receive_order),
             CallbackQueryHandler(product_selected, pattern=r"^[a-f0-9]{8}\|\d+$"),
             CallbackQueryHandler(add_new_product_callback, pattern=r"^add_product_to_order_.*$"),
             CallbackQueryHandler(delete_product_callback, pattern=r"^delete_specific_product_.*$"), 
@@ -2927,7 +2406,7 @@ async def handle_incomplete_order_selection(update: Update, context: ContextType
             )
 
             # عرض الطلبية المحددة بأزرارها
-            await show_buttons(chat_id, context, user_id, order_id, 
+            await logic_old.show_buttons(chat_id, context, user_id, order_id, 
                              confirmation_message=confirmation_message)
             
     except Exception as e:
