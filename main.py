@@ -2013,6 +2013,31 @@ _RE_product_line = re.compile(r"^الاسم\s*[:\：]\s*(.+)$", re.IGNORECASE)
 _RE_quantity_line = re.compile(r"^الكمية\s*[:\：]\s*(\d+)", re.IGNORECASE)
 _RE_price_line = re.compile(r"^السعر\s*[:\：]\s*(\d+)", re.IGNORECASE)
 
+# أحرف قد تظهر في أول النص عند النسخ من تليجرام (نزيلها قبل التحقق)
+_STRIP_START = "\uFEFF\u200E\u200F\u202A\u202B\u202C\u202D\u202E\u200B\u200C\u200D\u2060"
+
+
+def _normalize_for_site_check(text: str) -> str:
+    """تنظيف النص قبل التحقق من كونه طلب موقع (لصق يدوي من كروب البوت الأول)."""
+    if not text:
+        return ""
+    t = text.strip()
+    while t and t[0] in _STRIP_START:
+        t = t[1:].strip()
+    return t
+
+
+def _is_likely_site_order(text: str) -> bool:
+    """
+    هل الرسالة تشبه طلب الموقع (اللي تنزل من البوت الأول وتلصقها يدوي في الكروب الثاني)؟
+    نتحقق أن «اسم الزبون» في أول النص وأن «معلومات الطلب» موجود.
+    """
+    t = _normalize_for_site_check(text or "")
+    if not t or "معلومات الطلب" not in t:
+        return False
+    idx = t.find("اسم الزبون")
+    return idx >= 0 and idx <= 50
+
 
 def _parse_site_order_message(text: str):
     """
@@ -2186,15 +2211,12 @@ async def handle_site_order_message(update: Update, context: ContextTypes.DEFAUL
         return
 
     text = (update.message.text or "").strip()
-    # إذا ما تبدأ بـ «اسم الزبون» نعتبرها طلب عادي (اسم منطقة) ونشغّل البرمجة القديمة
-    if not text.startswith("اسم الزبون"):
+    # إذا ما تشبه طلب الموقع (اسم الزبون + معلومات الطلب في أول النص) = طلب عادي (اسم منطقة)
+    if not _is_likely_site_order(text):
         await receive_order(update, context)
         return
 
-    if "معلومات الطلب" not in text:
-        return
-
-    order_data = _parse_site_order_message(text)
+    order_data = _parse_site_order_message(_normalize_for_site_check(text))
     if not order_data or not order_data.get("items"):
         return
 
@@ -2248,14 +2270,14 @@ async def handle_site_phone_reply(update: Update, context: ContextTypes.DEFAULT_
         return
 
     text = (update.message.text or "").strip()
-    # إذا ما تبدأ بـ «اسم الزبون» وما فيه طلبية معلّقة = طلب عادي (اسم منطقة)
-    if not text.startswith("اسم الزبون") and not pending_site_orders:
+    # إذا ما تشبه طلب الموقع وما فيه طلبية معلّقة = طلب عادي (اسم منطقة)
+    if not _is_likely_site_order(text) and not pending_site_orders:
         await receive_order(update, context)
         return
 
-    # لو أحد نسخ نص الطلب من الكروب الأول ولصقه هنا
-    if text.startswith("اسم الزبون") and "معلومات الطلب" in text:
-        order_data = _parse_site_order_message(text)
+    # لو أحد نسخ نص الطلب من البوت الأول ولصقه هنا يدوي
+    if _is_likely_site_order(text):
+        order_data = _parse_site_order_message(_normalize_for_site_check(text))
         if order_data and order_data.get("items"):
             region_candidate = (order_data.get("address") or order_data.get("landmark") or "").strip()
             if not _is_region_in_zones(region_candidate):
@@ -2289,6 +2311,8 @@ async def handle_site_phone_reply(update: Update, context: ContextTypes.DEFAULT_
                 ),
             )
             return
+        # كان يشبه طلب موقع لكن التحليل ما جاب منتجات
+        return
 
     # رد على طلبية معلّقة (منطقة أو رقم)
     if not pending_site_orders:
