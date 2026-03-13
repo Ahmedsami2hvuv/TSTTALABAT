@@ -19,7 +19,7 @@ from telegram.ext import (
 from features.delivery_zones import (
     list_zones, get_delivery_price
 )
-from features.product_categories import is_fish, is_vegetable_fruit
+from features.product_categories import is_fish, is_vegetable_fruit, is_meat
 
 # ✅ تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
 logging.basicConfig(
@@ -1201,6 +1201,28 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         else:
             veg_invoice_text = None
 
+        # --- فاتورة اللحم لوحد (بالخاص) ---
+        meat_lines = []
+        for p_name in order["products"]:
+            if not is_meat(p_name):
+                continue
+            data = pricing.get(order_id, {}).get(p_name, {})
+            buy = float(data.get("buy", 0.0))
+            p_worker_name = data.get("prepared_by_name", "شخص آخر")
+            meat_lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({p_worker_name})")
+        if meat_lines:
+            meat_invoice_text = (
+                "🥩 فاتورة اللحم (تفصيل):🧾\n"
+                f"رقم الفاتورة🔢: {invoice}\n"
+                f"عنوان الزبون🏠: {order['title']}\n"
+                f"رقم الزبون📞: {phone_number}\n\n"
+                "تفاصيل اللحم:\n"
+                + "\n".join(meat_lines) +
+                f"\n\n💰 مجموع اللحم: {format_float(sum(float(pricing.get(order_id, {}).get(p, {}).get('buy', 0)) for p in order['products'] if is_meat(p)))}"
+            )
+        else:
+            meat_invoice_text = None
+
         # --- ب. بناء فاتورة الإدارة (للمدير فقط) ---
         admin_msg = [
             f"فاتورة الإدارة:👨🏻‍💼",
@@ -1270,6 +1292,8 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
                 await context.bot.send_message(chat_id=owner_id, text=fish_invoice_text)  # فاتورة السمك لوحد
             if veg_invoice_text:
                 await context.bot.send_message(chat_id=owner_id, text=veg_invoice_text)  # فاتورة الخضروات والفواكه لوحد
+            if meat_invoice_text:
+                await context.bot.send_message(chat_id=owner_id, text=meat_invoice_text)  # فاتورة اللحم لوحد
             await context.bot.send_message(chat_id=owner_id, text=f"📋 نسخة الجروب:\n\n{customer_text}")  # نسخة الجروب
 
         # تنظيف رسائل المجهز
@@ -1807,6 +1831,23 @@ def _build_report_veg_text(orders, pricing, invoice_numbers):
     return "\n".join(lines) if len(lines) > 1 else "ماكو فواتير خضروات/فواكه لهذا اليوم."
 
 
+def _build_report_meat_text(orders, pricing, invoice_numbers):
+    """بناء نص فواتير اللحم (تقرير يومي)."""
+    lines = ["🥩 **فواتير اللحم (تقرير يومي)**\n"]
+    for order_id, order in orders.items():
+        meat_items = [(p_name, pricing.get(order_id, {}).get(p_name, {})) for p_name in order.get("products", []) if is_meat(p_name)]
+        if not meat_items:
+            continue
+        inv = invoice_numbers.get(order_id, "??")
+        lines.append(f"فاتورة #{inv} | {order.get('title', '')} | {order.get('phone_number', '')}")
+        for p_name, p_data in meat_items:
+            buy = p_data.get("buy", 0)
+            who = p_data.get("prepared_by_name", "غير معروف")
+            lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({who})")
+        lines.append("")
+    return "\n".join(lines) if len(lines) > 1 else "ماكو فواتير لحم لهذا اليوم."
+
+
 async def _build_supplier_reports_messages(bot, orders, pricing, invoice_numbers):
     """بناء قائمة رسائل تقارير المجهزين (كل مجهز رسالة)."""
     all_suppliers = set()
@@ -1895,6 +1936,7 @@ async def send_daily_report_callback(context: ContextTypes.DEFAULT_TYPE):
         report_orders = _build_report_orders_text(orders, pricing, invoice_numbers)
         report_fish = _build_report_fish_text(orders, pricing, invoice_numbers)
         report_veg = _build_report_veg_text(orders, pricing, invoice_numbers)
+        report_meat = _build_report_meat_text(orders, pricing, invoice_numbers)
         report_sales = _build_report_sales_purchase_profit_text(orders, pricing, invoice_numbers)
         report_profit = _build_report_profit_only_text(orders, pricing)
         supplier_msgs = await _build_supplier_reports_messages(bot, orders, pricing, invoice_numbers)
@@ -1910,6 +1952,8 @@ async def send_daily_report_callback(context: ContextTypes.DEFAULT_TYPE):
                     await bot.send_message(owner_id, text=report_fish[i:i+4096], parse_mode="Markdown")
                 for i in range(0, len(report_veg), 4096):
                     await bot.send_message(owner_id, text=report_veg[i:i+4096], parse_mode="Markdown")
+                for i in range(0, len(report_meat), 4096):
+                    await bot.send_message(owner_id, text=report_meat[i:i+4096], parse_mode="Markdown")
                 for i in range(0, len(report_sales), 4096):
                     await bot.send_message(owner_id, text=report_sales[i:i+4096], parse_mode="Markdown")
                 await bot.send_message(owner_id, text=report_profit, parse_mode="Markdown")
