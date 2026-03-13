@@ -6,9 +6,11 @@ import re
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _VEG_FILE = os.path.join(_BASE_DIR, "data", "vegetables_fruits.txt")
 _FISH_FILE = os.path.join(_BASE_DIR, "data", "fish_types.txt")
+_MEAT_FILE = os.path.join(_BASE_DIR, "data", "meat_types.txt")
 
 _veg_words = None
 _fish_words = None
+_meat_words = None
 
 
 def _load_lines(filepath):
@@ -41,6 +43,24 @@ def _get_fish_words():
     return _fish_words
 
 
+def _get_meat_words():
+    global _meat_words
+    if _meat_words is None:
+        _meat_words = _load_lines(_MEAT_FILE)
+    return _meat_words
+
+
+def is_meat(product_name):
+    """إذا اسم المنتج يحتوي على أي كلمة من ملف اللحم (لحم، شرح، مثروم، عظم، باجه، شحم) يعتبر لحم."""
+    if not product_name or not product_name.strip():
+        return False
+    p = product_name.strip()
+    for w in _get_meat_words():
+        if w in p:
+            return True
+    return False
+
+
 def is_vegetable_fruit(product_name):
     """إذا اسم المنتج يحتوي على أي كلمة من ملف الخضروات/الفواكه يعتبر خضروات أو فواكه."""
     if not product_name or not product_name.strip():
@@ -70,8 +90,10 @@ def is_fish(product_name):
 
 def reload_categories():
     """إعادة تحميل القوائم من الملفات (مفيد بعد تعديل الملفات)."""
-    global _veg_words, _fish_words
+    global _veg_words, _fish_words, _meat_words
     _veg_words = None
     _fish_words = None
+    _meat_words = None
     _get_veg_words()
     _get_fish_words()
+    _get_meat_words()
