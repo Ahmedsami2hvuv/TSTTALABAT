@@ -17,7 +17,7 @@ from telegram.ext import (
 
 # ✅ استيراد الدوال الخاصة بالمناطق من الملف الجديد
 from features.delivery_zones import (
-    list_zones, get_delivery_price
+    list_zones, get_delivery_price, load_zones
 )
 from features.product_categories import is_fish, is_vegetable_fruit, is_meat
 
@@ -56,7 +56,7 @@ SITE_SOURCE_CHAT_ID = 2082135888   # الكروب الذي ينزل به بوت 
 SITE_TARGET_CHAT_ID = 2447525875   # الكروب الذي ينزل به بوت RSTTALABAT الطلب الجاهز
 
 # قائمة طلبات الموقع التي تنتظر رقم هاتف
-pending_site_orders = []  # كل عنصر: dict فيه بيانات الطلب من الموقع
+pending_site_orders = []  # كل عنصر: {"order_data": dict, "needs_region": bool, "needs_phone": bool}
 
 # للطلب عبر HTTP: البوت والـ loop يُعيَّنان من thread البوت (post_init)
 _webhook_bot = None
@@ -2097,6 +2097,20 @@ def _extract_phone_number(text: str):
     return m.group(0) if m else None
 
 
+def _is_region_in_zones(region_text: str) -> bool:
+    """يتحقق إذا اسم المنطقة (من العنوان أو النقطة الدالة) موجود في قاعدة المناطق."""
+    if not (region_text or "").strip():
+        return False
+    zones = load_zones()
+    if not zones:
+        return True  # إذا ما فيه ملف مناطق نعتبر أي منطقة مقبولة
+    r = (region_text or "").strip()
+    for zone in zones:
+        if zone in r or r in zone:
+            return True
+    return False
+
+
 def _build_rst_order_text_from_site(order_data, phone: str):
     """
     بناء نص الطلب الذي يفهمه بوت RSTTALABAT:
@@ -2145,15 +2159,32 @@ async def handle_site_order_message(update: Update, context: ContextTypes.DEFAUL
     if not order_data or not order_data.get("items"):
         return
 
-    # محاولة استخراج رقم من نفس الرسالة
+    # التحقق من أن المنطقة (العنوان أو النقطة الدالة) موجودة في قاعدة المناطق
+    region_candidate = (order_data.get("address") or order_data.get("landmark") or "").strip()
+    if not _is_region_in_zones(region_candidate):
+        pending_site_orders.append({
+            "order_data": order_data,
+            "needs_region": True,
+            "needs_phone": not bool(_extract_phone_number(text)),
+        })
+        await context.bot.send_message(
+            chat_id=SITE_TARGET_CHAT_ID,
+            text="📦 طلبية من المتجر الإلكتروني.\nالمنطقة اللي مكتوبة مو موجودة عندنا. دز اسم المنطقه الصحيحة.",
+        )
+        return
+
     phone = _extract_phone_number(text)
     if phone:
         rst_text = _build_rst_order_text_from_site(order_data, phone)
         await context.bot.send_message(chat_id=SITE_TARGET_CHAT_ID, text=rst_text)
         return
 
-    # لا يوجد رقم -> نخزن الطلب ونطلب الرقم في كروب RSTTALABAT
-    pending_site_orders.append(order_data)
+    # لا يوجد رقم → نخزن الطلب ونطلب الرقم في كروب RSTTALABAT
+    pending_site_orders.append({
+        "order_data": order_data,
+        "needs_region": False,
+        "needs_phone": True,
+    })
     landmark = order_data.get("landmark") or order_data.get("address") or "غير معروف"
     notify_text = (
         "📦 اجت طلبية جديدة من المتجر الإلكتروني.\n"
@@ -2179,16 +2210,32 @@ async def handle_site_phone_reply(update: Update, context: ContextTypes.DEFAULT_
 
     text = update.message.text.strip()
 
-    # لو أحد نسخ نص الطلب من الكروب الأول ولصقه هنا (لأننا ما نقدر نصل لسيرفر البوت الأول)
+    # لو أحد نسخ نص الطلب من الكروب الأول ولصقه هنا
     if "اسم الزبون" in text and "معلومات الطلب" in text:
         order_data = _parse_site_order_message(text)
         if order_data and order_data.get("items"):
+            region_candidate = (order_data.get("address") or order_data.get("landmark") or "").strip()
+            if not _is_region_in_zones(region_candidate):
+                pending_site_orders.append({
+                    "order_data": order_data,
+                    "needs_region": True,
+                    "needs_phone": not bool(_extract_phone_number(text)),
+                })
+                await context.bot.send_message(
+                    chat_id=SITE_TARGET_CHAT_ID,
+                    text="📦 تم أخذ تفاصيل الطلبية.\nالمنطقة اللي مكتوبة مو موجودة عندنا. دز اسم المنطقه الصحيحة.",
+                )
+                return
             phone = _extract_phone_number(text)
             if phone:
                 rst_text = _build_rst_order_text_from_site(order_data, phone)
                 await context.bot.send_message(chat_id=SITE_TARGET_CHAT_ID, text=rst_text)
                 return
-            pending_site_orders.append(order_data)
+            pending_site_orders.append({
+                "order_data": order_data,
+                "needs_region": False,
+                "needs_phone": True,
+            })
             landmark = order_data.get("landmark") or order_data.get("address") or "غير معروف"
             await context.bot.send_message(
                 chat_id=SITE_TARGET_CHAT_ID,
@@ -2200,17 +2247,50 @@ async def handle_site_phone_reply(update: Update, context: ContextTypes.DEFAULT_
             )
             return
 
-    # استقبال رقم الموبايل عندما توجد طلبية معلّقة
+    # رد على طلبية معلّقة (منطقة أو رقم)
     if not pending_site_orders:
         return
 
-    phone = _extract_phone_number(text)
-    if not phone:
+    entry = pending_site_orders[0]
+    if isinstance(entry, dict) and "order_data" in entry:
+        order_data = entry["order_data"]
+        needs_region = entry.get("needs_region", False)
+        needs_phone = entry.get("needs_phone", False)
+    else:
+        order_data = entry
+        needs_region = False
+        needs_phone = True
+
+    if needs_region:
+        order_data["address"] = text.strip()
+        entry["needs_region"] = False
+        if not order_data.get("phone") and not _extract_phone_number(text):
+            entry["needs_phone"] = True
+            await context.bot.send_message(
+                chat_id=SITE_TARGET_CHAT_ID,
+                text="تم. دز رقم الموبايل فقط حتى أكمل الطلبية.",
+            )
+        else:
+            phone = _extract_phone_number(text) or text.strip()
+            if len(phone) >= 10:
+                pending_site_orders.pop(0)
+                rst_text = _build_rst_order_text_from_site(order_data, phone)
+                await context.bot.send_message(chat_id=SITE_TARGET_CHAT_ID, text=rst_text)
+            else:
+                entry["needs_phone"] = True
+                await context.bot.send_message(
+                    chat_id=SITE_TARGET_CHAT_ID,
+                    text="دز رقم الموبايل فقط حتى أكمل الطلبية.",
+                )
         return
 
-    order_data = pending_site_orders.pop(0)
-    rst_text = _build_rst_order_text_from_site(order_data, phone)
-    await context.bot.send_message(chat_id=SITE_TARGET_CHAT_ID, text=rst_text)
+    if needs_phone:
+        phone = _extract_phone_number(text)
+        if not phone:
+            return
+        pending_site_orders.pop(0)
+        rst_text = _build_rst_order_text_from_site(order_data, phone)
+        await context.bot.send_message(chat_id=SITE_TARGET_CHAT_ID, text=rst_text)
 
 
 def _run_order_webhook_server(port: int):
@@ -2263,7 +2343,11 @@ def _run_order_webhook_server(port: int):
                 )
                 future.result(timeout=15)
                 return jsonify({"ok": True, "sent_to_chat": SITE_TARGET_CHAT_ID})
-            pending_site_orders.append(order_data)
+            pending_site_orders.append({
+                "order_data": order_data,
+                "needs_region": False,
+                "needs_phone": True,
+            })
             notify_text = (
                 "📦 اجت طلبية جديدة من المتجر الإلكتروني.\n"
                 f"العنوان/النقطة الدالة: {landmark or address or 'غير معروف'}\n"
