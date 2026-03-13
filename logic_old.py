@@ -1,10 +1,22 @@
 # -*- coding: utf-8 -*-
 """
-المنطق القديم: الطلبات العادية (أول سطر = عنوان/منطقة، ثاني سطر = رقم، ثم المنتجات).
-يحتوي على استلام الطلب ومعالجته وعرض الأزرار. main يوجّه الرسائل اللي بدايتها مو «اسم الزبون: » إلى هذا الملف فقط.
+المنطق القديم: الطلبات العادية.
+
+سابقاً كان يعتمد ترتيب ثابت للأسطر:
+- السطر الأول = العنوان/المنطقة
+- السطر الثاني = رقم الموبايل
+- بقية الأسطر = المنتجات
+
+الآن أصبح أكثر مرونة:
+- يتعرف على رقم الموبايل من أي سطر.
+- يختار سطر العنوان من بقية الأسطر (يفضل السطر الذي لا يحتوي أرقام).
+- الباقي يعتبره منتجات.
+
+ما يزال main يوجّه الرسائل التي لا تبدأ بـ «اسم الزبون: » إلى هذا الملف فقط.
 """
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -12,6 +24,88 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_phone_from_text(text: str):
+    """
+    استخراج رقم عراقي من سطر نصي مع تطبيع بسيط:
+    - إزالة كل ما ليس رقم
+    - +964 / 964 → 0 ثم بقية الرقم
+    - التعامل مع 07xxxxxxxx و 7xxxxxxxx
+    """
+    if not text:
+        return None
+
+    digits = re.sub(r"[^0-9]", "", text)
+    if not digits:
+        return None
+
+    # +964 أو 964 في البداية
+    if digits.startswith("964") and len(digits) >= 12:
+        return "0" + digits[3:]
+
+    # 07xxxxxxxx أو أطول قليلاً
+    if digits.startswith("07") and len(digits) >= 10:
+        return digits[:11] if len(digits) >= 11 else digits
+
+    # 7xxxxxxxx → 07xxxxxxxx
+    if len(digits) == 9 and digits.startswith("7"):
+        return "0" + digits
+
+    return None
+
+
+def _parse_flexible_order_lines(lines):
+    """
+    تحليل الطلب بشكل مرن:
+    - يبحث عن سطر يحتوي رقم موبايل (phone_line).
+    - يختار سطر عنوان من بقية الأسطر (يفضل السطر الخالي من الأرقام).
+    - البقية تعتبر منتجات.
+    يرجع (title, phone_number, products)
+    """
+    phone_idx = None
+    phone_number = None
+
+    for i, line in enumerate(lines):
+        candidate = _extract_phone_from_text(line)
+        if candidate:
+            phone_idx = i
+            phone_number = candidate
+            break
+
+    if phone_idx is None:
+        return None, None, []
+
+    # اختيار سطر العنوان (يفضل سطر بلا أرقام)
+    title_idx = None
+    no_digit_candidates = []
+    other_candidates = []
+
+    for i, line in enumerate(lines):
+        if i == phone_idx:
+            continue
+        if any(ch.isdigit() for ch in line):
+            other_candidates.append(i)
+        else:
+            no_digit_candidates.append(i)
+
+    if no_digit_candidates:
+        title_idx = no_digit_candidates[0]
+    elif other_candidates:
+        title_idx = other_candidates[0]
+    else:
+        return None, None, []
+
+    title = lines[title_idx].strip()
+
+    products = []
+    for i, line in enumerate(lines):
+        if i in (phone_idx, title_idx):
+            continue
+        if line.strip():
+            products.append(line.strip())
+
+    return title, phone_number, products
 
 
 def _get_invoice_number(context):
@@ -50,7 +144,7 @@ async def receive_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def process_order(update, context, message, edited=False):
-    """معالجة نص الطلبية: عنوان، رقم، قائمة منتجات."""
+    """معالجة نص الطلبية: عنوان، رقم، قائمة منتجات (بترتيب مرن للأسطر)."""
     orders = context.application.bot_data["orders"]
     pricing = context.application.bot_data["pricing"]
     invoice_numbers = context.application.bot_data["invoice_numbers"]
@@ -62,17 +156,20 @@ async def process_order(update, context, message, edited=False):
     if len(lines) < 3:
         if not edited:
             await message.reply_text(
-                "باعلي تاكد انك تكتب الطلبية ك التالي اول سطر هو عنوان الزبون وثاني سطر هو رقم الزبون وراها المنتجات كل سطر بي منتج يالله فر ويلك وسوي الطلب."
+                "باعي تأكد الطلبية بيها عنوان ورقم ومنتجات.\n"
+                "اكتب العنوان ورقم الزبون والمنتجات بأي ترتيب بس يكون كل شي بسطر منفصل."
             )
         return
 
-    title = lines[0]
-    phone_number_raw = lines[1].strip().replace(" ", "")
-    if phone_number_raw.startswith("+964"):
-        phone_number = "0" + phone_number_raw[4:]
-    else:
-        phone_number = phone_number_raw.replace("+", "")
-    products = [p.strip() for p in lines[2:] if p.strip()]
+    title, phone_number, products = _parse_flexible_order_lines(lines)
+
+    if not title or not phone_number:
+        if not edited:
+            await message.reply_text(
+                "ماكدر يطلع العنوان أو رقم الموبايل من الطلب.\n"
+                "دز الطلبية بحيث كل سطر بي معلومة (عنوان / رقم / منتج) ورقم الموبايل يكون واضح مثل 077xxxxxxx أو +964 77x..."
+            )
+        return
 
     if not products:
         if not edited:
