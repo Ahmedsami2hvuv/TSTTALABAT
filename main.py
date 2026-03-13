@@ -2429,16 +2429,24 @@ def main():
     )
     app.add_handler(order_creation_conv_handler)
 
-    # تشغيل البوت في thread والطلب من الموقع عبر HTTP على PORT (يتخطى عدم استلام رسائل البوتات من بوتات أخرى)
-    port = int(os.getenv("PORT", "8080"))
-    bot_thread = threading.Thread(
-        target=app.run_polling,
-        kwargs={"allowed_updates": Update.ALL_TYPES},
-        daemon=True,
-    )
-    bot_thread.start()
-    logger.info("Bot polling started in background; order webhook server listening on port %s", port)
-    _run_order_webhook_server(port)
+    # تشغيل البوت: إذا Flask مثبت نفتح خادم الطلبات على PORT؛ وإلا تشغيل عادي (النسخ واللصق في الكروب الثاني يشتغل بدون Flask)
+    try:
+        import flask as _flask
+    except ImportError:
+        _flask = None
+    if _flask is not None:
+        port = int(os.getenv("PORT", "8080"))
+        bot_thread = threading.Thread(
+            target=app.run_polling,
+            kwargs={"allowed_updates": Update.ALL_TYPES},
+            daemon=True,
+        )
+        bot_thread.start()
+        logger.info("Bot polling started in background; order webhook server listening on port %s", port)
+        _run_order_webhook_server(port)
+    else:
+        logger.info("Flask not installed: running bot only (paste order in target group works). Add 'flask' to requirements.txt for /incoming-order HTTP).")
+        app.run_polling(allowed_updates=Update.ALL_TYPES)
    
 
 async def show_supplier_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
