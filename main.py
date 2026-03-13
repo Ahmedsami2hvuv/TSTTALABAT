@@ -1810,27 +1810,34 @@ async def auto_reset_broadcast_callback(context: ContextTypes.DEFAULT_TYPE):
     logger.info("Auto reset and broadcast completed.")
 
 
-async def _route_site_source(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """توجيه رسالة كروب المصدر: بداية «اسم الزبون: » → logic_site_order، وإلا → logic_old (receive_order)."""
+async def _route_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    الملف الأساسي يقرأ الرسالة فقط ويحوّلها:
+    - إذا بداية الرسالة «اسم الزبون» → الملف الجديد (logic_site_order).
+    - وإلا → الملف القديم (logic_old).
+    """
     if not update.message or not update.message.text:
         return
-    if update.effective_chat.id != SITE_SOURCE_CHAT_ID:
-        return
     text = (update.message.text or "").strip()
-    if logic_site_order.is_site_order_message(text):
-        await logic_site_order.handle_site_source(update, context)
-    else:
-        await logic_old.receive_order(update, context)
+    chat_id = update.effective_chat.id
+    is_site = logic_site_order.is_site_order_message(text)
 
+    if chat_id == SITE_SOURCE_CHAT_ID:
+        if is_site:
+            await logic_site_order.handle_site_source(update, context)
+        else:
+            await logic_old.receive_order(update, context)
+        return
 
-async def _route_site_target(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """توجيه رسالة كروب الهدف: بداية «اسم الزبون: » أو طلبية معلّقة → logic_site_order، وإلا → logic_old."""
-    if not update.message or not update.message.text:
+    if chat_id == SITE_TARGET_CHAT_ID:
+        if is_site or logic_site_order.pending_site_orders:
+            await logic_site_order.handle_site_target(update, context)
+        else:
+            await logic_old.receive_order(update, context)
         return
-    if update.effective_chat.id != SITE_TARGET_CHAT_ID:
-        return
-    text = (update.message.text or "").strip()
-    if logic_site_order.is_site_order_message(text) or logic_site_order.pending_site_orders:
+
+    # أي كروب ثاني: نفس التوجيه حسب بداية الرسالة
+    if is_site:
         await logic_site_order.handle_site_target(update, context)
     else:
         await logic_old.receive_order(update, context)
@@ -1942,18 +1949,9 @@ def main():
     app.bot_data['save_data_in_background'] = save_data_in_background
     app.bot_data['delete_message_in_background'] = delete_message_in_background
 
-    # 0. الملف الأساسي يقرأ الرسالة فقط ويوجّه: بداية «اسم الزبون: » → logic_site_order، وإلا → logic_old
+    # 0. الملف الأساسي: يقرأ الرسالة فقط ويحوّلها — أول handler يلتقط كل النص (أي كروب)
     app.add_handler(
-        MessageHandler(
-            filters.Chat(SITE_SOURCE_CHAT_ID) & filters.TEXT & ~filters.COMMAND,
-            _route_site_source
-        )
-    )
-    app.add_handler(
-        MessageHandler(
-            filters.Chat(SITE_TARGET_CHAT_ID) & filters.TEXT & ~filters.COMMAND,
-            _route_site_target
-        )
+        MessageHandler(filters.TEXT & ~filters.COMMAND, _route_message)
     )
 
     # 1. أوامر التحكم الأساسية
