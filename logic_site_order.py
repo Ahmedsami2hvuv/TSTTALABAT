@@ -237,8 +237,16 @@ async def handle_site_source(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     phone = _extract_phone_number(text)
     if phone:
-        rst_text = _build_rst_order_text_from_site(order_data, phone)
-        await context.bot.send_message(chat_id=SITE_TARGET_CHAT_ID, text=rst_text)
+        # إذا كانت المنطقة صحيحة والرقم موجود من رسالة الموقع الأصلية،
+        # ننشئ الطلب مباشرة كطلب عادي مع الأزرار.
+        from logic_old import create_order_from_site_data
+        await create_order_from_site_data(
+            SITE_TARGET_CHAT_ID,
+            context,
+            update.message.from_user.id,
+            order_data,
+            phone,
+        )
         return
     pending_site_orders.append({
         "order_data": order_data,
@@ -284,8 +292,16 @@ async def handle_site_target(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 return
             phone = _extract_phone_number(text)
             if phone:
-                rst_text = _build_rst_order_text_from_site(order_data, phone)
-                await context.bot.send_message(chat_id=reply_chat_id, text=rst_text)
+                # الطلب جاي من الموقع ومكتمل (منطقة صحيحة + رقم)،
+                # ننقله فوراً لنظام الطلبات العادي مع الأزرار.
+                from logic_old import create_order_from_site_data
+                await create_order_from_site_data(
+                    reply_chat_id,
+                    context,
+                    update.message.from_user.id,
+                    order_data,
+                    phone,
+                )
                 return
             pending_site_orders.append({
                 "order_data": order_data,
