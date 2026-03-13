@@ -230,13 +230,12 @@ async def handle_site_source(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def handle_site_target(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    معالجة رسالة في كروب الهدف (RSTTALABAT).
-    يُستدعى من main عندما تكون الرسالة طلب موقع أو عند وجود طلبية معلّقة.
+    معالجة رسالة طلب موقع (أو رد على طلبية معلّقة).
+    يشتغل في أي كروب — الردود ترسل لنفس الكروب اللي أرسل منه المستخدم.
     """
     if not update.message or not update.message.text:
         return
-    if update.effective_chat.id != SITE_TARGET_CHAT_ID:
-        return
+    reply_chat_id = update.effective_chat.id
     text = (update.message.text or "").strip()
 
     if is_site_order_message(text):
@@ -250,14 +249,14 @@ async def handle_site_target(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     "needs_phone": not bool(_extract_phone_number(text)),
                 })
                 await context.bot.send_message(
-                    chat_id=SITE_TARGET_CHAT_ID,
+                    chat_id=reply_chat_id,
                     text="📦 تم أخذ تفاصيل الطلبية.\nالمنطقة اللي مكتوبة مو موجودة عندنا. دز اسم المنطقه الصحيحة.",
                 )
                 return
             phone = _extract_phone_number(text)
             if phone:
                 rst_text = _build_rst_order_text_from_site(order_data, phone)
-                await context.bot.send_message(chat_id=SITE_TARGET_CHAT_ID, text=rst_text)
+                await context.bot.send_message(chat_id=reply_chat_id, text=rst_text)
                 return
             pending_site_orders.append({
                 "order_data": order_data,
@@ -266,12 +265,17 @@ async def handle_site_target(update: Update, context: ContextTypes.DEFAULT_TYPE)
             })
             landmark = order_data.get("landmark") or order_data.get("address") or "غير معروف"
             await context.bot.send_message(
-                chat_id=SITE_TARGET_CHAT_ID,
+                chat_id=reply_chat_id,
                 text=(
                     "📦 تم أخذ تفاصيل الطلبية.\n"
                     f"العنوان/النقطة الدالة: {landmark}\n"
                     "دز رقم الموبايل فقط حتى أكمل الطلبية."
                 ),
+            )
+        else:
+            await context.bot.send_message(
+                chat_id=reply_chat_id,
+                text="📦 شكل الطلبية مو كامل أو ما تحلل. تأكد من وجود «الاسم» و «الكمية» و «السعر» لكل منتج.",
             )
         return
 
@@ -293,7 +297,7 @@ async def handle_site_target(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if not order_data.get("phone") and not _extract_phone_number(text):
             entry["needs_phone"] = True
             await context.bot.send_message(
-                chat_id=SITE_TARGET_CHAT_ID,
+                chat_id=reply_chat_id,
                 text="تم. دز رقم الموبايل فقط حتى أكمل الطلبية.",
             )
         else:
@@ -301,11 +305,11 @@ async def handle_site_target(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if len(phone) >= 10:
                 pending_site_orders.pop(0)
                 rst_text = _build_rst_order_text_from_site(order_data, phone)
-                await context.bot.send_message(chat_id=SITE_TARGET_CHAT_ID, text=rst_text)
+                await context.bot.send_message(chat_id=reply_chat_id, text=rst_text)
             else:
                 entry["needs_phone"] = True
                 await context.bot.send_message(
-                    chat_id=SITE_TARGET_CHAT_ID,
+                    chat_id=reply_chat_id,
                     text="دز رقم الموبايل فقط حتى أكمل الطلبية.",
                 )
         return
@@ -316,4 +320,4 @@ async def handle_site_target(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return
         pending_site_orders.pop(0)
         rst_text = _build_rst_order_text_from_site(order_data, phone)
-        await context.bot.send_message(chat_id=SITE_TARGET_CHAT_ID, text=rst_text)
+        await context.bot.send_message(chat_id=reply_chat_id, text=rst_text)
