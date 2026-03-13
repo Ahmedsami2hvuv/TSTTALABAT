@@ -59,25 +59,6 @@ SITE_TARGET_CHAT_ID = 2447525875   # الكروب الذي ينزل به بوت 
 pending_site_orders = []  # كل عنصر: {"order_data": dict, "needs_region": bool, "needs_phone": bool}
 
 
-class _FilterSiteOrderTarget(filters.UpdateFilter):
-    """البرمجة الجديدة: إذا بداية الرسالة «اسم الزبون» أو فيه طلبية معلّقة ننتظر رد عليها."""
-
-    def filter(self, update):
-        if not update.message or not getattr(update.message, "text", None):
-            return False
-        if update.effective_chat.id != SITE_TARGET_CHAT_ID:
-            return False
-        t = (update.message.text or "").strip()
-        if not t or t.startswith("/"):
-            return False
-        if t.startswith("اسم الزبون"):
-            return True
-        return len(pending_site_orders) > 0
-
-    def check_update(self, update, application=None):
-        """للتوافق مع PTB v20 إذا استدعت المكتبة check_update بدل filter."""
-        return self.filter(update)
-
 # للطلب عبر HTTP: البوت والـ loop يُعيَّنان من thread البوت (post_init)
 _webhook_bot = None
 _webhook_loop = None
@@ -2193,10 +2174,9 @@ def _build_rst_order_text_from_site(order_data, phone: str):
 
 async def handle_site_order_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    التعامل مع رسالة الطلب القادمة من كروب بوت الموقع (SITE_SOURCE_CHAT_ID):
-    - نحلل الرسالة
-    - إذا بيها رقم نرسل الطلب الجاهز مباشرة إلى كروب RSTTALABAT
-    - إذا ما بيها رقم نطلب الرقم في كروب RSTTALABAT ونخزن الطلب مؤقتاً.
+    كروب بوت الموقع (SITE_SOURCE_CHAT_ID):
+    - إذا بداية الرسالة «اسم الزبون» = طلب موقع (برمجة جديدة).
+    - وإلا = نمرر للبرمجة القديمة (receive_order).
     """
     global pending_site_orders
 
@@ -2205,9 +2185,13 @@ async def handle_site_order_message(update: Update, context: ContextTypes.DEFAUL
     if update.effective_chat.id != SITE_SOURCE_CHAT_ID:
         return
 
-    text = update.message.text
-    # نتأكد أن الرسالة فعلاً من بوت الموقع (شكلها معروف)
-    if "اسم الزبون" not in text or "معلومات الطلب" not in text:
+    text = (update.message.text or "").strip()
+    # إذا ما تبدأ بـ «اسم الزبون» نعتبرها طلب عادي (اسم منطقة) ونشغّل البرمجة القديمة
+    if not text.startswith("اسم الزبون"):
+        await receive_order(update, context)
+        return
+
+    if "معلومات الطلب" not in text:
         return
 
     order_data = _parse_site_order_message(text)
@@ -2252,9 +2236,9 @@ async def handle_site_order_message(update: Update, context: ContextTypes.DEFAUL
 
 async def handle_site_phone_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    في كروب RSTTALABAT (الكروب الثاني):
-    - إذا الرسالة فيها نص طلب الموقع (اسم الزبون + معلومات الطلب) = أحد نسخ الطلب من الكروب الأول ولصقه هنا → نحلله وننزل الطلب الجاهز أو نطلب الرقم.
-    - إذا ما فيها واكو طلبية معلّقة = نعتبر الرسالة رقم موبايل ونكمل الطلبية.
+    كروب RSTTALABAT (SITE_TARGET_CHAT_ID):
+    - إذا بداية الرسالة «اسم الزبون» أو فيه طلبية معلّقة = برمجة طلب الموقع.
+    - وإلا = برمجة قديمة (receive_order).
     """
     global pending_site_orders
 
@@ -2263,10 +2247,14 @@ async def handle_site_phone_reply(update: Update, context: ContextTypes.DEFAULT_
     if update.effective_chat.id != SITE_TARGET_CHAT_ID:
         return
 
-    text = update.message.text.strip()
+    text = (update.message.text or "").strip()
+    # إذا ما تبدأ بـ «اسم الزبون» وما فيه طلبية معلّقة = طلب عادي (اسم منطقة)
+    if not text.startswith("اسم الزبون") and not pending_site_orders:
+        await receive_order(update, context)
+        return
 
     # لو أحد نسخ نص الطلب من الكروب الأول ولصقه هنا
-    if "اسم الزبون" in text and "معلومات الطلب" in text:
+    if text.startswith("اسم الزبون") and "معلومات الطلب" in text:
         order_data = _parse_site_order_message(text)
         if order_data and order_data.get("items"):
             region_candidate = (order_data.get("address") or order_data.get("landmark") or "").strip()
@@ -2451,16 +2439,16 @@ def main():
     app.bot_data['_save_data_to_disk_global_func'] = _save_data_to_disk_global
     app.bot_data['pending_site_orders'] = pending_site_orders
 
-    # 0. طلبات المتجر الإلكتروني — البرمجة الجديدة فقط إذا بداية الرسالة «اسم الزبون»؛ وإلا تشتغل البرمجة القديمة (اسم منطقة)
+    # 0. طلبات المتجر الإلكتروني — نلتقط كل النص في الكروبين ونوجّه داخل المعالج: بداية «اسم الزبون» = برمجة جديدة، وإلا = استدعاء receive_order (البرمجة القديمة)
     app.add_handler(
         MessageHandler(
-            filters.Chat(SITE_SOURCE_CHAT_ID) & filters.TEXT & ~filters.COMMAND & filters.Regex(r"^اسم\s*الزبون"),
+            filters.Chat(SITE_SOURCE_CHAT_ID) & filters.TEXT & ~filters.COMMAND,
             handle_site_order_message
         )
     )
     app.add_handler(
         MessageHandler(
-            _FilterSiteOrderTarget() & filters.TEXT & ~filters.COMMAND,
+            filters.Chat(SITE_TARGET_CHAT_ID) & filters.TEXT & ~filters.COMMAND,
             handle_site_phone_reply
         )
     )
