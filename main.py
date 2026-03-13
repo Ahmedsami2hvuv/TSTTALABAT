@@ -2005,10 +2005,14 @@ def main():
     # 7ب. تسجيل الكروبات (لإرسال التصفير التلقائي)
     app.add_handler(MessageHandler(filters.ChatType.GROUPS, store_group_chat), group=1)
 
-    # 7ج. التقرير اليومي والتصفير التلقائي بتوقيت العراق (4 الفجر و 6 الصبح)
-    iraq_tz = timezone(timedelta(hours=3))  # العراق = UTC+3
-    app.job_queue.run_daily(send_daily_report_callback, time=dt_time(4, 0, tzinfo=iraq_tz))   # الساعة 4 صباحاً
-    app.job_queue.run_daily(auto_reset_broadcast_callback, time=dt_time(6, 0, tzinfo=iraq_tz))  # الساعة 6 صباحاً
+    # 7ج. التقرير اليومي والتصفير التلقائي بتوقيت العراق (4 الفجر و 6 الصبح) — يحتاج تثبيت: pip install "python-telegram-bot[job-queue]"
+    if app.job_queue is not None:
+        iraq_tz = timezone(timedelta(hours=3))  # العراق = UTC+3
+        app.job_queue.run_daily(send_daily_report_callback, time=dt_time(4, 0, tzinfo=iraq_tz))   # الساعة 4 صباحاً
+        app.job_queue.run_daily(auto_reset_broadcast_callback, time=dt_time(6, 0, tzinfo=iraq_tz))  # الساعة 6 صباحاً
+        logger.info("JobQueue: التقرير اليومي (4 ص) والتصفير التلقائي (6 ص) مفعّلين.")
+    else:
+        logger.warning("JobQueue غير متوفر. ثبّت: pip install \"python-telegram-bot[job-queue]\" لتفعيل التقرير والتصفير التلقائي.")
 
     # 8. ConversationHandler لعدد المحلات
     places_conv_handler = ConversationHandler(
