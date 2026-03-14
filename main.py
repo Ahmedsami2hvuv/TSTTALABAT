@@ -18,7 +18,7 @@ from telegram.ext import (
 # ✅ استيراد الدوال الخاصة بالمناطق من الملف الجديد
 from features.delivery_zones import (
     list_zones, get_delivery_price, is_zone_known, get_matching_zone_name,
-    get_closest_zone_name, get_closest_zone_names
+    get_closest_zone_name, get_closest_zone_names, get_all_close_zones_from_words
 )
 # ✅ تصنيف المنتجات (سمك، خضروات، لحم) لبناء فواتير منفصلة
 from features.product_categories import is_fish, is_vegetable_fruit, is_meat
@@ -549,18 +549,20 @@ async def process_order(update, context, message, edited=False):
                     break
             title = region_candidate if region_candidate else (lines[0] if lines else "عنوان غير معروف")
 
-        # المنتجات: نستبعد سطر الرقم وسطر المنطقة (المطابق أو القريب مثل حوجة)
+        # المنتجات: نستبعد سطر الرقم وأي سطر فيه كلمة قريبة من اسم منطقة
         products = []
-        for i, line in enumerate(lines):
+        for line in lines:
             if not line.strip():
-                continue
-            if line.strip() == title:
                 continue
             if phone_number != "مطلوب" and _extract_phone_from_text(line) == phone_number:
                 continue
             if zone and zone in line:
                 continue
             if re.sub(r"[\d\s\.]", "", line) == "" and len(line.strip()) > 5:
+                continue
+            # استبعد السطر إذا أي كلمة فيه قريبة من منطقة (سطر المنطقة)
+            line_words = re.split(r"[\s]+", line.strip())
+            if any(get_closest_zone_names(w, n=1, cutoff=0.4) for w in line_words if len(w) >= 2 and not w.isdigit()):
                 continue
             products.append(line.strip())
 
@@ -626,13 +628,14 @@ async def process_order(update, context, message, edited=False):
         
     context.application.create_task(save_data_in_background(context))
     
-    # ✅ البوت دوّر بكلمات الرسالة — لو ماكو مطابقة، نطلع أكثر من منطقة قريبة وأزرار (اختر أو لا اكتب بنفسك)
+    # ✅ البوت يقارن كل كلمة في الرسالة بقاعدة المناطق ويطلع كل المناطق القريبة من أي كلمة
     if is_new_order and not is_zone_known(title):
-        suggested_zones = get_closest_zone_names(title, n=6, cutoff=0.4)
+        suggested_zones = get_all_close_zones_from_words(raw_text, per_word_n=4, cutoff=0.4)
         ud = context.user_data.setdefault(user_id, {})
         ud["pending_region_order_id"] = order_id
         if suggested_zones:
-            ud["pending_region_suggested_zones"] = suggested_zones
+            ud["pending_region_suggested_zones"] = suggested_zones[:10]  # حد أقصى 10 أزرار مناطق
+            suggested_zones = ud["pending_region_suggested_zones"]
             # أزرار: كل منطقة قريبة بزر، وآخر زر "لا" عشان يكتب اسم المنطقه
             kb_rows = []
             for i, zone_name in enumerate(suggested_zones):
@@ -640,7 +643,7 @@ async def process_order(update, context, message, edited=False):
             kb_rows.append([InlineKeyboardButton("لا — اكتب اسم المنطقه", callback_data=f"reject_region_{order_id}")])
             kb = InlineKeyboardMarkup(kb_rows)
             await message.reply_text(
-                f"ما عرفت المنطة اللي تقصدها (*{title}*).\n\nليك أكثر من منطقة مطابقة — اختار من الأزرار:",
+                "قارنت كل كلمات رسالتك بقاعدة المناطق.\n\nليك المناطق اللي ممكن تكون قريبة — اختار من الأزرار:",
                 parse_mode="Markdown",
                 reply_markup=kb
             )
