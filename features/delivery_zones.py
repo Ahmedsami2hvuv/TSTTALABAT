@@ -106,13 +106,12 @@ def get_all_close_zones_from_words(full_text, per_word_n=4, cutoff=0.4):
     return [zone for zone, _ in pairs]
 
 
-def get_close_zones_with_words(full_text, per_word_n=2, cutoff=0.7, max_zones_per_word=1):
+def get_close_zones_with_words(full_text, per_word_n=2, cutoff=0.6, max_zones_per_word=1):
     """
     يقارن أسطر الرسالة (كلمة وحدة أو كلمتين) بقاعدة المناطق، ويرجع (منطقة، نص السطر).
     خطوة أولى: نتجاهل أي سطر فيه أرقام.
     خطوة ثانية: نتجاهل الأسطر اللي فيها 3 كلمات فأكثر.
-    الباقي: أسطر فيها كلمة وحدة أو كلمتين — نطابقها بقوة مع قاعدة المناطق (حرف أو حرفين غلط يطلع اقتراح قريب).
-    مثلاً: كوت تويني → كوت ثويني، جمدان/جمدات/جمنت → حمدان.
+    الباقي: نطابق مع قاعدة المناطق (cutoff 0.6 عشان كوت صحي→كوت الصلحي، بي عسكري→حي العسكري).
     """
     if not full_text or not str(full_text).strip():
         return []
