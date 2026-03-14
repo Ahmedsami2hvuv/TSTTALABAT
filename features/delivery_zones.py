@@ -106,54 +106,56 @@ def get_all_close_zones_from_words(full_text, per_word_n=4, cutoff=0.4):
     return [zone for zone, _ in pairs]
 
 
-def get_close_zones_with_words(full_text, per_word_n=4, cutoff=0.4, max_zones_per_word=1):
+def get_close_zones_with_words(full_text, per_word_n=2, cutoff=0.7, max_zones_per_word=1):
     """
-    يقارن كل كلمة في الرسالة بقاعدة المناطق، ويرجع قائمة (منطقة، كلمة).
-    يقترح فقط من الأسطر اللي فيها كلمة وحدة؛ الأسطر اللي فيها أرقام تتجاهل (عشان ما يطابق "بياح 2" أو "نص كيلو").
+    يقارن أسطر الرسالة (كلمة وحدة أو كلمتين) بقاعدة المناطق، ويرجع (منطقة، نص السطر).
+    خطوة أولى: نتجاهل أي سطر فيه أرقام.
+    خطوة ثانية: نتجاهل الأسطر اللي فيها 3 كلمات فأكثر.
+    الباقي: أسطر فيها كلمة وحدة أو كلمتين — نطابقها بقوة مع قاعدة المناطق (حرف أو حرفين غلط يطلع اقتراح قريب).
+    مثلاً: كوت تويني → كوت ثويني، جمدان/جمدات/جمنت → حمدان.
     """
     if not full_text or not str(full_text).strip():
         return []
     try:
-        # نأخذ فقط كلمات من أسطر فيها كلمة وحدة، ونتجاهل أي سطر فيه أرقام
-        candidate_words = []
+        # خطوة أولى: نتجاهل الأسطر اللي فيها أرقام
+        # خطوة ثانية: نتجاهل الأسطر اللي فيها 3 كلمات أو أكثر — يبقى عندنا أسطر فيها كلمة وحدة أو كلمتين
+        candidate_phrases = []
         for line in str(full_text).strip().split("\n"):
             line = (line or "").strip()
             if not line:
                 continue
-            tokens = line.split()
-            if len(tokens) != 1:
-                continue
-            w = tokens[0]
-            if len(w) < 2:
-                continue
-            if w.isdigit() or w.startswith("+") or all(c in "0123456789+" for c in w):
-                continue
             if re.search(r"\d", line):
                 continue
-            candidate_words.append(w)
-        words = candidate_words
-        seen_zones = set()
-        result = []  # [(zone, word), ...]
-        for w in words:
-            w = (w or "").strip()
-            if len(w) < 2:
+            tokens = line.split()
+            if len(tokens) >= 3:
                 continue
-            word_cutoff = 0.35 if 3 <= len(w) <= 5 else cutoff
-            zones = get_closest_zone_names(w, n=per_word_n, cutoff=word_cutoff)
-            added_for_word = 0
+            if len(tokens) == 0:
+                continue
+            phrase = " ".join(tokens)
+            if len(phrase) < 2:
+                continue
+            if phrase.startswith("+") or all(c in "0123456789+ " for c in phrase):
+                continue
+            candidate_phrases.append(phrase)
+        seen_zones = set()
+        result = []  # [(zone, phrase), ...]
+        # مطابقة بقوة: cutoff عالي عشان نجيبلهم الاقرب (حرف/حرفين غلط)
+        strong_cutoff = cutoff
+        for phrase in candidate_phrases:
+            zones = get_closest_zone_names(phrase, n=per_word_n, cutoff=strong_cutoff)
+            added = 0
             for z in zones:
-                if z and z not in seen_zones and added_for_word < max_zones_per_word:
+                if z and z not in seen_zones and added < max_zones_per_word:
                     seen_zones.add(z)
-                    result.append((z, w))
-                    added_for_word += 1
-        # ضمان: إذا كلمة "حوجة" بالرسالة (من سطر وحدة كلمة) وما طابقتها عوجة/عوجه، نضيفها يدوياً
-        if "حوجة" in words and not any(w == "حوجة" for _, w in result):
+                    result.append((z, phrase))
+                    added += 1
+        # ضمان حوجة → عوجة (لو المستخدم كتب سطر "حوجة" وما طابقت)
+        if "حوجة" in candidate_phrases and not any(w == "حوجة" for _, w in result):
             zones_map = load_delivery_zones()
             for alias in ("عوجه", "عوجة", "العوجة", "العوجه"):
                 if alias in zones_map and alias not in seen_zones:
                     result.append((alias, "حوجة"))
                     break
-        # حوجة تطلع في أول القائمة
         for i, (z, w) in enumerate(result):
             if w == "حوجة":
                 result.insert(0, result.pop(i))
