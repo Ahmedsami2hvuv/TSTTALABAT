@@ -82,23 +82,36 @@ def get_all_close_zones_from_words(full_text, per_word_n=4, cutoff=0.4):
     يقارن كل كلمة في النص بقاعدة المناطق، ويرجع كل المناطق اللي ممكن تكون قريبة من أي كلمة.
     يرجع قائمة بدون تكرار. لو صار خطأ يرجع قائمة فاضية.
     """
+    pairs = get_close_zones_with_words(full_text, per_word_n=per_word_n, cutoff=cutoff)
+    return [zone for zone, _ in pairs]
+
+
+def get_close_zones_with_words(full_text, per_word_n=4, cutoff=0.4):
+    """
+    يقارن كل كلمة في الرسالة بقاعدة المناطق، ويرجع قائمة (منطقة، كلمة)
+    عشان نعرض للمستخدم: "عوجة قريبة لحوجة"، "ابطاح قريبة لبياح".
+    كل منطقة تطلع مرة وحدة مع الكلمة اللي طابقتها.
+    """
     if not full_text or not str(full_text).strip():
         return []
     try:
         words = re.split(r"[\s\n]+", str(full_text).strip())
         seen_zones = set()
-        result = []
+        result = []  # [(zone, word), ...]
         for w in words:
             w = (w or "").strip()
             if len(w) < 2:
                 continue
             if w.isdigit():
                 continue
-            zones = get_closest_zone_names(w, n=per_word_n, cutoff=cutoff)
+            if w.startswith("+") or all(c in "0123456789+" for c in w):
+                continue
+            word_cutoff = 0.35 if 3 <= len(w) <= 5 else cutoff
+            zones = get_closest_zone_names(w, n=per_word_n, cutoff=word_cutoff)
             for z in zones:
                 if z and z not in seen_zones:
                     seen_zones.add(z)
-                    result.append(z)
+                    result.append((z, w))
         return result
     except Exception:
         return []
