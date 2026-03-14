@@ -17,7 +17,7 @@ from telegram.ext import (
 
 # ✅ استيراد الدوال الخاصة بالمناطق من الملف الجديد
 from features.delivery_zones import (
-    list_zones, get_delivery_price, is_zone_known, get_matching_zone_name
+    list_zones, get_delivery_price, is_zone_known, get_matching_zone_name, get_closest_zone_name
 )
 # ✅ تصنيف المنتجات (سمك، خضروات، لحم) لبناء فواتير منفصلة
 from features.product_categories import is_fish, is_vegetable_fruit, is_meat
@@ -341,6 +341,41 @@ async def edited_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.edited_message.reply_text("طك بطك ماكدر اعدل تريد سوي طلب جديد.")
 
 
+async def handle_region_suggestion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """معالجة زرّي نعم تمام / لا لاقتراح المنطقة (هل تقصد فلان؟)."""
+    query = update.callback_query
+    await query.answer()
+    user_id = str(query.from_user.id)
+    data = query.data
+    orders = context.application.bot_data.get("orders", {})
+    ud = context.user_data.setdefault(user_id, {})
+
+    if data.startswith("confirm_region_"):
+        order_id = data.replace("confirm_region_", "")
+        if order_id not in orders:
+            await query.edit_message_text("الطلبية ما عاد موجودة.")
+            ud.pop("pending_region_order_id", None)
+            ud.pop("pending_region_suggested_zone", None)
+            return
+        suggested = ud.get("pending_region_suggested_zone")
+        if suggested:
+            orders[order_id]["title"] = suggested
+            ud.pop("pending_region_order_id", None)
+            ud.pop("pending_region_suggested_zone", None)
+            context.application.create_task(save_data_in_background(context))
+            await query.edit_message_text(f"تم اختيار المنطقة: *{suggested}*", parse_mode="Markdown")
+            if orders[order_id].get("phone_number") == "مطلوب":
+                ud["pending_phone_order_id"] = order_id
+            await show_buttons(query.message.chat_id, context, user_id, order_id)
+        else:
+            await query.edit_message_text("طيب اكتبلي اسم المنطقه.")
+    elif data.startswith("reject_region_"):
+        order_id = data.replace("reject_region_", "")
+        ud.pop("pending_region_suggested_zone", None)
+        await query.edit_message_text("طيب اكتبلي اسم المنطقه.")
+        # pending_region_order_id يبقى عشان الرسالة الجاية ناخذها كاسم منطقة
+
+
 def _extract_phone_from_text(text):
     """
     يدور بين أسطر/كلمات الرسالة ويطلع أول رقم زبون (حتى لو +964 776 403 1859)
@@ -429,10 +464,12 @@ async def process_order(update, context, message, edited=False):
     raw_text = message.text.strip()
     lines = [line.strip() for line in raw_text.split('\n') if line.strip()]
 
-    # ✅ إذا كان البوت ينتظر اسم المنطقة الصحيح (المنطقة السابقة غير مسجلة)
+    # ✅ إذا كان البوت ينتظر اسم المنطقة (بعد زر "لا" أو أول مرة)
     ud = context.user_data.setdefault(user_id, {})
     pending_region_oid = ud.get("pending_region_order_id")
     if not edited and pending_region_oid and pending_region_oid in orders:
+        # لو في اقتراح مخزن (زر "لا") ما نستخدمه؛ ننتظر النص الجديد
+        ud.pop("pending_region_suggested_zone", None)
         new_region = raw_text.strip()
         if new_region and len(new_region) < 200:  # رسالة معقولة كاسم منطقة
             orders[pending_region_oid]["title"] = new_region
@@ -491,8 +528,8 @@ async def process_order(update, context, message, edited=False):
             # أول سطر نستخدمه عنوان لو ما طابقت منطقة، فما نعدّه منتج
             if not zone and i == 0:
                 continue
-            # سطر فيه الرقم → ما نعدّه منتج
-            if phone_number != "مطلوب" and phone_number in line.replace(" ", "").replace("-", ""):
+            # سطر فيه رقم الزبون (حتى لو +964 776 403 1859) → ما نعدّه منتج، نمسحه من الأزرار
+            if phone_number != "مطلوب" and _extract_phone_from_text(line) == phone_number:
                 continue
             if zone and zone in line:
                 continue
@@ -563,13 +600,27 @@ async def process_order(update, context, message, edited=False):
         
     context.application.create_task(save_data_in_background(context))
     
-    # ✅ البوت دوّر بكلمات الرسالة — لو ماكو كلمة مطابقة مع قاعدة المناطق، نطلب اسم المنطقة قبل ما نطلع الأزرار
+    # ✅ البوت دوّر بكلمات الرسالة — لو ماكو مطابقة، نشوف يا كلمة أقرب (تصحيح أخطاء مثل العوجخ→العوجة)
     if is_new_order and not is_zone_known(title):
-        context.user_data.setdefault(user_id, {})["pending_region_order_id"] = order_id
-        await message.reply_text(
-            f"ما طابقت أي كلمة من رسالتك مع قاعدة المناطق.\n\nأرسل اسم المنطقة الصحيح (اكتب *مناطق* لرؤية القائمة) — بعدها راح تطلع أزرار التسعير.",
-            parse_mode="Markdown"
-        )
+        suggested_zone = get_closest_zone_name(title, cutoff=0.45)
+        ud = context.user_data.setdefault(user_id, {})
+        ud["pending_region_order_id"] = order_id
+        if suggested_zone:
+            ud["pending_region_suggested_zone"] = suggested_zone
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("نعم تمام", callback_data=f"confirm_region_{order_id}")],
+                [InlineKeyboardButton("لا", callback_data=f"reject_region_{order_id}")]
+            ])
+            await message.reply_text(
+                f"الكلمة اللي كتبتها (*{title}*) — هل تقصد منطقة *{suggested_zone}*؟",
+                parse_mode="Markdown",
+                reply_markup=kb
+            )
+        else:
+            await message.reply_text(
+                f"ما طابقت أي كلمة من رسالتك مع قاعدة المناطق.\n\nأرسل اسم المنطقة الصحيح (اكتب *مناطق* لرؤية القائمة) — بعدها راح تطلع أزرار التسعير.",
+                parse_mode="Markdown"
+            )
         return
 
     # ✅ تعديل رسالة الاستلام لتضمين رقم الهاتف بالشكل الجديد
@@ -1986,6 +2037,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تصفير|صفر|تص|صف)$"), reset_all))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^صفر$"), reset_supplier_report))
     app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
+    app.add_handler(CallbackQueryHandler(handle_region_suggestion_callback, pattern=r"^(confirm_region_|reject_region_)"))
 
     # 2. أوامر التقارير (المدير والمجهز)
     app.add_handler(CommandHandler("report", show_report))
