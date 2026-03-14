@@ -17,7 +17,8 @@ from telegram.ext import (
 
 # ✅ استيراد الدوال الخاصة بالمناطق من الملف الجديد
 from features.delivery_zones import (
-    list_zones, get_delivery_price, is_zone_known, get_matching_zone_name, get_closest_zone_name
+    list_zones, get_delivery_price, is_zone_known, get_matching_zone_name,
+    get_closest_zone_name, get_closest_zone_names
 )
 # ✅ تصنيف المنتجات (سمك، خضروات، لحم) لبناء فواتير منفصلة
 from features.product_categories import is_fish, is_vegetable_fruit, is_meat
@@ -342,7 +343,7 @@ async def edited_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_region_suggestion_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """معالجة زرّي نعم تمام / لا لاقتراح المنطقة (هل تقصد فلان؟)."""
+    """معالجة أزرار اختيار المنطقة (كل منطقة قريبة بزر، أو لا اكتب بنفسك)."""
     query = update.callback_query
     await query.answer()
     user_id = str(query.from_user.id)
@@ -350,28 +351,40 @@ async def handle_region_suggestion_callback(update: Update, context: ContextType
     orders = context.application.bot_data.get("orders", {})
     ud = context.user_data.setdefault(user_id, {})
 
-    if data.startswith("confirm_region_"):
-        order_id = data.replace("confirm_region_", "")
+    # اختار منطقة من الأزرار (pick_zone_ORDERID_0، pick_zone_ORDERID_1، ...)
+    if data.startswith("pick_zone_"):
+        rest = data.replace("pick_zone_", "", 1)
+        parts = rest.rsplit("_", 1)
+        if len(parts) != 2:
+            return
+        order_id, idx_str = parts
+        try:
+            idx = int(idx_str)
+        except ValueError:
+            return
         if order_id not in orders:
             await query.edit_message_text("الطلبية ما عاد موجودة.")
             ud.pop("pending_region_order_id", None)
-            ud.pop("pending_region_suggested_zone", None)
+            ud.pop("pending_region_suggested_zones", None)
             return
-        suggested = ud.get("pending_region_suggested_zone")
-        if suggested:
-            orders[order_id]["title"] = suggested
-            ud.pop("pending_region_order_id", None)
-            ud.pop("pending_region_suggested_zone", None)
-            context.application.create_task(save_data_in_background(context))
-            await query.edit_message_text(f"تم اختيار المنطقة: *{suggested}*", parse_mode="Markdown")
-            if orders[order_id].get("phone_number") == "مطلوب":
-                ud["pending_phone_order_id"] = order_id
-            await show_buttons(query.message.chat_id, context, user_id, order_id)
-        else:
-            await query.edit_message_text("طيب اكتبلي اسم المنطقه.")
-    elif data.startswith("reject_region_"):
+        zones_list = ud.get("pending_region_suggested_zones") or []
+        if idx < 0 or idx >= len(zones_list):
+            return
+        chosen_zone = zones_list[idx]
+        orders[order_id]["title"] = chosen_zone
+        ud.pop("pending_region_order_id", None)
+        ud.pop("pending_region_suggested_zones", None)
+        context.application.create_task(save_data_in_background(context))
+        await query.edit_message_text(f"تم اختيار المنطقة: *{chosen_zone}*", parse_mode="Markdown")
+        if orders[order_id].get("phone_number") == "مطلوب":
+            ud["pending_phone_order_id"] = order_id
+        await show_buttons(query.message.chat_id, context, user_id, order_id)
+        return
+
+    # زر "لا — اكتب اسم المنطقه"
+    if data.startswith("reject_region_"):
         order_id = data.replace("reject_region_", "")
-        ud.pop("pending_region_suggested_zone", None)
+        ud.pop("pending_region_suggested_zones", None)
         await query.edit_message_text("طيب اكتبلي اسم المنطقه.")
         # pending_region_order_id يبقى عشان الرسالة الجاية ناخذها كاسم منطقة
 
@@ -468,8 +481,8 @@ async def process_order(update, context, message, edited=False):
     ud = context.user_data.setdefault(user_id, {})
     pending_region_oid = ud.get("pending_region_order_id")
     if not edited and pending_region_oid and pending_region_oid in orders:
-        # لو في اقتراح مخزن (زر "لا") ما نستخدمه؛ ننتظر النص الجديد
         ud.pop("pending_region_suggested_zone", None)
+        ud.pop("pending_region_suggested_zones", None)
         new_region = raw_text.strip()
         if new_region and len(new_region) < 200:  # رسالة معقولة كاسم منطقة
             orders[pending_region_oid]["title"] = new_region
@@ -600,19 +613,21 @@ async def process_order(update, context, message, edited=False):
         
     context.application.create_task(save_data_in_background(context))
     
-    # ✅ البوت دوّر بكلمات الرسالة — لو ماكو مطابقة، نشوف يا كلمة أقرب (تصحيح أخطاء مثل العوجخ→العوجة)
+    # ✅ البوت دوّر بكلمات الرسالة — لو ماكو مطابقة، نطلع أكثر من منطقة قريبة وأزرار (اختر أو لا اكتب بنفسك)
     if is_new_order and not is_zone_known(title):
-        suggested_zone = get_closest_zone_name(title, cutoff=0.45)
+        suggested_zones = get_closest_zone_names(title, n=6, cutoff=0.4)
         ud = context.user_data.setdefault(user_id, {})
         ud["pending_region_order_id"] = order_id
-        if suggested_zone:
-            ud["pending_region_suggested_zone"] = suggested_zone
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("نعم تمام", callback_data=f"confirm_region_{order_id}")],
-                [InlineKeyboardButton("لا", callback_data=f"reject_region_{order_id}")]
-            ])
+        if suggested_zones:
+            ud["pending_region_suggested_zones"] = suggested_zones
+            # أزرار: كل منطقة قريبة بزر، وآخر زر "لا" عشان يكتب اسم المنطقه
+            kb_rows = []
+            for i, zone_name in enumerate(suggested_zones):
+                kb_rows.append([InlineKeyboardButton(zone_name, callback_data=f"pick_zone_{order_id}_{i}")])
+            kb_rows.append([InlineKeyboardButton("لا — اكتب اسم المنطقه", callback_data=f"reject_region_{order_id}")])
+            kb = InlineKeyboardMarkup(kb_rows)
             await message.reply_text(
-                f"الكلمة اللي كتبتها (*{title}*) — هل تقصد منطقة *{suggested_zone}*؟",
+                f"ما عرفت المنطة اللي تقصدها (*{title}*).\n\nليك أكثر من منطقة مطابقة — اختار من الأزرار:",
                 parse_mode="Markdown",
                 reply_markup=kb
             )
@@ -2037,7 +2052,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(تصفير|صفر|تص|صف)$"), reset_all))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^صفر$"), reset_supplier_report))
     app.add_handler(CallbackQueryHandler(confirm_reset, pattern="^(confirm_reset|cancel_reset)$"))
-    app.add_handler(CallbackQueryHandler(handle_region_suggestion_callback, pattern=r"^(confirm_region_|reject_region_)"))
+    app.add_handler(CallbackQueryHandler(handle_region_suggestion_callback, pattern=r"^(pick_zone_|reject_region_)"))
 
     # 2. أوامر التقارير (المدير والمجهز)
     app.add_handler(CommandHandler("report", show_report))
