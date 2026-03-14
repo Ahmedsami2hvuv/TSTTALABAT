@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """إدارة مناطق التوصيل وأسعارها."""
 import os
+import re
 import json
 import difflib
 
@@ -61,17 +62,46 @@ def get_closest_zone_name(text, cutoff=0.45):
 def get_closest_zone_names(text, n=6, cutoff=0.4):
     """
     يرجع قائمة بأسماء المناطق الأقرب للكلمة (أكثر من كلمة).
-    مثلاً: بياح → [الابطاح، عوجة، ...] عشان المستخدم يختار من الأزرار.
     n: أقصى عدد مناطق، cutoff: أقل نسبة تشابه.
     """
     if not text or not str(text).strip():
         return []
-    delivery_zones = load_delivery_zones()
-    zone_names = list(delivery_zones.keys())
+    try:
+        delivery_zones = load_delivery_zones()
+        zone_names = [str(k) for k in delivery_zones.keys() if k]
+    except Exception:
+        return []
     if not zone_names:
         return []
-    text_clean = text.strip()
+    text_clean = str(text).strip()
     return difflib.get_close_matches(text_clean, zone_names, n=n, cutoff=cutoff)
+
+
+def get_all_close_zones_from_words(full_text, per_word_n=4, cutoff=0.4):
+    """
+    يقارن كل كلمة في النص بقاعدة المناطق، ويرجع كل المناطق اللي ممكن تكون قريبة من أي كلمة.
+    يرجع قائمة بدون تكرار. لو صار خطأ يرجع قائمة فاضية.
+    """
+    if not full_text or not str(full_text).strip():
+        return []
+    try:
+        words = re.split(r"[\s\n]+", str(full_text).strip())
+        seen_zones = set()
+        result = []
+        for w in words:
+            w = (w or "").strip()
+            if len(w) < 2:
+                continue
+            if w.isdigit():
+                continue
+            zones = get_closest_zone_names(w, n=per_word_n, cutoff=cutoff)
+            for z in zones:
+                if z and z not in seen_zones:
+                    seen_zones.add(z)
+                    result.append(z)
+        return result
+    except Exception:
+        return []
 
 
 async def list_zones(update, context):
