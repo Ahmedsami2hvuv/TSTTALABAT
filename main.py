@@ -19,7 +19,7 @@ from telegram.ext import (
 from features.delivery_zones import (
     list_zones, get_delivery_price, is_zone_known, get_matching_zone_name,
     get_closest_zone_name, get_closest_zone_names, get_all_close_zones_from_words,
-    get_close_zones_with_words
+    get_close_zones_with_words, match_text_to_suggested_zones
 )
 # ✅ تصنيف المنتجات (سمك، خضروات، لحم) لبناء فواتير منفصلة
 from features.product_categories import is_fish, is_vegetable_fruit, is_meat
@@ -486,27 +486,50 @@ async def process_order(update, context, message, edited=False):
     raw_text = message.text.strip()
     lines = [line.strip() for line in raw_text.split('\n') if line.strip()]
 
-    # ✅ إذا كان البوت ينتظر اسم المنطقة (بعد زر "لا" أو أول مرة)
+    # ✅ إذا كان البوت ينتظر اسم المنطقة — المستخدم يقدر يضغط زر أو يكتب اسم المنطقة مباشرة (بدون ما يضغط "لا")
     ud = context.user_data.setdefault(user_id, {})
     pending_region_oid = ud.get("pending_region_order_id")
     if not edited and pending_region_oid and pending_region_oid in orders:
-        ud.pop("pending_region_suggested_zone", None)
-        ud.pop("pending_region_suggested_zones", None)
-        ud.pop("pending_region_suggested_pairs", None)
         new_region = raw_text.strip()
         if new_region and len(new_region) < 200:  # رسالة معقولة كاسم منطقة
-            orders[pending_region_oid]["title"] = new_region
-            context.user_data[user_id].pop("pending_region_order_id", None)
-            context.application.create_task(save_data_in_background(context))
+            suggested_pairs = ud.get("pending_region_suggested_pairs") or []
+            suggested_zone_names = [z for z, _ in suggested_pairs]
+            # إذا الكتابة مطابقة جداً لأحد المناطق المقترحة → نعاملها كانه اختارها ونسحب الكلمة من المنتجات
+            match = match_text_to_suggested_zones(new_region, suggested_zone_names, cutoff=0.8)
+            if match is not None:
+                idx, chosen_zone = match
+                word_to_remove = suggested_pairs[idx][1] if idx < len(suggested_pairs) else None
+                orders[pending_region_oid]["title"] = chosen_zone
+                if word_to_remove and "products" in orders[pending_region_oid]:
+                    products = orders[pending_region_oid]["products"]
+                    orders[pending_region_oid]["products"] = [p for p in products if p != word_to_remove]
+                ud.pop("pending_region_order_id", None)
+                ud.pop("pending_region_suggested_zones", None)
+                ud.pop("pending_region_suggested_pairs", None)
+                ud.pop("pending_region_suggested_zone", None)
+                context.application.create_task(save_data_in_background(context))
+                await message.reply_text(f"تم اختيار المنطقة: *{chosen_zone}*", parse_mode="Markdown")
+                if orders[pending_region_oid].get("phone_number") == "مطلوب":
+                    ud["pending_phone_order_id"] = pending_region_oid
+                await show_buttons(message.chat_id, context, user_id, pending_region_oid)
+                return
+            # إذا المنطقة معروفة (من القاعدة) لكن ما طابقت المقترحات — نحدّث العنوان فقط
             if is_zone_known(new_region):
+                orders[pending_region_oid]["title"] = new_region
+                ud.pop("pending_region_order_id", None)
+                ud.pop("pending_region_suggested_zones", None)
+                ud.pop("pending_region_suggested_pairs", None)
+                ud.pop("pending_region_suggested_zone", None)
+                context.application.create_task(save_data_in_background(context))
                 await message.reply_text(f"تم تحديث المنطقة إلى: *{new_region}*", parse_mode="Markdown")
                 if orders[pending_region_oid].get("phone_number") == "مطلوب":
                     ud["pending_phone_order_id"] = pending_region_oid
                 await show_buttons(message.chat_id, context, user_id, pending_region_oid)
-            else:
-                await message.reply_text(f"المنطقة *{new_region}* غير مسجلة أيضاً. أرسل اسم المنطقة الصحيح (اكتب *مناطق* لرؤية القائمة).", parse_mode="Markdown")
-                ud["pending_region_order_id"] = pending_region_oid
-            return
+                return
+            # منطقة غير مسجلة
+            await message.reply_text(f"المنطقة *{new_region}* غير مسجلة أيضاً. أرسل اسم المنطقة الصحيح (اكتب *مناطق* لرؤية القائمة).", parse_mode="Markdown")
+            ud["pending_region_order_id"] = pending_region_oid
+        return
 
     # ✅ إذا الطلبية السابقة كانت من الموقع ورقم الزبون "مطلوب"، والرسالة الحالية رقم فقط → نحدّث الرقم
     if not edited and len(lines) == 1:
