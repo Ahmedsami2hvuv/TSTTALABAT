@@ -471,7 +471,7 @@ def _parse_site_order_format(raw_text):
     if not products:
         return None
 
-    return {"title": title, "phone_number": phone_number, "products": products}
+    return {"title": title, "phone_number": phone_number, "products": products, "address": address}
 
 
 async def process_order(update, context, message, edited=False):
@@ -549,10 +549,14 @@ async def process_order(update, context, message, edited=False):
 
     # ✅ محاولة قراءة صيغة طلب الموقع (اسم الزبون، العنوان، معلومات الطلب، الاسم/الكمية/السعر)
     site_parsed = _parse_site_order_format(message.text)
+    zone_search_text = raw_text  # للنص العادي نبحث في كل الرسالة
     if site_parsed:
         title = site_parsed["title"]
         phone_number = site_parsed["phone_number"]
         products = site_parsed["products"]
+        # للطلب من الموقع نبحث عن المناطق القريبة فقط في سطر العنوان
+        if site_parsed.get("address"):
+            zone_search_text = site_parsed["address"]
     else:
         # الصيغة العادية: الرقم من أي سطر، المنطقة من أي سطر (مطابقة مع قاعدة المناطق)، الباقي منتجات
         if len(lines) < 1:
@@ -670,7 +674,8 @@ async def process_order(update, context, message, edited=False):
         ud = context.user_data.setdefault(user_id, {})
         ud["pending_region_order_id"] = order_id
         try:
-            suggested_pairs = get_close_zones_with_words(raw_text, per_word_n=4, cutoff=0.4)
+            # طلب الموقع: نبحث فقط في سطر العنوان؛ غيره: نبحث في كل الرسالة
+            suggested_pairs = get_close_zones_with_words(zone_search_text, per_word_n=4, cutoff=0.7)
         except Exception as e:
             logger.warning(f"get_close_zones_with_words failed: {e}", exc_info=True)
             suggested_pairs = []
