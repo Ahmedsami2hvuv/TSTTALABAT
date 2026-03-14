@@ -645,7 +645,8 @@ async def process_order(update, context, message, edited=False):
             logger.warning(f"get_close_zones_with_words failed: {e}", exc_info=True)
             suggested_pairs = []
         if suggested_pairs:
-            suggested_pairs = suggested_pairs[:10]
+            # عرض حتى 15 اقتراح عشان كل كلمة بالرسالة اللي لها منطقة قريبة تطلع (ما نقصي كلمات مثل حوجة)
+            suggested_pairs = suggested_pairs[:15]
             ud["pending_region_suggested_zones"] = [zone for zone, _ in suggested_pairs]
             lines = [
                 "ما عيّنت المنطقة، عندك مناطق قريبة بقاعدة البيانات — اختار الصح أو دوس لا واكتب اسم المنطقة",
