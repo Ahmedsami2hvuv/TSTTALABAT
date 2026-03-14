@@ -18,7 +18,8 @@ from telegram.ext import (
 # ✅ استيراد الدوال الخاصة بالمناطق من الملف الجديد
 from features.delivery_zones import (
     list_zones, get_delivery_price, is_zone_known, get_matching_zone_name,
-    get_closest_zone_name, get_closest_zone_names, get_all_close_zones_from_words
+    get_closest_zone_name, get_closest_zone_names, get_all_close_zones_from_words,
+    get_close_zones_with_words
 )
 # ✅ تصنيف المنتجات (سمك، خضروات، لحم) لبناء فواتير منفصلة
 from features.product_categories import is_fish, is_vegetable_fruit, is_meat
@@ -634,31 +635,36 @@ async def process_order(update, context, message, edited=False):
         
     context.application.create_task(save_data_in_background(context))
     
-    # ✅ البوت يقارن كل كلمة بقاعدة المناطق ويطلع المناطق القريبة (مع معالجة خطأ عشان ما يسكت)
+    # ✅ البوت يقرا كل كلمات الرسالة ويطابقها بقاعدة المناطق ويطلع: منطقة قريبة لـ كلمة
     if is_new_order and not is_zone_known(title):
         ud = context.user_data.setdefault(user_id, {})
         ud["pending_region_order_id"] = order_id
         try:
-            suggested_zones = get_all_close_zones_from_words(raw_text, per_word_n=4, cutoff=0.4)
+            suggested_pairs = get_close_zones_with_words(raw_text, per_word_n=4, cutoff=0.4)
         except Exception as e:
-            logger.warning(f"get_all_close_zones_from_words failed: {e}", exc_info=True)
-            suggested_zones = []
-        if suggested_zones:
-            ud["pending_region_suggested_zones"] = suggested_zones[:10]
-            suggested_zones = ud["pending_region_suggested_zones"]
+            logger.warning(f"get_close_zones_with_words failed: {e}", exc_info=True)
+            suggested_pairs = []
+        if suggested_pairs:
+            suggested_pairs = suggested_pairs[:10]
+            ud["pending_region_suggested_zones"] = [zone for zone, _ in suggested_pairs]
+            lines = [
+                "ما عيّنت المنطقة، عندك مناطق قريبة بقاعدة البيانات — اختار الصح أو دوس لا واكتب اسم المنطقة",
+                "",
+            ]
+            for zone, word in suggested_pairs:
+                lines.append(f"• {zone} قريبة لـ {word}")
             kb_rows = []
-            for i, zone_name in enumerate(suggested_zones):
+            for i, (zone_name, _) in enumerate(suggested_pairs):
                 kb_rows.append([InlineKeyboardButton(zone_name, callback_data=f"pick_zone_{order_id}_{i}")])
             kb_rows.append([InlineKeyboardButton("لا — اكتب اسم المنطقه", callback_data=f"reject_region_{order_id}")])
             kb = InlineKeyboardMarkup(kb_rows)
             await message.reply_text(
-                "قارنت كل كلمات رسالتك بقاعدة المناطق.\n\nليك المناطق اللي ممكن تكون قريبة — اختار من الأزرار:",
-                parse_mode="Markdown",
+                "\n".join(lines),
                 reply_markup=kb
             )
         else:
             await message.reply_text(
-                f"ما طابقت أي كلمة من رسالتك مع قاعدة المناطق.\n\nأرسل اسم المنطقة الصحيح (اكتب *مناطق* لرؤية القائمة) — بعدها راح تطلع أزرار التسعير.",
+                "ما طابقت أي كلمة من رسالتك مع قاعدة المناطق.\n\nأرسل اسم المنطقة الصحيح (اكتب *مناطق* لرؤية القائمة) — بعدها راح تطلع أزرار التسعير.",
                 parse_mode="Markdown"
             )
         return
