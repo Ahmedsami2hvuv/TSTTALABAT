@@ -86,12 +86,11 @@ def get_all_close_zones_from_words(full_text, per_word_n=4, cutoff=0.4):
     return [zone for zone, _ in pairs]
 
 
-def get_close_zones_with_words(full_text, per_word_n=4, cutoff=0.4, max_zones_per_word=2):
+def get_close_zones_with_words(full_text, per_word_n=4, cutoff=0.4, max_zones_per_word=1):
     """
     يقارن كل كلمة في الرسالة بقاعدة المناطق، ويرجع قائمة (منطقة، كلمة).
     عشان نعرض: "عوجة قريبة لحوجة"، "ابطاح قريبة لبياح".
-    max_zones_per_word: أقصى عدد مناطق لكل كلمة عشان ما تستأثر كلمة وحدة بكل المقترحات
-    (مثلاً بياح وسمتي يملون القائمة قبل ما توصل لـ حوجة → عوجة).
+    max_zones_per_word=1 عشان كل كلمة (حتى حوجة) تاخذ مكان في المقترحات وما تنجرّب الكلمات الأولى.
     """
     if not full_text or not str(full_text).strip():
         return []
@@ -115,6 +114,13 @@ def get_close_zones_with_words(full_text, per_word_n=4, cutoff=0.4, max_zones_pe
                     seen_zones.add(z)
                     result.append((z, w))
                     added_for_word += 1
+        # ضمان: إذا كلمة "حوجة" بالرسالة وما طابقتها عوجة/عوجه (غلط إملائي شائع)، نضيفها يدوياً
+        if "حوجة" in words and not any(w == "حوجة" for _, w in result):
+            zones_map = load_delivery_zones()
+            for alias in ("عوجه", "عوجة", "العوجة", "العوجه"):
+                if alias in zones_map and alias not in seen_zones:
+                    result.append((alias, "حوجة"))
+                    break
         return result
     except Exception:
         return []
