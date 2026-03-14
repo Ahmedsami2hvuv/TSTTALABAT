@@ -86,11 +86,12 @@ def get_all_close_zones_from_words(full_text, per_word_n=4, cutoff=0.4):
     return [zone for zone, _ in pairs]
 
 
-def get_close_zones_with_words(full_text, per_word_n=4, cutoff=0.4):
+def get_close_zones_with_words(full_text, per_word_n=4, cutoff=0.4, max_zones_per_word=2):
     """
-    يقارن كل كلمة في الرسالة بقاعدة المناطق، ويرجع قائمة (منطقة، كلمة)
-    عشان نعرض للمستخدم: "عوجة قريبة لحوجة"، "ابطاح قريبة لبياح".
-    كل منطقة تطلع مرة وحدة مع الكلمة اللي طابقتها.
+    يقارن كل كلمة في الرسالة بقاعدة المناطق، ويرجع قائمة (منطقة، كلمة).
+    عشان نعرض: "عوجة قريبة لحوجة"، "ابطاح قريبة لبياح".
+    max_zones_per_word: أقصى عدد مناطق لكل كلمة عشان ما تستأثر كلمة وحدة بكل المقترحات
+    (مثلاً بياح وسمتي يملون القائمة قبل ما توصل لـ حوجة → عوجة).
     """
     if not full_text or not str(full_text).strip():
         return []
@@ -108,10 +109,12 @@ def get_close_zones_with_words(full_text, per_word_n=4, cutoff=0.4):
                 continue
             word_cutoff = 0.35 if 3 <= len(w) <= 5 else cutoff
             zones = get_closest_zone_names(w, n=per_word_n, cutoff=word_cutoff)
+            added_for_word = 0
             for z in zones:
-                if z and z not in seen_zones:
+                if z and z not in seen_zones and added_for_word < max_zones_per_word:
                     seen_zones.add(z)
                     result.append((z, w))
+                    added_for_word += 1
         return result
     except Exception:
         return []
