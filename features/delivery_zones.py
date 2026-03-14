@@ -121,6 +121,11 @@ def get_close_zones_with_words(full_text, per_word_n=4, cutoff=0.4, max_zones_pe
                 if alias in zones_map and alias not in seen_zones:
                     result.append((alias, "حوجة"))
                     break
+        # حوجة تطلع في أول القائمة عشان البوت يعرض 10 فقط — لو حوجة آخر كلمة تُقصى
+        for i, (z, w) in enumerate(result):
+            if w == "حوجة":
+                result.insert(0, result.pop(i))
+                break
         return result
     except Exception:
         return []
