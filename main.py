@@ -681,7 +681,7 @@ async def process_order(update, context, message, edited=False):
             ud["pending_region_suggested_zones"] = [zone for zone, _ in suggested_pairs]
             ud["pending_region_suggested_pairs"] = suggested_pairs
             lines = [
-                "ما عيّنت المنطقة، عندك مناطق قريبة بقاعدة البيانات — اختار الصح أو دوس لا واكتب اسم المنطقة",
+                "المنطقه غير موجوده او مكتوبه غلط عندك منطقه قريبه من كتابتك اختارها او دزلي اسم المنطقه الي تقصهدها ",
                 "",
             ]
             for zone, word in suggested_pairs:
