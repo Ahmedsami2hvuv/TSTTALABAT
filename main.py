@@ -531,27 +531,40 @@ async def process_order(update, context, message, edited=False):
 
         phone_number = _extract_phone_from_text(raw_text)
         zone = get_matching_zone_name(raw_text)
-        title = zone if zone else (lines[0] if lines else "عنوان غير معروف")
+        # لو ماكو منطقة مطابقة بالضبط، ندور أي سطر ييشبه اسم منطقة (مثل حوجة → العوجة)
+        if zone:
+            title = zone
+        else:
+            region_candidate = None
+            for line in lines:
+                line_clean = line.strip()
+                if not line_clean:
+                    continue
+                if _extract_phone_from_text(line_clean) != "مطلوب":
+                    continue
+                if re.sub(r"[\d\s\.]", "", line_clean) == "" and len(line_clean) > 4:
+                    continue
+                if get_closest_zone_names(line_clean, n=1, cutoff=0.4):
+                    region_candidate = line_clean
+                    break
+            title = region_candidate if region_candidate else (lines[0] if lines else "عنوان غير معروف")
 
-        # المنتجات: كل سطر ما هو سطر الرقم ولا سطر المنطقة ولا أول سطر (عنوان)
+        # المنتجات: نستبعد سطر الرقم وسطر المنطقة (المطابق أو القريب مثل حوجة)
         products = []
         for i, line in enumerate(lines):
             if not line.strip():
                 continue
-            # أول سطر نستخدمه عنوان لو ما طابقت منطقة، فما نعدّه منتج
-            if not zone and i == 0:
+            if line.strip() == title:
                 continue
-            # سطر فيه رقم الزبون (حتى لو +964 776 403 1859) → ما نعدّه منتج، نمسحه من الأزرار
             if phone_number != "مطلوب" and _extract_phone_from_text(line) == phone_number:
                 continue
             if zone and zone in line:
                 continue
-            # سطر أرقام فقط (مثل سعر كلي) نتخطاه
             if re.sub(r"[\d\s\.]", "", line) == "" and len(line.strip()) > 5:
                 continue
             products.append(line.strip())
 
-        if not zone and lines:
+        if not zone and lines and not get_closest_zone_names(title or "", n=1, cutoff=0.4):
             title = lines[0]
 
     if not products:
