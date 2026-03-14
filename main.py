@@ -243,23 +243,6 @@ async def delete_message_in_background(context: ContextTypes.DEFAULT_TYPE, chat_
     except Exception as e:
         logger.warning(f"Could not delete message {message_id} from chat {chat_id} in background: {e}.")
 
-# تحميل ملف المناطق واسعارها 
-def load_delivery_zones():
-    try:
-        with open("data/delivery_zones.json", "r") as f:
-            zones = json.load(f)
-            return zones
-    except Exception as e:
-        print(f"Error loading delivery zones: {e}")
-        return {}
-        # استخراج سعر التوصيل بناءً على العنوان
-def get_delivery_price(address):
-    delivery_zones = load_delivery_zones()
-    for zone, price in delivery_zones.items():
-        if zone in address:
-            return price
-    return 0  # إذا لم يتم العثور على العنوان في المناطق
-
 # دالة مساعدة لحفظ البيانات في الخلفية
 async def save_data_in_background(context: ContextTypes.DEFAULT_TYPE):
     schedule_save_global()
