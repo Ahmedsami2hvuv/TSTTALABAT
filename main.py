@@ -339,6 +339,63 @@ async def edited_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"[{update.effective_chat.id}] Error in edited_message: {e}", exc_info=True)
         await update.edited_message.reply_text("طك بطك ماكدر اعدل تريد سوي طلب جديد.")
 
+
+def _parse_site_order_format(raw_text):
+    """
+    يحوّل طلب بصيغة الموقع (اسم الزبون، العنوان، معلومات الطلب، الاسم/الكمية/السعر)
+    إلى: title, phone_number, products.
+    يرجع None إذا الرسالة مو بهذه الصيغة.
+    """
+    if not raw_text or "معلومات الطلب" not in raw_text and "الاسم:" not in raw_text:
+        return None
+    text = raw_text.strip()
+    if "العنوان:" not in text and "اسم الزبون:" not in text:
+        return None
+
+    customer_name = ""
+    address = ""
+    landmark = ""
+    products = []
+
+    lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+
+    for line in lines:
+        if line.startswith("اسم الزبون:"):
+            customer_name = line.split(":", 1)[1].strip()
+        elif line.startswith("العنوان:"):
+            address = line.split(":", 1)[1].strip()
+        elif "نقطة دالة" in line or "نقطة دلالة" in line or "نقطه داله" in line:
+            if ":" in line:
+                landmark = line.split(":", 1)[1].strip()
+        elif line.startswith("الاسم:"):
+            name_part = line.split(":", 1)[1].strip()
+            if name_part and name_part not in ("الكمية", "السعر", "السعر الكلي") and len(name_part) >= 2:
+                products.append(name_part)
+
+    # تجاهل أسطر مثل "******" و "السعر الكلي" و "الكمية:" و "السعر:" (ما نعدها منتجات)
+    if not address and not customer_name:
+        return None
+
+    # العنوان للطلبية: عنوان التوصيل + نقطة الدالة (للتوصيل)
+    if address and landmark:
+        title = f"{address} - {landmark}"
+    elif address:
+        title = address
+    else:
+        title = customer_name or "عنوان غير معروف"
+
+    if customer_name and (not title or title == "عنوان غير معروف"):
+        title = f"{customer_name} - {title}"
+
+    # رقم الزبون ما يطلع من صيغة الموقع فنبغى يطلبه البوت لاحقاً
+    phone_number = "مطلوب"
+
+    if not products:
+        return None
+
+    return {"title": title, "phone_number": phone_number, "products": products}
+
+
 async def process_order(update, context, message, edited=False):
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
@@ -346,24 +403,47 @@ async def process_order(update, context, message, edited=False):
     last_button_message = context.application.bot_data['last_button_message']
     
     user_id = str(message.from_user.id)
-    lines = [line.strip() for line in message.text.strip().split('\n') if line.strip()]
-    
-    # ✅ تعديل التحقق من عدد الأسطر: الآن نتوقع 3 أسطر على الأقل (عنوان، رقم هاتف، منتجات)
-    if len(lines) < 3:
-        if not edited:
-            await message.reply_text("باعلي تاكد انك تكتب الطلبية ك التالي اول سطر هو عنوان الزبون وثاني سطر هو رقم الزبون وراها المنتجات كل سطر بي منتج يالله فر ويلك وسوي الطلب.")
-        return
+    raw_text = message.text.strip()
+    lines = [line.strip() for line in raw_text.split('\n') if line.strip()]
 
-    title = lines[0]
-    
-    # ✅ منطق جديد لمعالجة رقم الهاتف
-    phone_number_raw = lines[1].strip().replace(" ", "") # إزالة المسافات
-    if phone_number_raw.startswith("+964"):
-        phone_number = "0" + phone_number_raw[4:] # استبدال +964 بـ 0
+    # ✅ إذا الطلبية السابقة كانت من الموقع ورقم الزبون "مطلوب"، والرسالة الحالية رقم فقط → نحدّث الرقم
+    if not edited and len(lines) == 1:
+        one_line = lines[0].replace(" ", "").replace("+", "").replace("-", "")
+        if one_line.isdigit() and len(one_line) >= 9:
+            pending_oid = context.user_data.get(user_id, {}).get("pending_phone_order_id")
+            if pending_oid and pending_oid in orders and orders[pending_oid].get("phone_number") == "مطلوب":
+                phone_number_raw = lines[0].strip().replace(" ", "")
+                if phone_number_raw.startswith("+964"):
+                    phone_number = "0" + phone_number_raw[4:]
+                else:
+                    phone_number = phone_number_raw.replace("+", "")
+                orders[pending_oid]["phone_number"] = phone_number
+                context.user_data[user_id].pop("pending_phone_order_id", None)
+                context.application.create_task(save_data_in_background(context))
+                await message.reply_text(f"تم تحديث رقم الزبون إلى `{phone_number}`.", parse_mode="Markdown")
+                await show_buttons(message.chat_id, context, user_id, pending_oid)
+                return
+
+    # ✅ محاولة قراءة صيغة طلب الموقع (اسم الزبون، العنوان، معلومات الطلب، الاسم/الكمية/السعر)
+    site_parsed = _parse_site_order_format(message.text)
+    if site_parsed:
+        title = site_parsed["title"]
+        phone_number = site_parsed["phone_number"]
+        products = site_parsed["products"]
     else:
-        phone_number = phone_number_raw.replace("+", "") # إذا ماكو +964، بس نضمن إزالة أي علامة +
-    
-    products = [p.strip() for p in lines[2:] if p.strip()] # ✅ المنتجات تبدأ من السطر الثالث
+        # الصيغة العادية: سطر 1 = عنوان، سطر 2 = رقم، باقي الأسطر = منتجات
+        if len(lines) < 3:
+            if not edited:
+                await message.reply_text("باعلي تاكد انك تكتب الطلبية ك التالي اول سطر هو عنوان الزبون وثاني سطر هو رقم الزبون وراها المنتجات كل سطر بي منتج يالله فر ويلك وسوي الطلب.")
+            return
+
+        title = lines[0]
+        phone_number_raw = lines[1].strip().replace(" ", "")
+        if phone_number_raw.startswith("+964"):
+            phone_number = "0" + phone_number_raw[4:]
+        else:
+            phone_number = phone_number_raw.replace("+", "")
+        products = [p.strip() for p in lines[2:] if p.strip()]
 
     if not products:
         if not edited:
@@ -399,6 +479,8 @@ async def process_order(update, context, message, edited=False):
         } 
         pricing[order_id] = {p: {} for p in products}
         invoice_numbers[order_id] = invoice_no
+        if phone_number == "مطلوب":
+            context.user_data.setdefault(user_id, {})["pending_phone_order_id"] = order_id
         logger.info(f"Created new order {order_id} for user {user_id}.")
     else: 
         old_products = set(orders[order_id].get("products", []))
@@ -424,7 +506,10 @@ async def process_order(update, context, message, edited=False):
     
     # ✅ تعديل رسالة الاستلام لتضمين رقم الهاتف بالشكل الجديد
     if is_new_order:
-        await message.reply_text(f"طلب : *{title}*\n(الرقم: `{phone_number}` )\n(عدد المنتجات: {len(products)})", parse_mode="Markdown")
+        reply_msg = f"طلب : *{title}*\n(الرقم: `{phone_number}`)\n(عدد المنتجات: {len(products)})"
+        if phone_number == "مطلوب":
+            reply_msg += "\n\n📱 رقم الزبون ما كان بالرسالة — دز رقم الزبون فقط وراح نحدث الطلبية، أو عدّل الطلبية من الزر."
+        await message.reply_text(reply_msg, parse_mode="Markdown")
         await show_buttons(message.chat_id, context, user_id, order_id)
     else:
         await show_buttons(message.chat_id, context, user_id, order_id, confirmation_message="دهاك حدثنه الطلب. عيني دخل الاسعار الاستاذ حدث الطلب.")
