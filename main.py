@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import uuid
 import time
@@ -16,7 +17,7 @@ from telegram.ext import (
 
 # ✅ استيراد الدوال الخاصة بالمناطق من الملف الجديد
 from features.delivery_zones import (
-    list_zones, get_delivery_price
+    list_zones, get_delivery_price, is_zone_known, get_matching_zone_name
 )
 # ✅ تصنيف المنتجات (سمك، خضروات، لحم) لبناء فواتير منفصلة
 from features.product_categories import is_fish, is_vegetable_fruit, is_meat
@@ -340,6 +341,32 @@ async def edited_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.edited_message.reply_text("طك بطك ماكدر اعدل تريد سوي طلب جديد.")
 
 
+def _extract_phone_from_text(text):
+    """
+    يدور في النص ويطلع أول رقم ييشبه رقم زبون (عراقي: 07xxxxxxxx أو +964 7xx...).
+    يرجع الرقم بصيغة 07xxxxxxxx أو "مطلوب" لو ما لقي.
+    """
+    if not text or not text.strip():
+        return "مطلوب"
+    # إزالة مسافات وشرطات عشان نلقط الرقم
+    raw = re.sub(r"[\s\-]", "", text)
+    # 07 + 8 أرقام، أو +9647 + 8 أرقام، أو 7 + 8 أرقام
+    m = re.search(r"(?:\+?964)?0?7\d{8}\b", raw)
+    if m:
+        digits = re.sub(r"\D", "", m.group(0))
+        if digits.startswith("964"):
+            digits = digits[3:]
+        if digits.startswith("7") and len(digits) >= 9:
+            return "0" + digits[:9]
+        if digits.startswith("0") and len(digits) >= 10:
+            return digits[:10]
+    # أي تسلسل 10 أرقام يبدأ بـ 07
+    m2 = re.search(r"07\d{8}", raw)
+    if m2:
+        return m2.group(0)
+    return "مطلوب"
+
+
 def _parse_site_order_format(raw_text):
     """
     يحوّل طلب بصيغة الموقع (اسم الزبون، العنوان، معلومات الطلب، الاسم/الكمية/السعر)
@@ -354,7 +381,6 @@ def _parse_site_order_format(raw_text):
 
     customer_name = ""
     address = ""
-    landmark = ""
     products = []
 
     lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
@@ -364,9 +390,6 @@ def _parse_site_order_format(raw_text):
             customer_name = line.split(":", 1)[1].strip()
         elif line.startswith("العنوان:"):
             address = line.split(":", 1)[1].strip()
-        elif "نقطة دالة" in line or "نقطة دلالة" in line or "نقطه داله" in line:
-            if ":" in line:
-                landmark = line.split(":", 1)[1].strip()
         elif line.startswith("الاسم:"):
             name_part = line.split(":", 1)[1].strip()
             if name_part and name_part not in ("الكمية", "السعر", "السعر الكلي") and len(name_part) >= 2:
@@ -376,19 +399,17 @@ def _parse_site_order_format(raw_text):
     if not address and not customer_name:
         return None
 
-    # العنوان للطلبية: عنوان التوصيل + نقطة الدالة (للتوصيل)
-    if address and landmark:
-        title = f"{address} - {landmark}"
+    # المنطقة: نطابق أي سطر مع قاعدة المناطق، لو ما طابقت نستخدم سطر "العنوان"
+    zone = get_matching_zone_name(text)
+    if zone:
+        title = zone
     elif address:
         title = address
     else:
         title = customer_name or "عنوان غير معروف"
 
-    if customer_name and (not title or title == "عنوان غير معروف"):
-        title = f"{customer_name} - {title}"
-
-    # رقم الزبون ما يطلع من صيغة الموقع فنبغى يطلبه البوت لاحقاً
-    phone_number = "مطلوب"
+    # رقم الزبون: ندوّر في كل النص ونطلع أول رقم ييشبه رقم زبون
+    phone_number = _extract_phone_from_text(text)
 
     if not products:
         return None
@@ -405,6 +426,25 @@ async def process_order(update, context, message, edited=False):
     user_id = str(message.from_user.id)
     raw_text = message.text.strip()
     lines = [line.strip() for line in raw_text.split('\n') if line.strip()]
+
+    # ✅ إذا كان البوت ينتظر اسم المنطقة الصحيح (المنطقة السابقة غير مسجلة)
+    ud = context.user_data.setdefault(user_id, {})
+    pending_region_oid = ud.get("pending_region_order_id")
+    if not edited and pending_region_oid and pending_region_oid in orders:
+        new_region = raw_text.strip()
+        if new_region and len(new_region) < 200:  # رسالة معقولة كاسم منطقة
+            orders[pending_region_oid]["title"] = new_region
+            context.user_data[user_id].pop("pending_region_order_id", None)
+            context.application.create_task(save_data_in_background(context))
+            if is_zone_known(new_region):
+                await message.reply_text(f"تم تحديث المنطقة إلى: *{new_region}*", parse_mode="Markdown")
+                if orders[pending_region_oid].get("phone_number") == "مطلوب":
+                    ud["pending_phone_order_id"] = pending_region_oid
+                await show_buttons(message.chat_id, context, user_id, pending_region_oid)
+            else:
+                await message.reply_text(f"المنطقة *{new_region}* غير مسجلة أيضاً. أرسل اسم المنطقة الصحيح (اكتب *مناطق* لرؤية القائمة).", parse_mode="Markdown")
+                ud["pending_region_order_id"] = pending_region_oid
+            return
 
     # ✅ إذا الطلبية السابقة كانت من الموقع ورقم الزبون "مطلوب"، والرسالة الحالية رقم فقط → نحدّث الرقم
     if not edited and len(lines) == 1:
@@ -431,19 +471,36 @@ async def process_order(update, context, message, edited=False):
         phone_number = site_parsed["phone_number"]
         products = site_parsed["products"]
     else:
-        # الصيغة العادية: سطر 1 = عنوان، سطر 2 = رقم، باقي الأسطر = منتجات
-        if len(lines) < 3:
+        # الصيغة العادية: الرقم من أي سطر، المنطقة من أي سطر (مطابقة مع قاعدة المناطق)، الباقي منتجات
+        if len(lines) < 1:
             if not edited:
-                await message.reply_text("باعلي تاكد انك تكتب الطلبية ك التالي اول سطر هو عنوان الزبون وثاني سطر هو رقم الزبون وراها المنتجات كل سطر بي منتج يالله فر ويلك وسوي الطلب.")
+                await message.reply_text("باعلي تاكد انك تكتب الطلبية: عنوان أو منطقة، رقم الزبون، وكل سطر منتج. يالله فر ويلك.")
             return
 
-        title = lines[0]
-        phone_number_raw = lines[1].strip().replace(" ", "")
-        if phone_number_raw.startswith("+964"):
-            phone_number = "0" + phone_number_raw[4:]
-        else:
-            phone_number = phone_number_raw.replace("+", "")
-        products = [p.strip() for p in lines[2:] if p.strip()]
+        phone_number = _extract_phone_from_text(raw_text)
+        zone = get_matching_zone_name(raw_text)
+        title = zone if zone else (lines[0] if lines else "عنوان غير معروف")
+
+        # المنتجات: كل سطر ما هو سطر الرقم ولا سطر المنطقة ولا أول سطر (عنوان)
+        products = []
+        for i, line in enumerate(lines):
+            if not line.strip():
+                continue
+            # أول سطر نستخدمه عنوان لو ما طابقت منطقة، فما نعدّه منتج
+            if not zone and i == 0:
+                continue
+            # سطر فيه الرقم → ما نعدّه منتج
+            if phone_number != "مطلوب" and phone_number in line.replace(" ", "").replace("-", ""):
+                continue
+            if zone and zone in line:
+                continue
+            # سطر أرقام فقط (مثل سعر كلي) نتخطاه
+            if re.sub(r"[\d\s\.]", "", line) == "" and len(line.strip()) > 5:
+                continue
+            products.append(line.strip())
+
+        if not zone and lines:
+            title = lines[0]
 
     if not products:
         if not edited:
@@ -504,6 +561,15 @@ async def process_order(update, context, message, edited=False):
         
     context.application.create_task(save_data_in_background(context))
     
+    # ✅ إذا عنوان المنطقة غير موجود بقاعدة البيانات → نطلب إرسال اسم المنطقة الصحيح
+    if is_new_order and not is_zone_known(title):
+        context.user_data.setdefault(user_id, {})["pending_region_order_id"] = order_id
+        await message.reply_text(
+            f"المنطقة *{title}* غير مسجلة في قاعدة البيانات.\n\nأرسل اسم المنطقة الصحيح (اكتب *مناطق* لرؤية القائمة).",
+            parse_mode="Markdown"
+        )
+        return
+
     # ✅ تعديل رسالة الاستلام لتضمين رقم الهاتف بالشكل الجديد
     if is_new_order:
         reply_msg = f"طلب : *{title}*\n(الرقم: `{phone_number}`)\n(عدد المنتجات: {len(products)})"
@@ -1332,12 +1398,14 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         admin_text = "\n".join(admin_msg)
 
         # --- ج. بناء فاتورة الزبون للجروب (مع الحساب المتسلسل) ---
+        # رقم الزبون بصيغة `كود` عشان ينسخ باللمس بدل ما يفتح معلومات الرقم
+        safe_phone = (phone_number or "").replace("`", "'")
         customer_lines = [
             "📋 أبو الأكبر للتوصيل 🚀",
             "-----------------------------------",
             f"فاتورة رقم: #{invoice}",
             f"🏠 عنوان الزبون: {order['title']}",
-            f"📞 رقم الزبون: {phone_number}",
+            f"📞 رقم الزبون: `{safe_phone}`",
             "\n🛍️ المنتجات:  \n"
         ]
         
@@ -1371,8 +1439,8 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         # --- 3. إرسال الرسائل ---
         # (إرسال لكل مجهز تم أعلاه داخل الحلقة)
 
-        # 2. إرسال للجروب (فاتورة الزبون)
-        await context.bot.send_message(chat_id=chat_id, text=customer_text)
+        # 2. إرسال للجروب (فاتورة الزبون) — Markdown عشان رقم الزبون يظهر كـ code فينسخ باللمس
+        await context.bot.send_message(chat_id=chat_id, text=customer_text, parse_mode="Markdown")
 
         # 3. إرسال لكل المديرين بالخاص: التفصيلية، الأرباح، فاتورة السمك، الخضروات، اللحم، ثم نسخة الجروب
         for owner_id in OWNER_IDS:
@@ -1384,7 +1452,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
                 await context.bot.send_message(chat_id=owner_id, text=veg_invoice_text)  # فاتورة الخضروات والفواكه لوحد
             if meat_invoice_text:
                 await context.bot.send_message(chat_id=owner_id, text=meat_invoice_text)  # فاتورة اللحم لوحد
-            await context.bot.send_message(chat_id=owner_id, text=f"📋 نسخة الجروب:\n\n{customer_text}")  # نسخة الجروب
+            await context.bot.send_message(chat_id=owner_id, text=f"📋 نسخة الجروب:\n\n{customer_text}", parse_mode="Markdown")  # نسخة الجروب
 
         # تنظيف رسائل المجهز
         if user_id in context.user_data and 'messages_to_delete' in context.user_data[user_id]:
