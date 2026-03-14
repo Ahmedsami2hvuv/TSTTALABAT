@@ -77,6 +77,26 @@ def get_closest_zone_names(text, n=6, cutoff=0.4):
     return difflib.get_close_matches(text_clean, zone_names, n=n, cutoff=cutoff)
 
 
+def match_text_to_suggested_zones(text, suggested_zone_names, cutoff=0.8):
+    """
+    إذا المستخدم كتب اسم منطقة بدل ما يضغط الزر، نطابق كتابته مع قائمة المناطق المقترحة.
+    يرجع (index, matched_zone) إذا النص مطابق جداً لأحد المناطق، وإلا None.
+    """
+    if not text or not suggested_zone_names:
+        return None
+    text_clean = str(text).strip()
+    if not text_clean:
+        return None
+    matches = difflib.get_close_matches(text_clean, suggested_zone_names, n=1, cutoff=cutoff)
+    if not matches:
+        return None
+    matched = matches[0]
+    for i, z in enumerate(suggested_zone_names):
+        if z == matched:
+            return (i, matched)
+    return None
+
+
 def get_all_close_zones_from_words(full_text, per_word_n=4, cutoff=0.4):
     """
     يقارن كل كلمة في النص بقاعدة المناطق، ويرجع كل المناطق اللي ممكن تكون قريبة من أي كلمة.
