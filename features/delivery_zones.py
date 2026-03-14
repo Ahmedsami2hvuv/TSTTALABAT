@@ -2,6 +2,7 @@
 """إدارة مناطق التوصيل وأسعارها."""
 import os
 import json
+import difflib
 
 ZONES_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "delivery_zones.json")
 
@@ -47,6 +48,22 @@ def get_matching_zone_name(text):
         if zone in text:
             return zone
     return None
+
+
+def get_closest_zone_name(text, cutoff=0.45):
+    """
+    يقارن الكلمة مع أسماء المناطق في القاعدة ويرجع أقرب منطقة (لتصحيح الأخطاء مثل العوجخ→العوجة).
+    cutoff: أقل نسبة تشابه (0–1). كلما أقل كلما يقبل أخطاء أكثر.
+    """
+    if not text or not str(text).strip():
+        return None
+    delivery_zones = load_delivery_zones()
+    zone_names = list(delivery_zones.keys())
+    if not zone_names:
+        return None
+    text_clean = text.strip()
+    matches = difflib.get_close_matches(text_clean, zone_names, n=1, cutoff=cutoff)
+    return matches[0] if matches else None
 
 
 async def list_zones(update, context):
