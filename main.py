@@ -343,27 +343,29 @@ async def edited_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def _extract_phone_from_text(text):
     """
-    يدور في النص ويطلع أول رقم ييشبه رقم زبون (عراقي: 07xxxxxxxx أو +964 7xx...).
-    يرجع الرقم بصيغة 07xxxxxxxx أو "مطلوب" لو ما لقي.
+    يدور بين أسطر/كلمات الرسالة ويطلع أول رقم زبون (حتى لو +964 776 403 1859)
+    ويعدّله إلى صيغة 07764031859.
     """
     if not text or not text.strip():
         return "مطلوب"
-    # إزالة مسافات وشرطات عشان نلقط الرقم
+    # إزالة مسافات وشرطات عشان نلقط الرقم من أي شكل (+964 776 403 1859 → 07764031859)
     raw = re.sub(r"[\s\-]", "", text)
-    # 07 + 8 أرقام، أو +9647 + 8 أرقام، أو 7 + 8 أرقام
-    m = re.search(r"(?:\+?964)?0?7\d{8}\b", raw)
+    # نمط: +964 7xxxxxxxx أو 07xxxxxxxx أو 7xxxxxxxx (رقم عراقي 10 خانات بعد 7)
+    m = re.search(r"(?:\+?964)?0?7\d{9}", raw)
     if m:
         digits = re.sub(r"\D", "", m.group(0))
         if digits.startswith("964"):
             digits = digits[3:]
-        if digits.startswith("7") and len(digits) >= 9:
-            return "0" + digits[:9]
-        if digits.startswith("0") and len(digits) >= 10:
-            return digits[:10]
-    # أي تسلسل 10 أرقام يبدأ بـ 07
-    m2 = re.search(r"07\d{8}", raw)
+        if digits.startswith("7") and len(digits) >= 10:
+            return "0" + digits[:10]
+        if digits.startswith("0") and len(digits) >= 11:
+            return digits[:11]
+    m2 = re.search(r"7\d{9}", raw)
     if m2:
-        return m2.group(0)
+        return "0" + m2.group(0)
+    m3 = re.search(r"07\d{9}", raw)
+    if m3:
+        return m3.group(0)
     return "مطلوب"
 
 
@@ -561,11 +563,11 @@ async def process_order(update, context, message, edited=False):
         
     context.application.create_task(save_data_in_background(context))
     
-    # ✅ إذا عنوان المنطقة غير موجود بقاعدة البيانات → نطلب إرسال اسم المنطقة الصحيح
+    # ✅ البوت دوّر بكلمات الرسالة — لو ماكو كلمة مطابقة مع قاعدة المناطق، نطلب اسم المنطقة قبل ما نطلع الأزرار
     if is_new_order and not is_zone_known(title):
         context.user_data.setdefault(user_id, {})["pending_region_order_id"] = order_id
         await message.reply_text(
-            f"المنطقة *{title}* غير مسجلة في قاعدة البيانات.\n\nأرسل اسم المنطقة الصحيح (اكتب *مناطق* لرؤية القائمة).",
+            f"ما طابقت أي كلمة من رسالتك مع قاعدة المناطق.\n\nأرسل اسم المنطقة الصحيح (اكتب *مناطق* لرؤية القائمة) — بعدها راح تطلع أزرار التسعير.",
             parse_mode="Markdown"
         )
         return
