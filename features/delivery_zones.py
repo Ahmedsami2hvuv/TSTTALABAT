@@ -52,18 +52,26 @@ def get_matching_zone_name(text):
 
 def get_closest_zone_name(text, cutoff=0.45):
     """
-    يقارن الكلمة مع أسماء المناطق في القاعدة ويرجع أقرب منطقة (لتصحيح الأخطاء مثل العوجخ→العوجة).
-    cutoff: أقل نسبة تشابه (0–1). كلما أقل كلما يقبل أخطاء أكثر.
+    يقارن الكلمة مع أسماء المناطق ويرجع أقرب منطقة (استعمال قديم، لو حاب منطقة وحدة).
+    """
+    names = get_closest_zone_names(text, n=1, cutoff=cutoff)
+    return names[0] if names else None
+
+
+def get_closest_zone_names(text, n=6, cutoff=0.4):
+    """
+    يرجع قائمة بأسماء المناطق الأقرب للكلمة (أكثر من كلمة).
+    مثلاً: بياح → [الابطاح، عوجة، ...] عشان المستخدم يختار من الأزرار.
+    n: أقصى عدد مناطق، cutoff: أقل نسبة تشابه.
     """
     if not text or not str(text).strip():
-        return None
+        return []
     delivery_zones = load_delivery_zones()
     zone_names = list(delivery_zones.keys())
     if not zone_names:
-        return None
+        return []
     text_clean = text.strip()
-    matches = difflib.get_close_matches(text_clean, zone_names, n=1, cutoff=cutoff)
-    return matches[0] if matches else None
+    return difflib.get_close_matches(text_clean, zone_names, n=n, cutoff=cutoff)
 
 
 async def list_zones(update, context):
