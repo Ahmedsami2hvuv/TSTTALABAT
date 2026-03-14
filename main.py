@@ -18,6 +18,8 @@ from telegram.ext import (
 from features.delivery_zones import (
     list_zones, get_delivery_price
 )
+# ✅ تصنيف المنتجات (سمك، خضروات، لحم) لبناء فواتير منفصلة
+from features.product_categories import is_fish, is_vegetable_fruit, is_meat
 
 # ✅ تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
 logging.basicConfig(
@@ -1160,6 +1162,72 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             admin_detailed_lines.append(f"  • {sup_name}: {format_float(amt)} دينار 💸")
         admin_detailed_text = "\n".join(admin_detailed_lines)
 
+        # --- فاتورة السمك لوحد (تُرسل للخاص): كل منتج سمك + من جهزه ---
+        fish_lines = []
+        for p_name in order["products"]:
+            if not is_fish(p_name):
+                continue
+            data = pricing.get(order_id, {}).get(p_name, {})
+            buy = float(data.get("buy", 0.0))
+            p_worker_name = data.get("prepared_by_name", "شخص آخر")
+            fish_lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({p_worker_name})")
+        if fish_lines:
+            fish_invoice_text = (
+                "🐟 فاتورة السمك (تفصيل):🧾\n"
+                f"رقم الفاتورة🔢: {invoice}\n"
+                f"عنوان الزبون🏠: {order['title']}\n"
+                f"رقم الزبون📞: {phone_number}\n\n"
+                "تفاصيل السمك:\n"
+                + "\n".join(fish_lines) +
+                f"\n\n💰 مجموع السمك: {format_float(sum(float(pricing.get(order_id, {}).get(p, {}).get('buy', 0)) for p in order['products'] if is_fish(p)))}"
+            )
+        else:
+            fish_invoice_text = None
+
+        # --- فاتورة الخضروات والفواكه لوحد (تُرسل للخاص) ---
+        veg_lines = []
+        for p_name in order["products"]:
+            if not is_vegetable_fruit(p_name):
+                continue
+            data = pricing.get(order_id, {}).get(p_name, {})
+            buy = float(data.get("buy", 0.0))
+            p_worker_name = data.get("prepared_by_name", "شخص آخر")
+            veg_lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({p_worker_name})")
+        if veg_lines:
+            veg_invoice_text = (
+                "🥬 فاتورة الخضروات والفواكه:🧾\n"
+                f"رقم الفاتورة🔢: {invoice}\n"
+                f"عنوان الزبون🏠: {order['title']}\n"
+                f"رقم الزبون📞: {phone_number}\n\n"
+                "تفاصيل الخضروات/الفواكه:\n"
+                + "\n".join(veg_lines) +
+                f"\n\n💰 مجموع الخضروات/الفواكه: {format_float(sum(float(pricing.get(order_id, {}).get(p, {}).get('buy', 0)) for p in order['products'] if is_vegetable_fruit(p)))}"
+            )
+        else:
+            veg_invoice_text = None
+
+        # --- فاتورة اللحم لوحد (تُرسل للخاص) ---
+        meat_lines = []
+        for p_name in order["products"]:
+            if not is_meat(p_name):
+                continue
+            data = pricing.get(order_id, {}).get(p_name, {})
+            buy = float(data.get("buy", 0.0))
+            p_worker_name = data.get("prepared_by_name", "شخص آخر")
+            meat_lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({p_worker_name})")
+        if meat_lines:
+            meat_invoice_text = (
+                "🥩 فاتورة اللحم (تفصيل):🧾\n"
+                f"رقم الفاتورة🔢: {invoice}\n"
+                f"عنوان الزبون🏠: {order['title']}\n"
+                f"رقم الزبون📞: {phone_number}\n\n"
+                "تفاصيل اللحم:\n"
+                + "\n".join(meat_lines) +
+                f"\n\n💰 مجموع اللحم: {format_float(sum(float(pricing.get(order_id, {}).get(p, {}).get('buy', 0)) for p in order['products'] if is_meat(p)))}"
+            )
+        else:
+            meat_invoice_text = None
+
         # --- ب. بناء فاتورة الإدارة (للمدير فقط) ---
         admin_msg = [
             f"فاتورة الإدارة:👨🏻‍💼",
@@ -1221,10 +1289,16 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         # 2. إرسال للجروب (فاتورة الزبون)
         await context.bot.send_message(chat_id=chat_id, text=customer_text)
 
-        # 3. إرسال لكل المديرين: أولاً التفصيلية ثم فاتورة الأرباح ثم نسخة الجروب
+        # 3. إرسال لكل المديرين بالخاص: التفصيلية، الأرباح، فاتورة السمك، الخضروات، اللحم، ثم نسخة الجروب
         for owner_id in OWNER_IDS:
             await context.bot.send_message(chat_id=owner_id, text=admin_detailed_text)  # تفاصيل المجهزين + كل مجهز شكد دفع
             await context.bot.send_message(chat_id=owner_id, text=admin_text)           # فاتورة الإدارة (الأرباح) - كما هي
+            if fish_invoice_text:
+                await context.bot.send_message(chat_id=owner_id, text=fish_invoice_text)  # فاتورة السمك لوحد
+            if veg_invoice_text:
+                await context.bot.send_message(chat_id=owner_id, text=veg_invoice_text)  # فاتورة الخضروات والفواكه لوحد
+            if meat_invoice_text:
+                await context.bot.send_message(chat_id=owner_id, text=meat_invoice_text)  # فاتورة اللحم لوحد
             await context.bot.send_message(chat_id=owner_id, text=f"📋 نسخة الجروب:\n\n{customer_text}")  # نسخة الجروب
 
         # تنظيف رسائل المجهز
@@ -1474,6 +1548,57 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"[{update.effective_chat.id}] Error in confirm_reset: {e}", exc_info=True)
         await update.callback_query.message.reply_text("😐، هذا الضراط ماكدرت اصفر.")
         
+def _build_report_fish_text(orders, pricing, invoice_numbers):
+    """بناء نص فواتير السمك (كل الطلبات، منتجات السمك فقط) للتقرير."""
+    lines = ["🐟 **فواتير السمك (تقرير)**\n"]
+    for order_id, order in orders.items():
+        fish_items = [(p_name, pricing.get(order_id, {}).get(p_name, {})) for p_name in order.get("products", []) if is_fish(p_name)]
+        if not fish_items:
+            continue
+        inv = invoice_numbers.get(order_id, "??")
+        lines.append(f"فاتورة #{inv} | {order.get('title', '')} | {order.get('phone_number', '')}")
+        for p_name, p_data in fish_items:
+            buy = p_data.get("buy", 0)
+            who = p_data.get("prepared_by_name", "غير معروف")
+            lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({who})")
+        lines.append("")
+    return "\n".join(lines) if len(lines) > 1 else "ماكو فواتير سمك مسجلة."
+
+
+def _build_report_veg_text(orders, pricing, invoice_numbers):
+    """بناء نص فواتير الخضروات والفواكه للتقرير."""
+    lines = ["🥬 **فواتير الخضروات والفواكه (تقرير)**\n"]
+    for order_id, order in orders.items():
+        veg_items = [(p_name, pricing.get(order_id, {}).get(p_name, {})) for p_name in order.get("products", []) if is_vegetable_fruit(p_name)]
+        if not veg_items:
+            continue
+        inv = invoice_numbers.get(order_id, "??")
+        lines.append(f"فاتورة #{inv} | {order.get('title', '')} | {order.get('phone_number', '')}")
+        for p_name, p_data in veg_items:
+            buy = p_data.get("buy", 0)
+            who = p_data.get("prepared_by_name", "غير معروف")
+            lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({who})")
+        lines.append("")
+    return "\n".join(lines) if len(lines) > 1 else "ماكو فواتير خضروات/فواكه مسجلة."
+
+
+def _build_report_meat_text(orders, pricing, invoice_numbers):
+    """بناء نص فواتير اللحم للتقرير."""
+    lines = ["🥩 **فواتير اللحم (تقرير)**\n"]
+    for order_id, order in orders.items():
+        meat_items = [(p_name, pricing.get(order_id, {}).get(p_name, {})) for p_name in order.get("products", []) if is_meat(p_name)]
+        if not meat_items:
+            continue
+        inv = invoice_numbers.get(order_id, "??")
+        lines.append(f"فاتورة #{inv} | {order.get('title', '')} | {order.get('phone_number', '')}")
+        for p_name, p_data in meat_items:
+            buy = p_data.get("buy", 0)
+            who = p_data.get("prepared_by_name", "غير معروف")
+            lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({who})")
+        lines.append("")
+    return "\n".join(lines) if len(lines) > 1 else "ماكو فواتير لحم مسجلة."
+
+
 async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     orders = context.application.bot_data['orders']
     pricing = context.application.bot_data['pricing']
@@ -1511,14 +1636,11 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if "buy" in p_data and "sell" in p_data:
                         buy = p_data["buy"]
                         sell = p_data["sell"]
-                        # ✅ جلب اسم المجهز الذي جهز هذا المنتج
                         p_worker = p_data.get("prepared_by_name", "غير معروف")
-                        
                         profit_item = sell - buy
                         order_buy += buy
                         order_sell += sell
                         order_net_profit += profit_item 
-                        # ✅ التعديل هنا: إضافة اسم المجهز في سطر المنتج
                         details.append(f"   - {p_name} | 💲:{format_float(profit_item)} (مجهز: {p_worker})")
                     else:
                         details.append(f"   - {p_name} | (لم يتم تسعيره)")
@@ -1533,11 +1655,6 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             details.append(f"   *إجمالي ربح الطلبية: {format_float(order_net_profit + order_extra_profit)}*")
 
-        top_product_str = "لا يوجد"
-        if product_counter:
-            top_product_name, top_product_count = product_counter.most_common(1)[0]
-            top_product_str = f"{top_product_name} ({top_product_count} مرة)"
-
         result = (
             f"**--- تقرير عام عن الطلبات🗒️ ---**\n"
             f"**إجمالي الطلبات:** {total_orders}\n"
@@ -1546,7 +1663,27 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"**الربح الكلي الصافي: {format_float(total_net_profit_all_orders + total_extra_profit_all_orders)} دينار**\n\n"
             f"**--- تفاصيل الطلبات🗒 ---**\n" + "\n".join(details)
         )
-        await update.message.reply_text(result, parse_mode="Markdown")
+
+        # بناء فواتير السمك والخضروات واللحم وإرسال كل التقرير للخاص (كل مدير)
+        report_fish = _build_report_fish_text(orders, pricing, invoice_numbers)
+        report_veg = _build_report_veg_text(orders, pricing, invoice_numbers)
+        report_meat = _build_report_meat_text(orders, pricing, invoice_numbers)
+
+        for owner_id in OWNER_IDS:
+            try:
+                # إرسال التقرير العام + فواتير السمك + الخضروات + اللحم للخاص
+                for chunk_start in range(0, len(result), 4096):
+                    await context.bot.send_message(chat_id=owner_id, text=result[chunk_start:chunk_start + 4096], parse_mode="Markdown")
+                for chunk_start in range(0, len(report_fish), 4096):
+                    await context.bot.send_message(chat_id=owner_id, text=report_fish[chunk_start:chunk_start + 4096], parse_mode="Markdown")
+                for chunk_start in range(0, len(report_veg), 4096):
+                    await context.bot.send_message(chat_id=owner_id, text=report_veg[chunk_start:chunk_start + 4096], parse_mode="Markdown")
+                for chunk_start in range(0, len(report_meat), 4096):
+                    await context.bot.send_message(chat_id=owner_id, text=report_meat[chunk_start:chunk_start + 4096], parse_mode="Markdown")
+            except Exception as e:
+                logger.error(f"Error sending report to owner {owner_id}: {e}")
+
+        await update.message.reply_text("✅ تم إرسال التقرير وفواتير السمك والخضروات واللحم للخاص (الإدارة).")
     except Exception as e:
         logger.error(f"Error in show_report: {e}", exc_info=True)
         await update.message.reply_text("😐 صار خطأ بالتقرير.")
@@ -2122,4 +2259,3 @@ async def handle_incomplete_order_selection(update: Update, context: ContextType
     
 if __name__ == "__main__":
     main()
-    
