@@ -118,7 +118,7 @@ def get_close_zones_with_words(full_text, per_word_n=2, cutoff=0.7, max_zones_pe
         return []
     try:
         # خطوة أولى: نتجاهل الأسطر اللي فيها أرقام
-        # خطوة ثانية: نتجاهل الأسطر اللي فيها 3 كلمات أو أكثر — يبقى عندنا أسطر فيها كلمة وحدة أو كلمتين
+        # خطوة ثانية: أسطر 3 كلمات فأكثر — ما ناخذ السطر كامل، لكن ناخذ أول كلمة وأول كلمتين (عشان سطر العنوان مثل "كوت تويني القرب نقطة...")
         candidate_phrases = []
         for line in str(full_text).strip().split("\n"):
             line = (line or "").strip()
@@ -127,16 +127,26 @@ def get_close_zones_with_words(full_text, per_word_n=2, cutoff=0.7, max_zones_pe
             if re.search(r"\d", line):
                 continue
             tokens = line.split()
-            if len(tokens) >= 3:
-                continue
             if len(tokens) == 0:
                 continue
-            phrase = " ".join(tokens)
-            if len(phrase) < 2:
-                continue
-            if phrase.startswith("+") or all(c in "0123456789+ " for c in phrase):
-                continue
-            candidate_phrases.append(phrase)
+            if len(tokens) == 1:
+                phrase = tokens[0]
+                if len(phrase) < 2 or phrase.startswith("+") or all(c in "0123456789+" for c in phrase):
+                    continue
+                candidate_phrases.append(phrase)
+            elif len(tokens) == 2:
+                phrase = " ".join(tokens)
+                if len(phrase) < 2 or phrase.startswith("+") or all(c in "0123456789+ " for c in phrase):
+                    continue
+                candidate_phrases.append(phrase)
+            else:
+                # سطر طويل (مثل العنوان): ناخذ أول كلمتين ثم أول كلمة — عشان "كوت تويني" تطلع قبل "كوت"
+                two = " ".join(tokens[:2])
+                if len(two) >= 2 and not two.startswith("+"):
+                    candidate_phrases.append(two)
+                w0 = tokens[0]
+                if len(w0) >= 2 and not w0.startswith("+") and not all(c in "0123456789+" for c in w0) and w0 != two:
+                    candidate_phrases.append(w0)
         seen_zones = set()
         result = []  # [(zone, phrase), ...]
         # مطابقة بقوة: cutoff عالي عشان نجيبلهم الاقرب (حرف/حرفين غلط)
