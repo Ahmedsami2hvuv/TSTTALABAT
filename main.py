@@ -458,14 +458,12 @@ def _parse_site_order_format(raw_text):
     if not address and not customer_name:
         return None
 
-    # المنطقة: نطابق أي سطر مع قاعدة المناطق، لو ما طابقت نستخدم سطر "العنوان"
-    zone = get_matching_zone_name(text)
-    if zone:
-        title = zone
-    elif address:
+    # اسم المنطقة: ناخذه من مقابيل كلمة "العنوان" (السطر اللي يبدأ بـ العنوان:)
+    if address:
         title = address
     else:
-        title = customer_name or "عنوان غير معروف"
+        zone = get_matching_zone_name(text)
+        title = zone if zone else (customer_name or "عنوان غير معروف")
 
     # رقم الزبون: ندوّر في كل النص ونطلع أول رقم ييشبه رقم زبون
     phone_number = _extract_phone_from_text(text)
@@ -681,7 +679,7 @@ async def process_order(update, context, message, edited=False):
             ud["pending_region_suggested_zones"] = [zone for zone, _ in suggested_pairs]
             ud["pending_region_suggested_pairs"] = suggested_pairs
             lines = [
-                "المنطقه غير موجوده او مكتوبه غلط عندك منطقه قريبه من كتابتك اختارها او دزلي اسم المنطقه الي تقصهدها ",
+                "ما عيّنت المنطقة، عندك مناطق قريبة بقاعدة البيانات — اختار الصح أو دوس لا واكتب اسم المنطقة",
                 "",
             ]
             for zone, word in suggested_pairs:
