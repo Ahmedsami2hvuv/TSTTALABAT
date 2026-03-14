@@ -20,35 +20,35 @@ def load_delivery_zones():
     return {}
 
 
+def _longest_zone_in_text(text, zones_dict=None):
+    """يرجع أطول منطقة موجودة في النص (عشان كوت الصلحي ما يطابق الـ «الحي» أولاً وتطلع 3 بدل 5)."""
+    if not text or not str(text).strip():
+        return None
+    text = str(text).strip()
+    zones = zones_dict or load_delivery_zones()
+    best_zone = None
+    for zone in zones.keys():
+        if zone and zone in text:
+            if best_zone is None or len(zone) > len(best_zone):
+                best_zone = zone
+    return best_zone
+
+
 def get_delivery_price(address):
-    """استخراج سعر التوصيل بناءً على العنوان (أول تطابق لمنطقة في العنوان)."""
+    """استخراج سعر التوصيل بناءً على العنوان — نستخدم أطول منطقة مطابقة (كوت الصلحي قبل الحي)."""
     delivery_zones = load_delivery_zones()
-    for zone, price in delivery_zones.items():
-        if zone in address:
-            return price
-    return 0
+    zone = _longest_zone_in_text(address, delivery_zones)
+    return delivery_zones[zone] if zone else 0
 
 
 def is_zone_known(address):
     """هل العنوان يطابق أي منطقة مسجلة في قاعدة البيانات؟"""
-    if not address or not address.strip():
-        return False
-    delivery_zones = load_delivery_zones()
-    for zone in delivery_zones.keys():
-        if zone in address.strip():
-            return True
-    return False
+    return _longest_zone_in_text(address) is not None
 
 
 def get_matching_zone_name(text):
-    """يدور في النص (أي سطر) ويُرجع اسم أول منطقة من قاعدة البيانات تظهر فيه. لو ما طابقت شي يرجع None."""
-    if not text or not str(text).strip():
-        return None
-    delivery_zones = load_delivery_zones()
-    for zone in delivery_zones.keys():
-        if zone in text:
-            return zone
-    return None
+    """يدور في النص ويرجع أطول منطقة تظهر فيه (كوت الصلحي قبل الحي)."""
+    return _longest_zone_in_text(text)
 
 
 def get_closest_zone_name(text, cutoff=0.45):
