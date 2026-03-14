@@ -458,9 +458,13 @@ def _parse_site_order_format(raw_text):
     if not address and not customer_name:
         return None
 
-    # اسم المنطقة: ناخذه من مقابيل كلمة "العنوان" (السطر اللي يبدأ بـ العنوان:)
+    # اسم المنطقة: ناخذه من مقابيل كلمة "العنوان" — لو قريب من منطقة بالقاعدة نصححه (كوت صحي → كوت الصلحي، بي عسكري → حي العسكري)
     if address:
-        title = address
+        try:
+            canonical_zone = get_closest_zone_name(address, cutoff=0.6)
+            title = canonical_zone if canonical_zone else address
+        except Exception:
+            title = address
     else:
         zone = get_matching_zone_name(text)
         title = zone if zone else (customer_name or "عنوان غير معروف")
@@ -674,8 +678,8 @@ async def process_order(update, context, message, edited=False):
         ud = context.user_data.setdefault(user_id, {})
         ud["pending_region_order_id"] = order_id
         try:
-            # طلب الموقع: نبحث فقط في سطر العنوان؛ غيره: نبحث في كل الرسالة
-            suggested_pairs = get_close_zones_with_words(zone_search_text, per_word_n=4, cutoff=0.7)
+            # طلب الموقع: نبحث فقط في سطر العنوان؛ غيره: نبحث في كل الرسالة. cutoff 0.6 عشان كوت صحي→كوت الصلحي، بي عسكري→حي العسكري
+            suggested_pairs = get_close_zones_with_words(zone_search_text, per_word_n=4, cutoff=0.6)
         except Exception as e:
             logger.warning(f"get_close_zones_with_words failed: {e}", exc_info=True)
             suggested_pairs = []
