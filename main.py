@@ -367,14 +367,21 @@ async def handle_region_suggestion_callback(update: Update, context: ContextType
             await query.edit_message_text("الطلبية ما عاد موجودة.")
             ud.pop("pending_region_order_id", None)
             ud.pop("pending_region_suggested_zones", None)
+            ud.pop("pending_region_suggested_pairs", None)
             return
         zones_list = ud.get("pending_region_suggested_zones") or []
+        suggested_pairs = ud.get("pending_region_suggested_pairs") or []
         if idx < 0 or idx >= len(zones_list):
             return
         chosen_zone = zones_list[idx]
+        word_to_remove = suggested_pairs[idx][1] if idx < len(suggested_pairs) else None
         orders[order_id]["title"] = chosen_zone
+        if word_to_remove and "products" in orders[order_id]:
+            products = orders[order_id]["products"]
+            orders[order_id]["products"] = [p for p in products if p != word_to_remove]
         ud.pop("pending_region_order_id", None)
         ud.pop("pending_region_suggested_zones", None)
+        ud.pop("pending_region_suggested_pairs", None)
         context.application.create_task(save_data_in_background(context))
         await query.edit_message_text(f"تم اختيار المنطقة: *{chosen_zone}*", parse_mode="Markdown")
         if orders[order_id].get("phone_number") == "مطلوب":
@@ -386,6 +393,7 @@ async def handle_region_suggestion_callback(update: Update, context: ContextType
     if data.startswith("reject_region_"):
         order_id = data.replace("reject_region_", "")
         ud.pop("pending_region_suggested_zones", None)
+        ud.pop("pending_region_suggested_pairs", None)
         await query.edit_message_text("طيب اكتبلي اسم المنطقه.")
         # pending_region_order_id يبقى عشان الرسالة الجاية ناخذها كاسم منطقة
 
@@ -484,6 +492,7 @@ async def process_order(update, context, message, edited=False):
     if not edited and pending_region_oid and pending_region_oid in orders:
         ud.pop("pending_region_suggested_zone", None)
         ud.pop("pending_region_suggested_zones", None)
+        ud.pop("pending_region_suggested_pairs", None)
         new_region = raw_text.strip()
         if new_region and len(new_region) < 200:  # رسالة معقولة كاسم منطقة
             orders[pending_region_oid]["title"] = new_region
@@ -645,9 +654,9 @@ async def process_order(update, context, message, edited=False):
             logger.warning(f"get_close_zones_with_words failed: {e}", exc_info=True)
             suggested_pairs = []
         if suggested_pairs:
-            # عرض حتى 15 اقتراح عشان كل كلمة بالرسالة اللي لها منطقة قريبة تطلع (ما نقصي كلمات مثل حوجة)
             suggested_pairs = suggested_pairs[:15]
             ud["pending_region_suggested_zones"] = [zone for zone, _ in suggested_pairs]
+            ud["pending_region_suggested_pairs"] = suggested_pairs
             lines = [
                 "ما عيّنت المنطقة، عندك مناطق قريبة بقاعدة البيانات — اختار الصح أو دوس لا واكتب اسم المنطقة",
                 "",
