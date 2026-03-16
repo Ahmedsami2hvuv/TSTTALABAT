@@ -59,8 +59,8 @@ def _parse_hour_min(env_key: str, default_hour: str, default_min: str) -> tuple:
     m = int(os.getenv(env_key.replace("HOUR", "MINUTE"), default_min))
     return h, m
 
-_report_h, _report_m = _parse_hour_min("REPORT_DAILY_HOUR", "18", "40")
-_reset_h, _reset_m = _parse_hour_min("RESET_DAILY_HOUR", "18", "42")
+_report_h, _report_m = _parse_hour_min("REPORT_DAILY_HOUR", "18", "45")
+_reset_h, _reset_m = _parse_hour_min("RESET_DAILY_HOUR", "18", "47")
 REPORT_DAILY_HOUR = _report_h
 REPORT_DAILY_MINUTE = _report_m
 RESET_DAILY_HOUR = _reset_h
@@ -1890,7 +1890,7 @@ def _build_full_report_parts(orders, pricing, invoice_numbers):
         invoice = invoice_numbers.get(order_id, "غير معروف")
         title = order.get("title", "")
         phone = order.get("phone_number", "بدون رقم")
-        details.append(f"\n**رقم الطلب:🔢** {invoice} (`{order_id}`)")
+        details.append(f"\n**رقم الطلب:🔢** {invoice}")
         details.append(f"**عنوان الطلب:🏠** {title}")
         details.append(f"**رقم الزبون:📞** `{phone}`")
         details.append("**السلع:**")
