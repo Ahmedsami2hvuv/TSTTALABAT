@@ -59,8 +59,8 @@ def _parse_hour_min(env_key: str, default_hour: str, default_min: str) -> tuple:
     m = int(os.getenv(env_key.replace("HOUR", "MINUTE"), default_min))
     return h, m
 
-_report_h, _report_m = _parse_hour_min("REPORT_DAILY_HOUR", "18", "30")
-_reset_h, _reset_m = _parse_hour_min("RESET_DAILY_HOUR", "18", "32")
+_report_h, _report_m = _parse_hour_min("REPORT_DAILY_HOUR", "18", "40")
+_reset_h, _reset_m = _parse_hour_min("RESET_DAILY_HOUR", "18", "42")
 REPORT_DAILY_HOUR = _report_h
 REPORT_DAILY_MINUTE = _report_m
 RESET_DAILY_HOUR = _reset_h
@@ -1888,8 +1888,12 @@ def _build_full_report_parts(orders, pricing, invoice_numbers):
 
     for order_id, order in orders.items():
         invoice = invoice_numbers.get(order_id, "غير معروف")
-        details.append(f"\n**فاتورة رقم:🔢** {invoice}")
-        details.append(f"**عنوان الزبون:🏠** {order['title']}")
+        title = order.get("title", "")
+        phone = order.get("phone_number", "بدون رقم")
+        details.append(f"\n**رقم الطلب:🔢** {invoice} (`{order_id}`)")
+        details.append(f"**عنوان الطلب:🏠** {title}")
+        details.append(f"**رقم الزبون:📞** `{phone}`")
+        details.append("**السلع:**")
         order_buy = 0.0
         order_sell = 0.0
         order_net_profit = 0.0
@@ -1904,16 +1908,26 @@ def _build_full_report_parts(orders, pricing, invoice_numbers):
                     order_buy += buy
                     order_sell += sell
                     order_net_profit += profit_item
-                    details.append(f"   - {p_name} | 💲:{format_float(profit_item)} (مجهز: {p_worker})")
+                    details.append(
+                        f"   - {p_name}\n"
+                        f"     *شراء:* {format_float(buy)} | *بيع:* {format_float(sell)} | *ربح:* {format_float(profit_item)}\n"
+                        f"     *المجهز:* {p_worker}"
+                    )
                 else:
-                    details.append(f"   - {p_name} | (لم يتم تسعيره)")
+                    details.append(f"   - {p_name} | (لم يتم تسعيره: لا يوجد سعر شراء/بيع)")
+        else:
+            details.append("   - (لا توجد سلع)")
         num_places = order.get("places_count", 0)
         order_extra_profit = calculate_extra(num_places)
         total_buy_all_orders += order_buy
         total_sell_all_orders += order_sell
         total_net_profit_all_orders += order_net_profit
         total_extra_profit_all_orders += order_extra_profit
-        details.append(f"   *إجمالي ربح الطلبية: {format_float(order_net_profit + order_extra_profit)}*")
+        details.append(
+            f"**ملخص الطلب:** شراء {format_float(order_buy)} | بيع {format_float(order_sell)} | "
+            f"ربح منتجات {format_float(order_net_profit)} | ربح محلات {format_float(order_extra_profit)} | "
+            f"*ربح كلي* {format_float(order_net_profit + order_extra_profit)}"
+        )
 
     result = (
         f"**--- تقرير عام عن الطلبات🗒️ ---**\n"
