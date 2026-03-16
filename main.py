@@ -8,10 +8,11 @@ import logging
 import threading
 from collections import Counter
 from datetime import datetime, timezone, time as dt_time
+from zoneinfo import ZoneInfo
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.ext import (
-    ApplicationBuilder, ContextTypes, CommandHandler,
+    ApplicationBuilder, ContextTypes, CommandHandler, Defaults,
     MessageHandler, CallbackQueryHandler, ConversationHandler, filters
 )
 
@@ -58,12 +59,28 @@ def _parse_hour_min(env_key: str, default_hour: str, default_min: str) -> tuple:
     m = int(os.getenv(env_key.replace("HOUR", "MINUTE"), default_min))
     return h, m
 
-_report_h, _report_m = _parse_hour_min("REPORT_DAILY_HOUR", "18", "20")
-_reset_h, _reset_m = _parse_hour_min("RESET_DAILY_HOUR", "18", "23")
+_report_h, _report_m = _parse_hour_min("REPORT_DAILY_HOUR", "18", "30")
+_reset_h, _reset_m = _parse_hour_min("RESET_DAILY_HOUR", "18", "32")
 REPORT_DAILY_HOUR = _report_h
 REPORT_DAILY_MINUTE = _report_m
 RESET_DAILY_HOUR = _reset_h
 RESET_DAILY_MINUTE = _reset_m
+
+# التوقيت المحلي للجدولة (العراق)
+BOT_TZ = ZoneInfo(os.getenv("BOT_TIMEZONE", "Asia/Baghdad"))
+
+def _schedule_daily_with_catchup(app, callback, hour: int, minute: int, name: str, catchup_minutes: int = 5):
+    """يشغّل run_daily، وإذا فات الوقت بفترة قصيرة (افتراضياً 5 دقايق) يشغّله مرة للتجربة."""
+    if not app.job_queue:
+        return
+    app.job_queue.run_daily(callback, time=dt_time(hour=hour, minute=minute, tzinfo=BOT_TZ), name=name)
+    now = datetime.now(BOT_TZ)
+    scheduled_today = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    delta_sec = (now - scheduled_today).total_seconds()
+    if 0 < delta_sec <= catchup_minutes * 60:
+        # فاتت شوي: شغّلها مرة بعد ثواني
+        app.job_queue.run_once(callback, when=3, name=f"{name}_catchup")
+        logger.info(f"Catch-up triggered for {name} (missed by {int(delta_sec)}s).")
 
 # ✅ متغيرات التخزين المؤقت في الذاكرة
 orders = {}
@@ -2179,7 +2196,7 @@ async def clear_chat_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         
 def main():
-    app = ApplicationBuilder().token(TOKEN).build()
+    app = ApplicationBuilder().token(TOKEN).defaults(Defaults(tzinfo=BOT_TZ)).build()
 
     # تهيئة البيانات في Bot Data
     app.bot_data['orders'] = orders
@@ -2192,10 +2209,12 @@ def main():
     app.bot_data['_save_data_to_disk_global_func'] = _save_data_to_disk_global
 
     # ⏰ جدولة التقرير والتصفير التلقائي (الوقت في main.py أعلى: REPORT_DAILY_*, RESET_DAILY_*)
-    if app.job_queue:
-        app.job_queue.run_daily(send_scheduled_report, time=dt_time(hour=REPORT_DAILY_HOUR, minute=REPORT_DAILY_MINUTE))
-        app.job_queue.run_daily(do_scheduled_reset, time=dt_time(hour=RESET_DAILY_HOUR, minute=RESET_DAILY_MINUTE))
-        logger.info(f"Scheduled: report at {REPORT_DAILY_HOUR}:{REPORT_DAILY_MINUTE:02d} UTC, reset at {RESET_DAILY_HOUR}:{RESET_DAILY_MINUTE:02d} UTC")
+    _schedule_daily_with_catchup(app, send_scheduled_report, REPORT_DAILY_HOUR, REPORT_DAILY_MINUTE, "daily_report")
+    _schedule_daily_with_catchup(app, do_scheduled_reset, RESET_DAILY_HOUR, RESET_DAILY_MINUTE, "daily_reset")
+    logger.info(
+        f"Scheduled (tz={BOT_TZ.key}): report at {REPORT_DAILY_HOUR}:{REPORT_DAILY_MINUTE:02d}, "
+        f"reset at {RESET_DAILY_HOUR}:{RESET_DAILY_MINUTE:02d}"
+    )
 
     # 0. قائمة الأوامر (اوامر / قائمة / مساعدة)
     app.add_handler(CommandHandler("help", show_commands_list))
