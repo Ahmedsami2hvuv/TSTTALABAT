@@ -7,7 +7,7 @@ import asyncio
 import logging
 import threading
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timezone, time as dt_time
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.ext import (
@@ -43,6 +43,13 @@ LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
 
 # ✅ قراءة التوكن من المتغيرات البيئية (يفترض أنك ضايفه بـ Railway)
 TOKEN = os.getenv("TOKEN")
+
+# ⏰ أوقات التقرير والتصفير التلقائي (بتوقيت UTC — السيرفر يستخدم UTC)
+# العراق = UTC+3 → 4 عصر = 13، 6 مساء = 15. للتجربة ضع دقائق قريبة من وقتك الحالي (مثلاً الساعة الحالية + دقيقتين)
+REPORT_DAILY_HOUR = int(os.getenv("REPORT_DAILY_HOUR", "16"))      # ساعة إرسال التقرير (UTC)
+REPORT_DAILY_MINUTE = int(os.getenv("REPORT_DAILY_MINUTE", "0"))   # دقيقة إرسال التقرير
+RESET_DAILY_HOUR = int(os.getenv("RESET_DAILY_HOUR", "18:2"))        # ساعة التصفير التلقائي (UTC)
+RESET_DAILY_MINUTE = int(os.getenv("RESET_DAILY_MINUTE", "0"))     # دقيقة التصفير
 
 # ✅ متغيرات التخزين المؤقت في الذاكرة
 orders = {}
@@ -1827,7 +1834,136 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"[{update.effective_chat.id}] Error in confirm_reset: {e}", exc_info=True)
         await update.callback_query.message.reply_text("😐، هذا الضراط ماكدرت اصفر.")
-        
+
+
+def _build_full_report_parts(orders, pricing, invoice_numbers):
+    """يُرجع (نص التقرير العام، نص سمك، خضروات، لحم). إذا ماكو طلبات يُرجع تقرير فارغ."""
+    total_orders = len(orders)
+    if total_orders == 0:
+        empty_main = (
+            "**--- تقرير عام عن الطلبات 🗒️ ---**\n"
+            "📋 *تقرير فارغ* — لا توجد طلبات اليوم.\n"
+            "**إجمالي الطلبات:** 0\n"
+            "**الربح الكلي الصافي: 0 دينار**"
+        )
+        return empty_main, "🐟 **فواتير السمك:** لا توجد.", "🥬 **فواتير الخضروات:** لا توجد.", "🥩 **فواتير اللحم:** لا توجد."
+
+    total_products = 0
+    total_buy_all_orders = 0.0
+    total_sell_all_orders = 0.0
+    total_net_profit_all_orders = 0.0
+    total_extra_profit_all_orders = 0.0
+    details = []
+
+    for order_id, order in orders.items():
+        invoice = invoice_numbers.get(order_id, "غير معروف")
+        details.append(f"\n**فاتورة رقم:🔢** {invoice}")
+        details.append(f"**عنوان الزبون:🏠** {order['title']}")
+        order_buy = 0.0
+        order_sell = 0.0
+        order_net_profit = 0.0
+        if isinstance(order.get("products"), list):
+            for p_name in order["products"]:
+                total_products += 1
+                p_data = pricing.get(order_id, {}).get(p_name, {})
+                if "buy" in p_data and "sell" in p_data:
+                    buy, sell = p_data["buy"], p_data["sell"]
+                    p_worker = p_data.get("prepared_by_name", "غير معروف")
+                    profit_item = sell - buy
+                    order_buy += buy
+                    order_sell += sell
+                    order_net_profit += profit_item
+                    details.append(f"   - {p_name} | 💲:{format_float(profit_item)} (مجهز: {p_worker})")
+                else:
+                    details.append(f"   - {p_name} | (لم يتم تسعيره)")
+        num_places = order.get("places_count", 0)
+        order_extra_profit = calculate_extra(num_places)
+        total_buy_all_orders += order_buy
+        total_sell_all_orders += order_sell
+        total_net_profit_all_orders += order_net_profit
+        total_extra_profit_all_orders += order_extra_profit
+        details.append(f"   *إجمالي ربح الطلبية: {format_float(order_net_profit + order_extra_profit)}*")
+
+    result = (
+        f"**--- تقرير عام عن الطلبات🗒️ ---**\n"
+        f"**إجمالي الطلبات:** {total_orders}\n"
+        f"**صافي ربح المنتجات:** {format_float(total_net_profit_all_orders)}\n"
+        f"**ربح المحلات الكلي:** {format_float(total_extra_profit_all_orders)}\n"
+        f"**الربح الكلي الصافي: {format_float(total_net_profit_all_orders + total_extra_profit_all_orders)} دينار**\n\n"
+        f"**--- تفاصيل الطلبات🗒 ---**\n" + "\n".join(details)
+    )
+    report_fish = _build_report_fish_text(orders, pricing, invoice_numbers)
+    report_veg = _build_report_veg_text(orders, pricing, invoice_numbers)
+    report_meat = _build_report_meat_text(orders, pricing, invoice_numbers)
+    return result, report_fish, report_veg, report_meat
+
+
+async def send_scheduled_report(context: ContextTypes.DEFAULT_TYPE):
+    """إرسال التقرير التلقائي للخاص (كل مدير) في الوقت المضبوط — حتى لو التقرير فارغ."""
+    try:
+        orders = context.application.bot_data['orders']
+        pricing = context.application.bot_data['pricing']
+        invoice_numbers = context.application.bot_data['invoice_numbers']
+        result, report_fish, report_veg, report_meat = _build_full_report_parts(orders, pricing, invoice_numbers)
+        for owner_id in OWNER_IDS:
+            try:
+                for chunk_start in range(0, len(result), 4096):
+                    await context.bot.send_message(chat_id=owner_id, text=result[chunk_start:chunk_start + 4096], parse_mode="Markdown")
+                for chunk_start in range(0, len(report_fish), 4096):
+                    await context.bot.send_message(chat_id=owner_id, text=report_fish[chunk_start:chunk_start + 4096], parse_mode="Markdown")
+                for chunk_start in range(0, len(report_veg), 4096):
+                    await context.bot.send_message(chat_id=owner_id, text=report_veg[chunk_start:chunk_start + 4096], parse_mode="Markdown")
+                for chunk_start in range(0, len(report_meat), 4096):
+                    await context.bot.send_message(chat_id=owner_id, text=report_meat[chunk_start:chunk_start + 4096], parse_mode="Markdown")
+            except Exception as e:
+                logger.error(f"Error sending scheduled report to owner {owner_id}: {e}")
+        logger.info("Scheduled report sent to owners.")
+    except Exception as e:
+        logger.error(f"Error in send_scheduled_report: {e}", exc_info=True)
+
+
+async def do_scheduled_reset(context: ContextTypes.DEFAULT_TYPE):
+    """تصفير تلقائي في الوقت المضبوط — حتى لو البيانات فارغة، يرسل رسالة للمديرين."""
+    try:
+        orders = context.application.bot_data['orders']
+        pricing = context.application.bot_data['pricing']
+        invoice_numbers = context.application.bot_data['invoice_numbers']
+        last_button_message = context.application.bot_data['last_button_message']
+        supplier_report_timestamps = context.application.bot_data['supplier_report_timestamps']
+        _save_data_to_disk_global_func = context.application.bot_data.get('_save_data_to_disk_global_func')
+
+        orders.clear()
+        pricing.clear()
+        invoice_numbers.clear()
+        last_button_message.clear()
+        supplier_report_timestamps.clear()
+        context.application.bot_data['daily_profit'] = 0.0
+        context.application.bot_data['orders'] = orders
+        context.application.bot_data['pricing'] = pricing
+        context.application.bot_data['invoice_numbers'] = invoice_numbers
+        context.application.bot_data['last_button_message'] = last_button_message
+        context.application.bot_data['supplier_report_timestamps'] = supplier_report_timestamps
+
+        try:
+            with open(COUNTER_FILE, "w") as f:
+                f.write("1")
+        except Exception as e:
+            logger.error(f"Could not reset invoice counter file: {e}", exc_info=True)
+
+        if _save_data_to_disk_global_func:
+            _save_data_to_disk_global_func()
+
+        msg = "🔄 تم التصفير التلقائي. (البيانات صُفّرت أو كانت فارغة.)"
+        for owner_id in OWNER_IDS:
+            try:
+                await context.bot.send_message(chat_id=owner_id, text=msg)
+            except Exception as e:
+                logger.error(f"Error sending scheduled reset msg to owner {owner_id}: {e}")
+        logger.info("Scheduled reset done.")
+    except Exception as e:
+        logger.error(f"Error in do_scheduled_reset: {e}", exc_info=True)
+
+
 def _build_report_fish_text(orders, pricing, invoice_numbers):
     """بناء نص فواتير السمك (كل الطلبات، منتجات السمك فقط) للتقرير."""
     lines = ["🐟 **فواتير السمك (تقرير)**\n"]
@@ -1889,69 +2025,11 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("لاتاكل خره هذا الامر للمدير افتهمت لولا.")
             return
 
-        total_orders = len(orders)
-        total_products = 0
-        total_buy_all_orders = 0.0 
-        total_sell_all_orders = 0.0 
-        total_net_profit_all_orders = 0.0 
-        total_extra_profit_all_orders = 0.0 
-        product_counter = Counter()
-        details = []
-
-        for order_id, order in orders.items():
-            invoice = invoice_numbers.get(order_id, "غير معروف")
-            details.append(f"\n**فاتورة رقم:🔢** {invoice}")
-            details.append(f"**عنوان الزبون:🏠** {order['title']}")
-
-            order_buy = 0.0
-            order_sell = 0.0
-            order_net_profit = 0.0 
-
-            if isinstance(order.get("products"), list):
-                for p_name in order["products"]:
-                    total_products += 1
-                    product_counter[p_name] += 1
-
-                    p_data = pricing.get(order_id, {}).get(p_name, {})
-                    if "buy" in p_data and "sell" in p_data:
-                        buy = p_data["buy"]
-                        sell = p_data["sell"]
-                        p_worker = p_data.get("prepared_by_name", "غير معروف")
-                        profit_item = sell - buy
-                        order_buy += buy
-                        order_sell += sell
-                        order_net_profit += profit_item 
-                        details.append(f"   - {p_name} | 💲:{format_float(profit_item)} (مجهز: {p_worker})")
-                    else:
-                        details.append(f"   - {p_name} | (لم يتم تسعيره)")
-
-            num_places = order.get("places_count", 0)
-            order_extra_profit = calculate_extra(num_places)
-
-            total_buy_all_orders += order_buy
-            total_sell_all_orders += order_sell
-            total_net_profit_all_orders += order_net_profit 
-            total_extra_profit_all_orders += order_extra_profit 
-
-            details.append(f"   *إجمالي ربح الطلبية: {format_float(order_net_profit + order_extra_profit)}*")
-
-        result = (
-            f"**--- تقرير عام عن الطلبات🗒️ ---**\n"
-            f"**إجمالي الطلبات:** {total_orders}\n"
-            f"**صافي ربح المنتجات:** {format_float(total_net_profit_all_orders)}\n" 
-            f"**ربح المحلات الكلي:** {format_float(total_extra_profit_all_orders)}\n"
-            f"**الربح الكلي الصافي: {format_float(total_net_profit_all_orders + total_extra_profit_all_orders)} دينار**\n\n"
-            f"**--- تفاصيل الطلبات🗒 ---**\n" + "\n".join(details)
-        )
-
-        # بناء فواتير السمك والخضروات واللحم وإرسال كل التقرير للخاص (كل مدير)
-        report_fish = _build_report_fish_text(orders, pricing, invoice_numbers)
-        report_veg = _build_report_veg_text(orders, pricing, invoice_numbers)
-        report_meat = _build_report_meat_text(orders, pricing, invoice_numbers)
+        # بناء التقرير (فارغ أو فيه بيانات) وإرساله للخاص
+        result, report_fish, report_veg, report_meat = _build_full_report_parts(orders, pricing, invoice_numbers)
 
         for owner_id in OWNER_IDS:
             try:
-                # إرسال التقرير العام + فواتير السمك + الخضروات + اللحم للخاص
                 for chunk_start in range(0, len(result), 4096):
                     await context.bot.send_message(chat_id=owner_id, text=result[chunk_start:chunk_start + 4096], parse_mode="Markdown")
                 for chunk_start in range(0, len(report_fish), 4096):
@@ -2098,6 +2176,12 @@ def main():
     app.bot_data['supplier_report_timestamps'] = supplier_report_timestamps
     app.bot_data['schedule_save_global_func'] = schedule_save_global
     app.bot_data['_save_data_to_disk_global_func'] = _save_data_to_disk_global
+
+    # ⏰ جدولة التقرير والتصفير التلقائي (الوقت في main.py أعلى: REPORT_DAILY_*, RESET_DAILY_*)
+    if app.job_queue:
+        app.job_queue.run_daily(send_scheduled_report, time=dt_time(hour=REPORT_DAILY_HOUR, minute=REPORT_DAILY_MINUTE))
+        app.job_queue.run_daily(do_scheduled_reset, time=dt_time(hour=RESET_DAILY_HOUR, minute=RESET_DAILY_MINUTE))
+        logger.info(f"Scheduled: report at {REPORT_DAILY_HOUR}:{REPORT_DAILY_MINUTE:02d} UTC, reset at {RESET_DAILY_HOUR}:{RESET_DAILY_MINUTE:02d} UTC")
 
     # 0. قائمة الأوامر (اوامر / قائمة / مساعدة)
     app.add_handler(CommandHandler("help", show_commands_list))
