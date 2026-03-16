@@ -45,11 +45,25 @@ LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
 TOKEN = os.getenv("TOKEN")
 
 # ⏰ أوقات التقرير والتصفير التلقائي (بتوقيت UTC — السيرفر يستخدم UTC)
-# العراق = UTC+3 → 4 عصر = 13، 6 مساء = 15. للتجربة ضع دقائق قريبة من وقتك الحالي (مثلاً الساعة الحالية + دقيقتين)
-REPORT_DAILY_HOUR = int(os.getenv("REPORT_DAILY_HOUR", "16"))      # ساعة إرسال التقرير (UTC)
-REPORT_DAILY_MINUTE = int(os.getenv("REPORT_DAILY_MINUTE", "0"))   # دقيقة إرسال التقرير
-RESET_DAILY_HOUR = int(os.getenv("RESET_DAILY_HOUR", "18:2"))        # ساعة التصفير التلقائي (UTC)
-RESET_DAILY_MINUTE = int(os.getenv("RESET_DAILY_MINUTE", "0"))     # دقيقة التصفير
+# الافتراضي: 4 الفجر تقارير، 6 الفجر تصفير. تقبل الساعة فقط "6" أو ساعة:دقيقة "18:2"
+def _parse_hour_min(env_key: str, default_hour: str, default_min: str) -> tuple:
+    raw = os.getenv(env_key, default_hour)
+    s = str(raw).strip()
+    if ":" in s:
+        parts = s.split(":", 1)
+        h = int(parts[0])
+        m = int(parts[1]) if len(parts) > 1 and parts[1].strip() else int(default_min)
+        return h, m
+    h = int(s)
+    m = int(os.getenv(env_key.replace("HOUR", "MINUTE"), default_min))
+    return h, m
+
+_report_h, _report_m = _parse_hour_min("REPORT_DAILY_HOUR", "4", "0")
+_reset_h, _reset_m = _parse_hour_min("RESET_DAILY_HOUR", "6", "0")
+REPORT_DAILY_HOUR = _report_h
+REPORT_DAILY_MINUTE = _report_m
+RESET_DAILY_HOUR = _reset_h
+RESET_DAILY_MINUTE = _reset_m
 
 # ✅ متغيرات التخزين المؤقت في الذاكرة
 orders = {}
