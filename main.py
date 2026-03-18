@@ -24,7 +24,13 @@ from features.delivery_zones import (
 )
 # ✅ تصنيف المنتجات (سمك، خضروات، لحم) لبناء فواتير منفصلة
 from features.product_categories import is_fish, is_vegetable_fruit, is_meat
-from features.fixed_prices import suggest_fixed_prices
+try:
+    # أسعار ثابتة (اختياري) — إذا الملف مو موجود بالديبلوي، لا نكسر تشغيل البوت
+    from features.fixed_prices import suggest_fixed_prices
+except Exception as e:
+    logging.getLogger(__name__).warning(f"fixed_prices disabled: {e}")
+    def suggest_fixed_prices(_product_text: str, _price_table=None):  # type: ignore
+        return None
 
 # ✅ تفعيل الـ logging للحصول على تفاصيل الأخطاء والعمليات
 logging.basicConfig(
