@@ -1536,15 +1536,25 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             admin_detailed_lines.append(f"  • {sup_name}: {format_float(amt)} دينار 💸")
         admin_detailed_text = "\n".join(admin_detailed_lines)
 
-        # --- فاتورة السمك لوحد (تُرسل للخاص): كل منتج سمك + من جهزه ---
+        # --- فاتورة السمك لوحد (تُرسل للخاص + للموضوع): كل منتج سمك + من جهزه + ربحه ---
         fish_lines = []
+        fish_buy_sum = 0.0
+        fish_sell_sum = 0.0
+        fish_profit_sum = 0.0
         for p_name in order["products"]:
             if not is_fish(p_name):
                 continue
             data = pricing.get(order_id, {}).get(p_name, {})
             buy = float(data.get("buy", 0.0))
+            sell = float(data.get("sell", 0.0))
+            profit = sell - buy
             p_worker_name = data.get("prepared_by_name", "شخص آخر")
-            fish_lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({p_worker_name})")
+            fish_lines.append(
+                f"  • {p_name}: شراء {format_float(buy)} | بيع {format_float(sell)} | ربح {format_float(profit)} — جهزه ({p_worker_name})"
+            )
+            fish_buy_sum += buy
+            fish_sell_sum += sell
+            fish_profit_sum += profit
         if fish_lines:
             fish_invoice_text = (
                 "🐟 فاتورة السمك (تفصيل):🧾\n"
@@ -1552,21 +1562,33 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
                 f"عنوان الزبون🏠: {order['title']}\n"
                 f"رقم الزبون📞: {phone_number}\n\n"
                 "تفاصيل السمك:\n"
-                + "\n".join(fish_lines) +
-                f"\n\n💰 مجموع السمك: {format_float(sum(float(pricing.get(order_id, {}).get(p, {}).get('buy', 0)) for p in order['products'] if is_fish(p)))}"
+                + "\n".join(fish_lines)
+                + f"\n\nمجموع شراء السمك: {format_float(fish_buy_sum)}"
+                + f"\nمجموع بيع السمك: {format_float(fish_sell_sum)}"
+                + f"\nربح السمك: {format_float(fish_profit_sum)}"
             )
         else:
             fish_invoice_text = None
 
-        # --- فاتورة الخضروات والفواكه لوحد (تُرسل للخاص) ---
+        # --- فاتورة الخضروات والفواكه لوحد (تُرسل للخاص + للموضوع) ---
         veg_lines = []
+        veg_buy_sum = 0.0
+        veg_sell_sum = 0.0
+        veg_profit_sum = 0.0
         for p_name in order["products"]:
             if not is_vegetable_fruit(p_name):
                 continue
             data = pricing.get(order_id, {}).get(p_name, {})
             buy = float(data.get("buy", 0.0))
+            sell = float(data.get("sell", 0.0))
+            profit = sell - buy
             p_worker_name = data.get("prepared_by_name", "شخص آخر")
-            veg_lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({p_worker_name})")
+            veg_lines.append(
+                f"  • {p_name}: شراء {format_float(buy)} | بيع {format_float(sell)} | ربح {format_float(profit)} — جهزه ({p_worker_name})"
+            )
+            veg_buy_sum += buy
+            veg_sell_sum += sell
+            veg_profit_sum += profit
         if veg_lines:
             veg_invoice_text = (
                 "🥬 فاتورة الخضروات والفواكه:🧾\n"
@@ -1574,21 +1596,33 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
                 f"عنوان الزبون🏠: {order['title']}\n"
                 f"رقم الزبون📞: {phone_number}\n\n"
                 "تفاصيل الخضروات/الفواكه:\n"
-                + "\n".join(veg_lines) +
-                f"\n\n💰 مجموع الخضروات/الفواكه: {format_float(sum(float(pricing.get(order_id, {}).get(p, {}).get('buy', 0)) for p in order['products'] if is_vegetable_fruit(p)))}"
+                + "\n".join(veg_lines)
+                + f"\n\nمجموع شراء الخضروات/الفواكه: {format_float(veg_buy_sum)}"
+                + f"\nمجموع بيع الخضروات/الفواكه: {format_float(veg_sell_sum)}"
+                + f"\nربح الخضروات/الفواكه: {format_float(veg_profit_sum)}"
             )
         else:
             veg_invoice_text = None
 
-        # --- فاتورة اللحم لوحد (تُرسل للخاص) ---
+        # --- فاتورة اللحم لوحد (تُرسل للخاص + للموضوع) ---
         meat_lines = []
+        meat_buy_sum = 0.0
+        meat_sell_sum = 0.0
+        meat_profit_sum = 0.0
         for p_name in order["products"]:
             if not is_meat(p_name):
                 continue
             data = pricing.get(order_id, {}).get(p_name, {})
             buy = float(data.get("buy", 0.0))
+            sell = float(data.get("sell", 0.0))
+            profit = sell - buy
             p_worker_name = data.get("prepared_by_name", "شخص آخر")
-            meat_lines.append(f"  • {p_name}: {format_float(buy)} — جهزه ({p_worker_name})")
+            meat_lines.append(
+                f"  • {p_name}: شراء {format_float(buy)} | بيع {format_float(sell)} | ربح {format_float(profit)} — جهزه ({p_worker_name})"
+            )
+            meat_buy_sum += buy
+            meat_sell_sum += sell
+            meat_profit_sum += profit
         if meat_lines:
             meat_invoice_text = (
                 "🥩 فاتورة اللحم (تفصيل):🧾\n"
@@ -1596,8 +1630,10 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
                 f"عنوان الزبون🏠: {order['title']}\n"
                 f"رقم الزبون📞: {phone_number}\n\n"
                 "تفاصيل اللحم:\n"
-                + "\n".join(meat_lines) +
-                f"\n\n💰 مجموع اللحم: {format_float(sum(float(pricing.get(order_id, {}).get(p, {}).get('buy', 0)) for p in order['products'] if is_meat(p)))}"
+                + "\n".join(meat_lines)
+                + f"\n\nمجموع شراء اللحم: {format_float(meat_buy_sum)}"
+                + f"\nمجموع بيع اللحم: {format_float(meat_sell_sum)}"
+                + f"\nربح اللحم: {format_float(meat_profit_sum)}"
             )
         else:
             meat_invoice_text = None
@@ -1619,6 +1655,37 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             f"المجموع الكلي:💰 {format_float(grand_total)}"
         ]
         admin_text = "\n".join(admin_msg)
+
+        # --- إرسال نسخة إلى مواضيع كروب التقارير عند إكمال الطلب ---
+        async def _send_to_topic(text: str, thread_id: int, parse_mode: str | None = None):
+            if not REPORTS_CHAT_ID or not thread_id or not text:
+                return
+            for chunk_start in range(0, len(text), 4096):
+                await context.bot.send_message(
+                    chat_id=REPORTS_CHAT_ID,
+                    message_thread_id=thread_id,
+                    text=text[chunk_start:chunk_start + 4096],
+                    parse_mode=parse_mode,
+                )
+
+        order_profit_products = float(total_sell - total_buy)
+        order_profit_total = float(order_profit_products + extra_cost)  # بدون التوصيل
+
+        await _send_to_topic(admin_text, TOPIC_GENERAL_ID, None)
+        if fish_invoice_text:
+            await _send_to_topic(fish_invoice_text, TOPIC_FISH_ID, None)
+        if veg_invoice_text and TOPIC_VEG_ID:
+            await _send_to_topic(veg_invoice_text, TOPIC_VEG_ID, None)
+        if meat_invoice_text:
+            await _send_to_topic(meat_invoice_text, TOPIC_MEAT_ID, None)
+        await _send_to_topic(
+            f"📈 أرباح فاتورة #{invoice}\n"
+            f"ربح المنتجات: {format_float(order_profit_products)}\n"
+            f"ربح المحلات ({places_count}): {format_float(extra_cost)}\n"
+            f"الربح الكلي (بدون التوصيل): {format_float(order_profit_total)}",
+            TOPIC_PROFIT_ID,
+            None,
+        )
 
         # --- ج. بناء فاتورة الزبون للجروب (مع الحساب المتسلسل) ---
         # رقم الزبون بصيغة `كود` عشان ينسخ باللمس بدل ما يفتح معلومات الرقم
