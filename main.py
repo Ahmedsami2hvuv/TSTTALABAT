@@ -59,8 +59,8 @@ def _parse_hour_min(env_key: str, default_hour: str, default_min: str) -> tuple:
     m = int(os.getenv(env_key.replace("HOUR", "MINUTE"), default_min))
     return h, m
 
-_report_h, _report_m = _parse_hour_min("REPORT_DAILY_HOUR", "1", "0")
-_reset_h, _reset_m = _parse_hour_min("RESET_DAILY_HOUR", "7", "0")
+_report_h, _report_m = _parse_hour_min("REPORT_DAILY_HOUR", "4", "0")
+_reset_h, _reset_m = _parse_hour_min("RESET_DAILY_HOUR", "6", "0")
 REPORT_DAILY_HOUR = _report_h
 REPORT_DAILY_MINUTE = _report_m
 RESET_DAILY_HOUR = _reset_h
@@ -327,9 +327,31 @@ async def show_commands_list(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "• *تقريري* — تقرير الطلبيات اللي جهزتها أنا\n"
         "• *صفر* (للمجهز) — تصفير تقاريري فقط\n\n"
         "🔄 *للجميع:*\n"
-        "• *الطلبات* — عرض الطلبات غير المكتملة"
+        "• *الطلبات* — عرض الطلبات غير المكتملة\n"
+        "• *ايدي* — عرض ايدي الكروب + ايدي الموضوع (Topics)"
     )
     await update.message.reply_text(text, parse_mode="Markdown")
+
+
+async def show_chat_and_topic_ids(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """يرجع chat_id و message_thread_id حتى نستخدمها بمواضيع التليكرام."""
+    try:
+        chat_id = update.effective_chat.id if update.effective_chat else None
+        thread_id = None
+        if update.effective_message:
+            thread_id = getattr(update.effective_message, "message_thread_id", None)
+
+        lines = [
+            f"chat_id: `{chat_id}`",
+            f"thread_id: `{thread_id}`" if thread_id else "thread_id: *(لا يوجد — هذه رسالة مو داخل موضوع)*",
+            "",
+            "إذا تريد البوت يرسل داخل موضوع محدد، استخدم `thread_id` مال هذا الموضوع.",
+        ]
+        await update.effective_message.reply_text("\n".join(lines), parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Error in show_chat_and_topic_ids: {e}", exc_info=True)
+        if update.effective_message:
+            await update.effective_message.reply_text("صار خطأ واني اطلع الايديات.")
 
 
 async def receive_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2238,6 +2260,8 @@ def main():
     # 0. قائمة الأوامر (اوامر / قائمة / مساعدة)
     app.add_handler(CommandHandler("help", show_commands_list))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(اوامر|الاوامر|الأوامر|قائمة|القائمة|مساعدة|المساعدة)$"), show_commands_list))
+    app.add_handler(CommandHandler("id", show_chat_and_topic_ids))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(ايدي|ايدي الكروب|ايدي الموضوع|id)$"), show_chat_and_topic_ids))
 
     # 1. أوامر التحكم الأساسية
     app.add_handler(CommandHandler("start", start))
