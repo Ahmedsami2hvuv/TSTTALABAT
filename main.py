@@ -45,6 +45,21 @@ LAST_BUTTON_MESSAGE_FILE = os.path.join(DATA_DIR, "last_button_message.json")
 # ✅ قراءة التوكن من المتغيرات البيئية (يفترض أنك ضايفه بـ Railway)
 TOKEN = os.getenv("TOKEN")
 
+# 📌 إعدادات كروب/مواضيع التقارير (Telegram Topics)
+# ضعها في Railway Variables:
+# REPORTS_CHAT_ID=-1003754790908
+# TOPIC_GENERAL_ID=3
+# TOPIC_FISH_ID=16
+# TOPIC_MEAT_ID=13
+# TOPIC_PROFIT_ID=17
+# (اختياري) TOPIC_VEG_ID=...
+REPORTS_CHAT_ID = int(os.getenv("REPORTS_CHAT_ID", "0") or "0")
+TOPIC_GENERAL_ID = int(os.getenv("TOPIC_GENERAL_ID", "0") or "0")
+TOPIC_FISH_ID = int(os.getenv("TOPIC_FISH_ID", "0") or "0")
+TOPIC_VEG_ID = int(os.getenv("TOPIC_VEG_ID", "0") or "0")
+TOPIC_MEAT_ID = int(os.getenv("TOPIC_MEAT_ID", "0") or "0")
+TOPIC_PROFIT_ID = int(os.getenv("TOPIC_PROFIT_ID", "0") or "0")
+
 # ⏰ أوقات التقرير والتصفير التلقائي (بتوقيت UTC — السيرفر يستخدم UTC)
 # الافتراضي: 4 الفجر تقارير، 6 الفجر تصفير. تقبل الساعة فقط "6" أو ساعة:دقيقة "18:2"
 def _parse_hour_min(env_key: str, default_hour: str, default_min: str) -> tuple:
@@ -1971,6 +1986,29 @@ async def send_scheduled_report(context: ContextTypes.DEFAULT_TYPE):
         invoice_numbers = context.application.bot_data['invoice_numbers']
         result, report_fish, report_veg, report_meat = _build_full_report_parts(orders, pricing, invoice_numbers)
         overall_cumulative_profit = _compute_overall_profit(orders, pricing)
+
+        async def _send_to_topic(text: str, thread_id: int, parse_mode: str = "Markdown"):
+            if not REPORTS_CHAT_ID or not thread_id:
+                return
+            for chunk_start in range(0, len(text), 4096):
+                await context.bot.send_message(
+                    chat_id=REPORTS_CHAT_ID,
+                    message_thread_id=thread_id,
+                    text=text[chunk_start:chunk_start + 4096],
+                    parse_mode=parse_mode,
+                )
+
+        # إرسال إلى المواضيع إذا كانت مفعّلة
+        await _send_to_topic(result, TOPIC_GENERAL_ID)
+        await _send_to_topic(report_fish, TOPIC_FISH_ID)
+        if TOPIC_VEG_ID:
+            await _send_to_topic(report_veg, TOPIC_VEG_ID)
+        await _send_to_topic(report_meat, TOPIC_MEAT_ID)
+        await _send_to_topic(
+            f"ربح البيع والتجهيز💵: *{format_float(overall_cumulative_profit)}* دينار",
+            TOPIC_PROFIT_ID,
+        )
+
         for owner_id in OWNER_IDS:
             try:
                 for chunk_start in range(0, len(result), 4096):
