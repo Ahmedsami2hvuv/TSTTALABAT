@@ -69,9 +69,18 @@ def _parse_int_env(env_key: str, default: int = 0, allow_negative: bool = False)
     if not digits_only:
         return int(default)
 
-    if allow_negative and (is_neg or str(default).startswith("-")):
-        return -int(digits_only)
-    return int(digits_only)
+    n = int(digits_only)
+
+    # Chat IDs للمجموعات الكبيرة عادة تكون -100xxxxxxxxxx
+    # بعض الناس ينسخها بدون السالب أو يحط شرطات بالنص (1003754-790908) → نرجعها -1003754790908
+    if allow_negative:
+        if is_neg:
+            return -n
+        if str(n).startswith("100") and len(str(n)) >= 12:
+            return -n
+        if str(default).startswith("-"):
+            return -n
+    return n
 
 
 REPORTS_CHAT_ID = _parse_int_env("REPORTS_CHAT_ID", default=0, allow_negative=True)
@@ -388,6 +397,46 @@ async def show_chat_and_topic_ids(update: Update, context: ContextTypes.DEFAULT_
         logger.error(f"Error in show_chat_and_topic_ids: {e}", exc_info=True)
         if update.effective_message:
             await update.effective_message.reply_text("صار خطأ واني اطلع الايديات.")
+
+
+async def test_reports_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """يفحص ارسال البوت لمواضيع كروب التقارير."""
+    try:
+        if not is_owner(update.effective_user.id):
+            await update.effective_message.reply_text("هذا الأمر للمدير بس.")
+            return
+
+        if not REPORTS_CHAT_ID:
+            await update.effective_message.reply_text("REPORTS_CHAT_ID غير مضبوط.")
+            return
+
+        checks = [
+            ("تقارير عامه", TOPIC_GENERAL_ID),
+            ("السمك", TOPIC_FISH_ID),
+            ("الخضروات", TOPIC_VEG_ID),
+            ("اللحم", TOPIC_MEAT_ID),
+            ("الأرباح", TOPIC_PROFIT_ID),
+        ]
+        results = [f"فحص المواضيع على chat_id `{REPORTS_CHAT_ID}`:"]
+        for name, thread_id in checks:
+            if not thread_id:
+                results.append(f"- {name}: (غير مضبوط)")
+                continue
+            try:
+                await context.bot.send_message(
+                    chat_id=REPORTS_CHAT_ID,
+                    message_thread_id=thread_id,
+                    text=f"✅ اختبار إرسال: {name} | thread_id={thread_id}",
+                )
+                results.append(f"- {name}: ✅")
+            except Exception as e:
+                logger.error(f"Topic send failed ({name} thread_id={thread_id}): {e}", exc_info=True)
+                results.append(f"- {name}: ❌ {type(e).__name__}")
+
+        await update.effective_message.reply_text("\n".join(results), parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Error in test_reports_topics: {e}", exc_info=True)
+        await update.effective_message.reply_text("صار خطأ بفحص المواضيع.")
 
 
 async def receive_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2388,6 +2437,8 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(اوامر|الاوامر|الأوامر|قائمة|القائمة|مساعدة|المساعدة)$"), show_commands_list))
     app.add_handler(CommandHandler("id", show_chat_and_topic_ids))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(ايدي|ايدي الكروب|ايدي الموضوع|id)$"), show_chat_and_topic_ids))
+    app.add_handler(CommandHandler("test_topics", test_reports_topics))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(فحص المواضيع|اختبار المواضيع)$"), test_reports_topics))
 
     # 1. أوامر التحكم الأساسية
     app.add_handler(CommandHandler("start", start))
