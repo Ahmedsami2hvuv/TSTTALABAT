@@ -25,26 +25,52 @@ def parse_quantity_kg(text: str) -> float | None:
     if not t:
         return None
 
-    # كلمات الكسور
-    if re.search(r"\bربع\b", t):
+    # مهم: لازم نلتقط "رقم + كسر" قبل ما نرجع للكسر لوحده،
+    # حتى لا يصير "2 ونص" يرجع 0.5 بدل 2.5.
+    m = re.search(
+        r"(\d+(?:\.\d+)?)\s*(?:ك|كغم|كيلو)?\s*(?:و\s*)?(?:نص|نصف)(?:ك)?\b",
+        t,
+    )
+    if m:
+        return float(m.group(1)) + 0.5
+
+    m = re.search(
+        r"(\d+(?:\.\d+)?)\s*(?:ك|كغم|كيلو)?\s*(?:و\s*)?(?:ربع)(?:ك)?\b",
+        t,
+    )
+    if m:
+        return float(m.group(1)) + 0.25
+
+    m = re.search(
+        r"(\d+(?:\.\d+)?)\s*(?:ك|كغم|كيلو)?\s*(?:و\s*)?(?:ثلاث\s*ارباع|ثلث\s*ارباع|3\s*ارباع)(?:ك)?\b",
+        t,
+    )
+    if m:
+        return float(m.group(1)) + 0.75
+
+    # كلمات الكسور (نقبلها حتى لو ملتصقة مثل "ربعك")
+    if re.search(r"ربع\s*(?:ك|كيلو)?", t):
         return 0.25
-    if re.search(r"\bنص\b", t) or re.search(r"\bنصف\b", t):
-        # لاحقاً قد يجي "كيلو ونص" (يعالج تحت)
-        pass
-    if re.search(r"ثلاث\s*ارباع|3\s*ارباع", t):
+
+    # ثلاث ارباع / 3 ارباع
+    if re.search(r"ثلاث\s*ارباع|3\s*ارباع|ثلث\s*ارباع", t):
         return 0.75
 
-    # "كيلو ونص" وأشباهها
-    if re.search(r"(كيلو|ك)\s*و\s*نص", t):
+    # "كيلو ونص" وأشباهها (1.5 كغم)
+    if re.search(r"(كيلو|ك)\s*و?\s*نص", t):
         return 1.5
-    if re.search(r"\b1\s*(كيلو|ك)\s*و\s*نص\b", t):
+    if re.search(r"\b1\s*(كيلو|ك)\s*و?\s*نص\b", t):
         return 1.5
 
-    # "كيلوين/كيلوَين"
+    # "كيلوين/كيلوَين" (2 كغم) و "ثلاث كيلو" (3 كغم)
     if re.search(r"\bكيلوين\b", t):
         return 2.0
     if re.search(r"\bثلاث\s*كيلو\b", t):
         return 3.0
+
+    # "نص" لوحدها (نسمح مثل "نصك" و "نص ك")
+    if re.search(r"نص\s*(?:ك|كيلو)?", t):
+        return 0.5
 
     # أرقام صريحة (1.5, 2, 3) مع ك/كيلو
     m = re.search(r"(\d+(?:\.\d+)?)\s*(?:ك|كغم|كيلو)\b", t)
@@ -55,10 +81,6 @@ def parse_quantity_kg(text: str) -> float | None:
     m2 = re.search(r"\b(\d+(?:\.\d+)?)\b", t)
     if m2:
         return float(m2.group(1))
-
-    # "نص" لوحدها
-    if re.search(r"\bنص\b|\bنصف\b", t):
-        return 0.5
 
     return None
 
