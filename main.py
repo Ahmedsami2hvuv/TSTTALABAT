@@ -53,12 +53,33 @@ TOKEN = os.getenv("TOKEN")
 # TOPIC_MEAT_ID=13
 # TOPIC_PROFIT_ID=17
 # (اختياري) TOPIC_VEG_ID=...
-REPORTS_CHAT_ID = int(os.getenv("REPORTS_CHAT_ID", "0") or "0")
-TOPIC_GENERAL_ID = int(os.getenv("TOPIC_GENERAL_ID", "0") or "0")
-TOPIC_FISH_ID = int(os.getenv("TOPIC_FISH_ID", "0") or "0")
-TOPIC_VEG_ID = int(os.getenv("TOPIC_VEG_ID", "0") or "0")
-TOPIC_MEAT_ID = int(os.getenv("TOPIC_MEAT_ID", "0") or "0")
-TOPIC_PROFIT_ID = int(os.getenv("TOPIC_PROFIT_ID", "0") or "0")
+def _parse_int_env(env_key: str, default: int = 0, allow_negative: bool = False) -> int:
+    """
+    يقبل أرقام بصيغ مختلفة (مثلاً 1003754-790908) ويحولها إلى int.
+    - يشيل المسافات والشرطات الداخلية.
+    - يسمح بالسالب فقط إذا allow_negative=True.
+    """
+    raw = os.getenv(env_key, "")
+    s = (raw if raw is not None else "").strip()
+    if not s:
+        return int(default)
+
+    is_neg = s.startswith("-")
+    digits_only = re.sub(r"\D", "", s)
+    if not digits_only:
+        return int(default)
+
+    if allow_negative and (is_neg or str(default).startswith("-")):
+        return -int(digits_only)
+    return int(digits_only)
+
+
+REPORTS_CHAT_ID = _parse_int_env("REPORTS_CHAT_ID", default=0, allow_negative=True)
+TOPIC_GENERAL_ID = _parse_int_env("TOPIC_GENERAL_ID", default=0)
+TOPIC_FISH_ID = _parse_int_env("TOPIC_FISH_ID", default=0)
+TOPIC_VEG_ID = _parse_int_env("TOPIC_VEG_ID", default=0)
+TOPIC_MEAT_ID = _parse_int_env("TOPIC_MEAT_ID", default=0)
+TOPIC_PROFIT_ID = _parse_int_env("TOPIC_PROFIT_ID", default=0)
 
 # ⏰ أوقات التقرير والتصفير التلقائي (بتوقيت UTC — السيرفر يستخدم UTC)
 # الافتراضي: 4 الفجر تقارير، 6 الفجر تصفير. تقبل الساعة فقط "6" أو ساعة:دقيقة "18:2"
