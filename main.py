@@ -378,27 +378,35 @@ async def _append_or_edit_topic(
         text += "\n\n" + footer.strip()
     text = _truncate_for_telegram(text)
 
-    try:
-        if msg_id:
+    # نفضّل التعديل. إذا فشل (مثلاً message not found)، نرسل جديد ونحدّث الحالة.
+    if msg_id:
+        try:
             await context.bot.edit_message_text(
                 chat_id=REPORTS_CHAT_ID,
                 message_id=int(msg_id),
                 text=text,
             )
-        else:
+        except Exception as e:
+            logger.error(f"Topic edit failed ({state_key} msg_id={msg_id}): {e}", exc_info=True)
+            msg_id = None
+
+    if not msg_id:
+        try:
             msg = await context.bot.send_message(
                 chat_id=REPORTS_CHAT_ID,
                 message_thread_id=thread_id,
                 text=text,
             )
             msg_id = msg.message_id
+        except Exception as e:
+            logger.error(f"Topic send failed ({state_key} thread_id={thread_id}): {e}", exc_info=True)
+            return
 
-        state[state_key] = {"message_id": int(msg_id), "body": body}
-        topics_state.clear()
-        topics_state.update(state)
-        schedule_save_global()
-    except Exception as e:
-        logger.error(f"Topic edit/send failed ({state_key} thread_id={thread_id}): {e}", exc_info=True)
+    state[state_key] = {"message_id": int(msg_id), "body": body}
+    context.application.bot_data["topics_state"] = state
+    topics_state.clear()
+    topics_state.update(state)
+    schedule_save_global()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
@@ -506,6 +514,23 @@ async def test_reports_topics(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         logger.error(f"Error in test_reports_topics: {e}", exc_info=True)
         await update.effective_message.reply_text("صار خطأ بفحص المواضيع.")
+
+
+async def show_topics_state(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """يعرض شنو مخزون message_id لكل موضوع."""
+    try:
+        if not is_owner(update.effective_user.id):
+            await update.effective_message.reply_text("هذا الأمر للمدير بس.")
+            return
+        state = context.application.bot_data.get("topics_state", {})
+        lines = ["topics_state:"]
+        for k in sorted(state.keys()):
+            v = state.get(k) or {}
+            lines.append(f"- {k}: msg_id={v.get('message_id')} body_len={len((v.get('body') or ''))}")
+        await update.effective_message.reply_text("\n".join(lines) if len(lines) > 1 else "topics_state فارغ.")
+    except Exception as e:
+        logger.error(f"Error in show_topics_state: {e}", exc_info=True)
+        await update.effective_message.reply_text("صار خطأ بعرض topics_state.")
 
 
 async def receive_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2559,6 +2584,8 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(ايدي|ايدي الكروب|ايدي الموضوع|id)$"), show_chat_and_topic_ids))
     app.add_handler(CommandHandler("test_topics", test_reports_topics))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(فحص المواضيع|اختبار المواضيع)$"), test_reports_topics))
+    app.add_handler(CommandHandler("topics_state", show_topics_state))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^(حالة المواضيع|topics_state)$"), show_topics_state))
 
     # 1. أوامر التحكم الأساسية
     app.add_handler(CommandHandler("start", start))
