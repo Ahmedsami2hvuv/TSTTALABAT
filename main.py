@@ -1128,14 +1128,34 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "prepared_by_id": user_id,
                     }
                     context.application.create_task(save_data_in_background(context))
-                    await show_buttons(
-                        query.message.chat_id,
-                        context,
-                        user_id,
-                        order_id,
-                        confirmation_message=f"✅ تسعير تلقائي لـ *{product}* حسب السعر الثابت.",
+                    
+                    # إذا كل منتجات الطلب تم تسعيرها (تلقائي بالكامل)، لازم نكمل مباشرة
+                    # لمرحلة اختيار عدد المحلات؛ حتى لا توقف الطلبية بين الطلبات.
+                    current_order_products = orders[order_id].get("products", [])
+                    is_order_complete = all(
+                        p in pricing.get(order_id, {})
+                        and "buy" in pricing.get(order_id, {}).get(p, {})
+                        and "sell" in pricing.get(order_id, {}).get(p, {})
+                        for p in current_order_products
                     )
-                    return ConversationHandler.END
+
+                    if is_order_complete:
+                        await request_places_count_standalone(
+                            query.message.chat_id,
+                            context,
+                            user_id,
+                            order_id,
+                        )
+                        return ConversationHandler.END
+                    else:
+                        await show_buttons(
+                            query.message.chat_id,
+                            context,
+                            user_id,
+                            order_id,
+                            confirmation_message=f"✅ تسعير تلقائي لـ *{product}* حسب السعر الثابت.",
+                        )
+                        return ConversationHandler.END
 
             message_prompt = (
                 f"تمام، بيش اشتريت *'{product}'*؟ (بالسطر الأول)\n"
