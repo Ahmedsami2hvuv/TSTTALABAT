@@ -1111,27 +1111,37 @@ async def product_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
         current_sell = pricing.get(order_id, {}).get(product, {}).get("sell")
 
         message_prompt = ""
+        is_editing = context.user_data.get(user_id, {}).get("editing_mode", False)
         if current_buy is not None and current_sell is not None:
             message_prompt = f"سعر *'{product}'* حالياً: {format_float(current_buy)} / {format_float(current_sell)}.\nدز السعر الجديد (شراء وبيع):"
         else:
-            suggestion = suggest_fixed_prices(product)
-            if suggestion:
-                suggested_buy = float(suggestion["buy_total"])
-                suggested_sell = float(suggestion["sell_total"])
-                context.user_data[user_id]["suggested_buy_price"] = suggested_buy
-                context.user_data[user_id]["suggested_sell_price"] = suggested_sell
-                message_prompt = (
-                    f"✅ سعر ثابت مقترح لـ *{suggestion['base']}* ({suggestion['qty_kg']:g} كغم)\n"
-                    f"شراء: *{format_float(suggested_buy)}* | بيع: *{format_float(suggested_sell)}*\n\n"
-                    f"دز *سعر البيع فقط* (رقم واحد) حتى نعتمد الشراء المقترح.\n"
-                    f"أو دز رقمين (شراء بيع) إذا تريد تغيّرهن."
-                )
-            else:
-                message_prompt = (
-                    f"تمام، بيش اشتريت *'{product}'*؟ (بالسطر الأول)\n"
-                    f"وبييش راح تبيعه؟ (بالسطر الثاني)\n\n"
-                    f"💡 **إذا السعر نفسه،** اكتب الرقم مرة واحدة."
-                )
+            # إذا مو وضع التعديل و المنتج ضمن أسعار ثابتة، نخليه يطلع سعر تلقائياً من ذاته
+            if not is_editing:
+                suggestion = suggest_fixed_prices(product)
+                if suggestion:
+                    suggested_buy = float(suggestion["buy_total"])
+                    suggested_sell = float(suggestion["sell_total"])
+                    pricing[order_id][product] = {
+                        "buy": suggested_buy,
+                        "sell": suggested_sell,
+                        "prepared_by_name": query.from_user.first_name,
+                        "prepared_by_id": user_id,
+                    }
+                    context.application.create_task(save_data_in_background(context))
+                    await show_buttons(
+                        query.message.chat_id,
+                        context,
+                        user_id,
+                        order_id,
+                        confirmation_message=f"✅ تسعير تلقائي لـ *{product}* حسب السعر الثابت.",
+                    )
+                    return ConversationHandler.END
+
+            message_prompt = (
+                f"تمام، بيش اشتريت *'{product}'*؟ (بالسطر الأول)\n"
+                f"وبييش راح تبيعه؟ (بالسطر الثاني)\n\n"
+                f"💡 **إذا السعر نفسه،** اكتب الرقم مرة واحدة."
+            )
 
         # ✅✅ هنا ضفنا زر الإلغاء ✅✅
         cancel_markup = InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء واختيار غير منتج", callback_data="cancel_price_entry")]])
