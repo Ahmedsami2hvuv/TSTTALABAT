@@ -351,6 +351,28 @@ def _truncate_for_telegram(text: str, limit: int = 4096) -> str:
     return "…(تم اختصار القديم)…\n" + tail
 
 
+def _load_topics_state_from_disk() -> dict:
+    try:
+        os.makedirs(os.path.dirname(TOPICS_STATE_FILE), exist_ok=True)
+        if os.path.exists(TOPICS_STATE_FILE):
+            with open(TOPICS_STATE_FILE, "r") as f:
+                data = json.load(f)
+                return data if isinstance(data, dict) else {}
+    except Exception as e:
+        logger.error(f"Error reading {TOPICS_STATE_FILE}: {e}", exc_info=True)
+    return {}
+
+
+def _save_topics_state_to_disk(state: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(TOPICS_STATE_FILE), exist_ok=True)
+        with open(TOPICS_STATE_FILE + ".tmp", "w") as f:
+            json.dump(state, f, indent=2)
+        os.replace(TOPICS_STATE_FILE + ".tmp", TOPICS_STATE_FILE)
+    except Exception as e:
+        logger.error(f"Error writing {TOPICS_STATE_FILE}: {e}", exc_info=True)
+
+
 async def _append_or_edit_topic(
     context: ContextTypes.DEFAULT_TYPE,
     state_key: str,
@@ -363,7 +385,10 @@ async def _append_or_edit_topic(
     if not REPORTS_CHAT_ID or not thread_id:
         return
 
-    state = context.application.bot_data.setdefault("topics_state", topics_state)
+    # مزامنة من القرص (يحمي من تعدد النسخ)
+    state = _load_topics_state_from_disk()
+    if not isinstance(state, dict):
+        state = {}
     entry = state.get(state_key) or {}
     msg_id = entry.get("message_id")
     body = (entry.get("body") or "").strip()
@@ -403,6 +428,8 @@ async def _append_or_edit_topic(
             return
 
     state[state_key] = {"message_id": int(msg_id), "body": body}
+    # حفظ فوري حتى كل النسخ تستخدم نفس state
+    _save_topics_state_to_disk(state)
     context.application.bot_data["topics_state"] = state
     topics_state.clear()
     topics_state.update(state)
@@ -522,7 +549,7 @@ async def show_topics_state(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not is_owner(update.effective_user.id):
             await update.effective_message.reply_text("هذا الأمر للمدير بس.")
             return
-        state = context.application.bot_data.get("topics_state", {})
+        state = _load_topics_state_from_disk()
         lines = ["topics_state:"]
         for k in sorted(state.keys()):
             v = state.get(k) or {}
