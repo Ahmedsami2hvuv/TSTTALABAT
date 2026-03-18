@@ -410,6 +410,7 @@ async def _append_or_edit_topic(
                 chat_id=REPORTS_CHAT_ID,
                 message_id=int(msg_id),
                 text=text,
+                parse_mode="Markdown",
             )
         except Exception as e:
             logger.error(f"Topic edit failed ({state_key} msg_id={msg_id}): {e}", exc_info=True)
@@ -421,6 +422,7 @@ async def _append_or_edit_topic(
                 chat_id=REPORTS_CHAT_ID,
                 message_thread_id=thread_id,
                 text=text,
+                parse_mode="Markdown",
             )
             msg_id = msg.message_id
         except Exception as e:
@@ -1611,6 +1613,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
         
         invoice = invoice_numbers.get(order_id, "000")
         phone_number = order.get('phone_number', 'ماكو رقم')
+        safe_phone_md = (phone_number or "").replace("`", "'")
         
         # معلومات المجهز
         current_chat = await context.bot.get_chat(user_id)
@@ -1679,7 +1682,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
                 f"👤 المجهز: {sup_name} {sup_username}",
                 f"رقم الفاتورة🔢: {invoice}",
                 f"عنوان الزبون🏠: {order['title']}",
-                f"رقم الزبون📞: {phone_number}",
+                f"رقم الزبون📞: `{safe_phone_md}`",
                 f"\n\nتفاصيل الشراء:🗒️💸",
                 *supplier_details,
                 f"\n💰 مجموع الطلبية: {format_float(total_buy)}"
@@ -1695,7 +1698,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             "فاتورة الشراء (تفاصيل المجهزين):🧾💸",
             f"رقم الفاتورة🔢: {invoice}",
             f"عنوان الزبون🏠: {order['title']}",
-            f"رقم الزبون📞: {phone_number}",
+            f"رقم الزبون📞: `{safe_phone_md}`",
             f"\n\nتفاصيل الشراء:🗒️💸",
             *admin_detail_lines,
             f"\n💰 مجموع الطلبية: {format_float(total_buy)}",
@@ -1730,7 +1733,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
                 "🐟 فاتورة السمك (تفصيل):🧾\n"
                 f"رقم الفاتورة🔢: {invoice}\n"
                 f"عنوان الزبون🏠: {order['title']}\n"
-                f"رقم الزبون📞: {phone_number}\n\n"
+                f"رقم الزبون📞: `{safe_phone_md}`\n\n"
                 "تفاصيل السمك:\n"
                 + "\n".join(fish_lines)
                 + f"\n\nمجموع شراء السمك: {format_float(fish_buy_sum)}"
@@ -1764,7 +1767,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
                 "🥬 فاتورة الخضروات والفواكه:🧾\n"
                 f"رقم الفاتورة🔢: {invoice}\n"
                 f"عنوان الزبون🏠: {order['title']}\n"
-                f"رقم الزبون📞: {phone_number}\n\n"
+                f"رقم الزبون📞: `{safe_phone_md}`\n\n"
                 "تفاصيل الخضروات/الفواكه:\n"
                 + "\n".join(veg_lines)
                 + f"\n\nمجموع شراء الخضروات/الفواكه: {format_float(veg_buy_sum)}"
@@ -1798,7 +1801,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
                 "🥩 فاتورة اللحم (تفصيل):🧾\n"
                 f"رقم الفاتورة🔢: {invoice}\n"
                 f"عنوان الزبون🏠: {order['title']}\n"
-                f"رقم الزبون📞: {phone_number}\n\n"
+                f"رقم الزبون📞: `{safe_phone_md}`\n\n"
                 "تفاصيل اللحم:\n"
                 + "\n".join(meat_lines)
                 + f"\n\nمجموع شراء اللحم: {format_float(meat_buy_sum)}"
@@ -1813,7 +1816,7 @@ async def show_final_options(chat_id, context, user_id, order_id, message_prefix
             f"فاتورة الإدارة:👨🏻‍💼",
             f"👤 المجهز: {current_name}",
             f"رقم الفاتورة🔢: {invoice}",
-            f"رقم الزبون📞: {phone_number}",
+            f"رقم الزبون📞: `{safe_phone_md}`",
             f"\nعنوان الزبون🏠: {order['title']}",
             f"\nتفاصيل الطلبية:🗒",
             *admin_details,
